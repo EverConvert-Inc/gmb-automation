@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { listClientsWithRollup } from "@/lib/queries";
 import { formatRelativeDate } from "@/lib/utils";
+import { Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -17,11 +19,21 @@ export default async function ClientListPage() {
             {rows.length} clients · GBP rollup across all managed locations
           </p>
         </div>
+        <Link href="/clients/new">
+          <Button>
+            <Plus className="mr-2 h-4 w-4" /> New client
+          </Button>
+        </Link>
       </div>
       {rows.length === 0 ? (
         <Card>
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            No clients yet. Add one with a POST to <code>/api/clients</code> or seed the DB.
+          <CardContent className="space-y-3 py-12 text-center text-sm text-muted-foreground">
+            <p>No clients yet.</p>
+            <Link href="/clients/new">
+              <Button>
+                <Plus className="mr-2 h-4 w-4" /> Create your first client
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       ) : (

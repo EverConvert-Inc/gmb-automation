@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import {
   getClientBySlug,
@@ -39,9 +41,20 @@ export default async function LocationDetailPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{location.name}</h1>
-        <p className="text-sm text-muted-foreground">{location.address}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">{location.name}</h1>
+          <p className="text-sm text-muted-foreground">{location.address}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {location.gbpOauthTokenId ? (
+            <Badge variant="success">GBP connected</Badge>
+          ) : (
+            <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
+              <Button variant="outline">Connect Google Business Profile</Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
