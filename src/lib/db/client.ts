@@ -10,9 +10,9 @@ declare global {
 function getDb(): ReturnType<typeof drizzle<typeof schema>> {
   if (globalThis.__drizzleDb) return globalThis.__drizzleDb;
 
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
   if (!connectionString) {
-    throw new Error("DATABASE_URL is not set");
+    throw new Error("DATABASE_URL (or POSTGRES_URL) is not set");
   }
 
   const client =

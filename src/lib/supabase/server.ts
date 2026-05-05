@@ -6,7 +6,8 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
 export async function getSupabaseServerClient() {
   const cookieStore = await cookies();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error("Supabase env vars not set");
   }
