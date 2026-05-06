@@ -27,9 +27,10 @@ export default async function LocationDetailPage({
   const data = await getLocationWithLatestScan(locationId);
   if (!data || data.location.clientId !== client.id) notFound();
 
-  const { location, latestScan, points, recentReviews } = data;
+  const { location, latestScan, points, completedPoints, recentReviews } = data;
   const recentScans = await listRecentScansForLocation(locationId);
 
+  const isRunning = latestScan?.status === "running" || latestScan?.status === "queued";
   const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
   const heatMapPoints = points.map((p) => ({
     gridX: p.gridX,
@@ -42,6 +43,7 @@ export default async function LocationDetailPage({
 
   return (
     <div className="space-y-6">
+      {isRunning && <meta httpEquiv="refresh" content="5" />}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{location.name}</h1>
@@ -82,8 +84,13 @@ export default async function LocationDetailPage({
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Heat Map</CardTitle>
+          {isRunning && latestScan && (
+            <span className="text-xs text-muted-foreground">
+              Scan in progress · {completedPoints}/{points.length} points · auto-refreshing
+            </span>
+          )}
         </CardHeader>
         <CardContent>
           {heatMapPoints.length > 0 ? (

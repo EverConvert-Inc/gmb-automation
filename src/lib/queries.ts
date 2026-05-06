@@ -160,8 +160,8 @@ export async function getLocationWithLatestScan(locationId: string) {
   if (!location) return null;
 
   const latestScan = await db.query.scans.findFirst({
-    where: and(eq(scans.locationId, location.id), eq(scans.status, "completed")),
-    orderBy: (cols, ops) => ops.desc(cols.completedAt),
+    where: eq(scans.locationId, location.id),
+    orderBy: (cols, ops) => ops.desc(cols.startedAt),
   });
 
   const points = latestScan
@@ -170,13 +170,17 @@ export async function getLocationWithLatestScan(locationId: string) {
       })
     : [];
 
+  const completedPoints = points.filter(
+    (p) => p.status === "completed" || p.status === "errored",
+  ).length;
+
   const recentReviews = await db.query.reviews.findMany({
     where: eq(reviews.locationId, location.id),
     orderBy: desc(reviews.createdAt),
     limit: 10,
   });
 
-  return { location, latestScan, points, recentReviews };
+  return { location, latestScan, points, completedPoints, recentReviews };
 }
 
 export async function listRecentScansForLocation(locationId: string, limit = 30) {
