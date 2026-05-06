@@ -36,6 +36,7 @@ export default async function LocationDetailPage({
     lat: Number(p.lat),
     lng: Number(p.lng),
     rank: p.rank ?? null,
+    status: p.status,
     competitors: (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ?? [],
   }));
 

@@ -53,6 +53,24 @@ export function rankColor(rank: number | null): string {
   return "#ef4444";
 }
 
+export function rankCellColor(
+  status: string | null | undefined,
+  rank: number | null,
+): string {
+  if (!status || status === "pending" || status === "queued") return "#e5e7eb";
+  if (status === "errored") return "#4b5563";
+  if (rank === null) return "#dc2626";
+  if (rank <= 3) return "#22c55e";
+  if (rank <= 10) return "#facc15";
+  if (rank <= 20) return "#fb923c";
+  return "#ef4444";
+}
+
+export function rankCellOpacity(status: string | null | undefined): number {
+  if (!status || status === "pending" || status === "queued") return 0.4;
+  return 0.85;
+}
+
 export function rankBucket(rank: number | null): "1-3" | "4-10" | "11-20" | "21+" | "none" {
   if (rank === null) return "none";
   if (rank <= 3) return "1-3";

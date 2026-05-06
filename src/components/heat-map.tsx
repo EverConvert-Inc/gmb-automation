@@ -1,7 +1,7 @@
 "use client";
 
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
-import { rankColor } from "@/lib/metrics";
+import { rankCellColor, rankCellOpacity } from "@/lib/metrics";
 
 export type HeatMapPoint = {
   gridX: number;
@@ -9,6 +9,7 @@ export type HeatMapPoint = {
   lat: number;
   lng: number;
   rank: number | null;
+  status?: string | null;
   competitors?: Array<{ placeId: string; name: string; rank: number }>;
 };
 
@@ -47,14 +48,20 @@ export function HeatMap({
             pathOptions={{
               color: "#1f2937",
               weight: 1,
-              fillColor: rankColor(p.rank),
-              fillOpacity: 0.85,
+              fillColor: rankCellColor(p.status, p.rank),
+              fillOpacity: rankCellOpacity(p.status),
             }}
           >
             <Popup>
               <div className="space-y-1 text-xs">
                 <div className="font-semibold">
-                  Rank: {p.rank ?? "20+"}
+                  {p.status === "pending" || p.status === "queued"
+                    ? "Pending…"
+                    : p.status === "errored"
+                      ? "Errored"
+                      : p.rank !== null
+                        ? `Rank: ${p.rank}`
+                        : "Not in top results"}
                 </div>
                 <div className="text-muted-foreground">
                   Cell ({p.gridX}, {p.gridY})
