@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RowActions } from "@/components/row-actions";
+import { VelocityDelta } from "@/components/sparkline";
 import { listClientsWithRollup } from "@/lib/queries";
 import { formatRelativeDate } from "@/lib/utils";
 import { Plus } from "lucide-react";
@@ -65,6 +66,7 @@ export default async function ClientListPage() {
                 <th className="px-4 py-3 font-medium">Locations</th>
                 <th className="px-4 py-3 font-medium">Rating</th>
                 <th className="px-4 py-3 font-medium">Reviews</th>
+                <th className="px-4 py-3 font-medium">30d</th>
                 <th className="px-4 py-3 font-medium">Last scan</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="w-12 px-4 py-3" />
@@ -83,6 +85,12 @@ export default async function ClientListPage() {
                     {c.weightedRating !== null ? c.weightedRating.toFixed(1) : "—"}
                   </td>
                   <td className="px-4 py-3">{c.totalReviews}</td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-medium">{c.velocity.this30}</span>
+                      <VelocityDelta this30={c.velocity.this30} prior30={c.velocity.prior30} />
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {formatRelativeDate(c.lastScanAt)}
                   </td>

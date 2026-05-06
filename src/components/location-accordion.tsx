@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RowActions } from "@/components/row-actions";
+import { VelocityDelta } from "@/components/sparkline";
 import { recencyColor, formatRelativeDate } from "@/lib/utils";
 import { ChevronDown, MapPin, Star } from "lucide-react";
 import type { LocationCardRow } from "@/lib/queries";
@@ -71,6 +72,16 @@ export function LocationAccordion({
                   <div className="text-sm">
                     <span className="font-medium">{loc.reviewCount}</span>
                     <span className="ml-1 text-muted-foreground">reviews</span>
+                  </div>
+                  <div className="text-sm">
+                    <span className="font-medium">{loc.velocity.this30}</span>
+                    <span className="ml-1 text-muted-foreground">30d</span>
+                    <span className="ml-2 text-xs">
+                      <VelocityDelta
+                        this30={loc.velocity.this30}
+                        prior30={loc.velocity.prior30}
+                      />
+                    </span>
                   </div>
                   <div className={`text-sm ${recencyColor(loc.daysSinceLastReview)}`}>
                     {loc.daysSinceLastReview === null

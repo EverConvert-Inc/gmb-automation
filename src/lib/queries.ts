@@ -9,6 +9,16 @@ import {
   scans,
 } from "./db/schema";
 
+export type Velocity = { this30: number; prior30: number };
+
+function velocityCutoffs() {
+  const now = Date.now();
+  return {
+    cutoff30: new Date(now - 30 * 86_400_000),
+    cutoff60: new Date(now - 60 * 86_400_000),
+  };
+}
+
 export type ClientRow = {
   id: string;
   name: string;
@@ -17,6 +27,7 @@ export type ClientRow = {
   locationCount: number;
   weightedRating: number | null;
   totalReviews: number;
+  velocity: Velocity;
   lastScanAt: Date | null;
 };
 
@@ -42,6 +53,17 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     .leftJoin(reviews, eq(reviews.locationId, locations.id))
     .groupBy(locations.clientId);
 
+  const { cutoff30, cutoff60 } = velocityCutoffs();
+  const velocityAgg = await db
+    .select({
+      clientId: locations.clientId,
+      this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30})::int`.as("this_30"),
+      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60} and ${reviews.createdAt} < ${cutoff30})::int`.as("prior_30"),
+    })
+    .from(locations)
+    .leftJoin(reviews, eq(reviews.locationId, locations.id))
+    .groupBy(locations.clientId);
+
   const scanAgg = await db
     .select({
       clientId: locations.clientId,
@@ -52,10 +74,12 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     .groupBy(locations.clientId);
 
   const reviewMap = new Map(reviewAgg.map((r) => [r.clientId, r]));
+  const velocityMap = new Map(velocityAgg.map((v) => [v.clientId, v]));
   const scanMap = new Map(scanAgg.map((s) => [s.clientId, s]));
 
   return baseClients.map((c) => {
     const r = reviewMap.get(c.id);
+    const v = velocityMap.get(c.id);
     const s = scanMap.get(c.id);
     const totalReviews = r?.totalReviews ?? 0;
     return {
@@ -66,6 +90,7 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
       locationCount: r?.locationCount ?? 0,
       weightedRating: totalReviews > 0 ? (r?.ratingSum ?? 0) / totalReviews : null,
       totalReviews,
+      velocity: { this30: v?.this30 ?? 0, prior30: v?.prior30 ?? 0 },
       lastScanAt: s?.lastScanAt ?? null,
     };
   });
@@ -80,6 +105,7 @@ export type LocationCardRow = {
   rating: number | null;
   reviewCount: number;
   daysSinceLastReview: number | null;
+  velocity: Velocity;
   latestScan: { id: string; completedAt: Date | null; arp: number | null; solv: number | null } | null;
 };
 
@@ -93,6 +119,8 @@ export async function listLocationsForClient(clientId: string): Promise<Location
     orderBy: (cols, ops) => ops.asc(cols.name),
   });
 
+  const { cutoff30, cutoff60 } = velocityCutoffs();
+
   return Promise.all(
     locs.map(async (l) => {
       const reviewAgg = await db
@@ -100,6 +128,8 @@ export async function listLocationsForClient(clientId: string): Promise<Location
           rating: sql<number | null>`avg(${reviews.rating})`,
           count: sql<number>`count(${reviews.id})::int`,
           last: sql<Date | null>`max(${reviews.createdAt})`,
+          this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30})::int`,
+          prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60} and ${reviews.createdAt} < ${cutoff30})::int`,
         })
         .from(reviews)
         .where(eq(reviews.locationId, l.id));
@@ -140,6 +170,10 @@ export async function listLocationsForClient(clientId: string): Promise<Location
         rating: reviewAgg[0]?.rating ? Number(reviewAgg[0].rating) : null,
         reviewCount: reviewAgg[0]?.count ?? 0,
         daysSinceLastReview,
+        velocity: {
+          this30: reviewAgg[0]?.this30 ?? 0,
+          prior30: reviewAgg[0]?.prior30 ?? 0,
+        },
         latestScan: latestScan
           ? {
               id: latestScan.id,
@@ -151,6 +185,68 @@ export async function listLocationsForClient(clientId: string): Promise<Location
       };
     }),
   );
+}
+
+export async function getLocationReviewStats(locationId: string): Promise<{
+  this30: number;
+  prior30: number;
+  this90: number;
+  daysSinceLastReview: number | null;
+}> {
+  const { cutoff30, cutoff60 } = velocityCutoffs();
+  const cutoff90 = new Date(Date.now() - 90 * 86_400_000);
+  const [row] = await db
+    .select({
+      this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30})::int`,
+      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60} and ${reviews.createdAt} < ${cutoff30})::int`,
+      this90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff90})::int`,
+      lastAt: sql<Date | null>`max(${reviews.createdAt})`,
+    })
+    .from(reviews)
+    .where(eq(reviews.locationId, locationId));
+  const lastAt = row?.lastAt ?? null;
+  const daysSinceLastReview = lastAt
+    ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 86_400_000)
+    : null;
+  return {
+    this30: row?.this30 ?? 0,
+    prior30: row?.prior30 ?? 0,
+    this90: row?.this90 ?? 0,
+    daysSinceLastReview,
+  };
+}
+
+export async function getLocationWeeklyReviews(
+  locationId: string,
+  weeks = 12,
+): Promise<Array<{ weekStart: string; count: number }>> {
+  const cutoff = new Date(Date.now() - weeks * 7 * 86_400_000);
+  const rows = await db
+    .select({
+      weekStart: sql<string>`to_char(date_trunc('week', ${reviews.createdAt}), 'YYYY-MM-DD')`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(reviews)
+    .where(and(eq(reviews.locationId, locationId), gte(reviews.createdAt, cutoff)))
+    .groupBy(sql`date_trunc('week', ${reviews.createdAt})`)
+    .orderBy(sql`date_trunc('week', ${reviews.createdAt})`);
+
+  const byKey = new Map(rows.map((r) => [r.weekStart, r.count]));
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const dow = todayUtc.getUTCDay();
+  const daysToMonday = (dow + 6) % 7;
+  const currentMonday = new Date(todayUtc);
+  currentMonday.setUTCDate(todayUtc.getUTCDate() - daysToMonday);
+
+  const out: Array<{ weekStart: string; count: number }> = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const d = new Date(currentMonday);
+    d.setUTCDate(currentMonday.getUTCDate() - i * 7);
+    const key = d.toISOString().slice(0, 10);
+    out.push({ weekStart: key, count: byKey.get(key) ?? 0 });
+  }
+  return out;
 }
 
 export async function getLocationWithLatestScan(locationId: string) {

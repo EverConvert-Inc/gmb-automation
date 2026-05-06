@@ -5,8 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { RowActions } from "@/components/row-actions";
+import { Sparkline, VelocityDelta } from "@/components/sparkline";
 import {
   getClientBySlug,
+  getLocationReviewStats,
+  getLocationWeeklyReviews,
   getLocationWithLatestScan,
   listRecentScansForLocation,
 } from "@/lib/queries";
@@ -28,7 +31,11 @@ export default async function LocationDetailPage({
   if (!data || data.location.clientId !== client.id) notFound();
 
   const { location, latestScan, points, completedPoints, recentReviews } = data;
-  const recentScans = await listRecentScansForLocation(locationId);
+  const [recentScans, reviewStats, weekly] = await Promise.all([
+    listRecentScansForLocation(locationId),
+    getLocationReviewStats(locationId),
+    getLocationWeeklyReviews(locationId, 12),
+  ]);
 
   const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
   const heatMapPoints = points.map((p) => ({
@@ -80,6 +87,40 @@ export default async function LocationDetailPage({
           label="Last scan"
           value={latestScan ? formatRelativeDate(latestScan.completedAt) : "—"}
         />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs uppercase text-muted-foreground">Reviews 30d</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold">{reviewStats.this30}</span>
+              <span className="text-sm">
+                <VelocityDelta this30={reviewStats.this30} prior30={reviewStats.prior30} />
+              </span>
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              vs {reviewStats.prior30} prior 30
+            </div>
+          </CardContent>
+        </Card>
+        <Stat label="Reviews 90d" value={String(reviewStats.this90)} />
+        <Stat
+          label="Days since last"
+          value={
+            reviewStats.daysSinceLastReview === null
+              ? "—"
+              : String(reviewStats.daysSinceLastReview)
+          }
+        />
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs uppercase text-muted-foreground">12-week trend</div>
+            <div className="mt-2">
+              <Sparkline data={weekly.map((w) => w.count)} height={40} />
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
