@@ -30,7 +30,6 @@ export default async function LocationDetailPage({
   const { location, latestScan, points, completedPoints, recentReviews } = data;
   const recentScans = await listRecentScansForLocation(locationId);
 
-  const isRunning = latestScan?.status === "running" || latestScan?.status === "queued";
   const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
   const heatMapPoints = points.map((p) => ({
     gridX: p.gridX,
@@ -43,7 +42,6 @@ export default async function LocationDetailPage({
 
   return (
     <div className="space-y-6">
-      {isRunning && <meta httpEquiv="refresh" content="5" />}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{location.name}</h1>
@@ -84,26 +82,18 @@ export default async function LocationDetailPage({
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>Heat Map</CardTitle>
-          {isRunning && latestScan && (
-            <span className="text-xs text-muted-foreground">
-              Scan in progress · {completedPoints}/{points.length} points · auto-refreshing
-            </span>
-          )}
         </CardHeader>
         <CardContent>
-          {heatMapPoints.length > 0 ? (
-            <HeatMapClient
-              centerLat={Number(location.lat)}
-              centerLng={Number(location.lng)}
-              points={heatMapPoints}
-            />
-          ) : (
-            <div className="flex h-[400px] items-center justify-center text-sm text-muted-foreground">
-              No scan data yet. Run a scan from the client view.
-            </div>
-          )}
+          <HeatMapClient
+            locationId={location.id}
+            centerLat={Number(location.lat)}
+            centerLng={Number(location.lng)}
+            initialPoints={heatMapPoints}
+            initialStatus={latestScan?.status ?? null}
+            initialCompletedPoints={completedPoints}
+          />
         </CardContent>
       </Card>
 
