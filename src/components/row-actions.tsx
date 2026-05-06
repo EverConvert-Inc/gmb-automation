@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { MoreVertical, Trash2 } from "lucide-react";
 
@@ -17,15 +18,40 @@ export function RowActions({ entity, id, name, cascadeDetail, redirectTo }: Prop
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
-    function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    if (!open) {
+      setPos(null);
+      return;
     }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    }
+    function close(e: Event) {
+      const target = e.target as Node;
+      if (
+        menuRef.current?.contains(target) ||
+        buttonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setOpen(false);
+    }
+    function onScroll() {
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
   }, [open]);
 
   async function onDelete() {
@@ -57,9 +83,10 @@ export function RowActions({ entity, id, name, cascadeDetail, redirectTo }: Prop
   }
 
   return (
-    <div ref={ref} className="relative inline-flex items-center">
+    <div className="relative inline-flex items-center">
       {error && <span className="mr-2 text-xs text-red-600">{error}</span>}
       <button
+        ref={buttonRef}
         type="button"
         aria-label="Actions"
         disabled={busy}
@@ -72,22 +99,29 @@ export function RowActions({ entity, id, name, cascadeDetail, redirectTo }: Prop
       >
         <MoreVertical className="h-4 w-4" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border bg-card shadow-md">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              void onDelete();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete {entity}
-          </button>
-        </div>
-      )}
+      {open && pos && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={menuRef}
+              style={{ top: pos.top, right: pos.right }}
+              className="fixed z-50 w-44 overflow-hidden rounded-md border bg-card shadow-md"
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  void onDelete();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete {entity}
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
