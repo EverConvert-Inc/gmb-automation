@@ -19,6 +19,7 @@ type PostbackBody = {
   tasks?: Array<{
     id?: string;
     tag?: string;
+    data?: { tag?: string; [k: string]: unknown };
     status_code?: number;
     status_message?: string;
     result?: SerpMapsResult[];
@@ -75,15 +76,23 @@ export async function POST(req: Request) {
   let skipped = 0;
   let ranked = 0;
 
-  for (const task of tasks) {
-    if (!task.tag) {
+  for (const [idx, task] of tasks.entries()) {
+    const rawTag = task.tag ?? task.data?.tag;
+    if (!rawTag) {
       skipped++;
+      if (idx === 0) {
+        console.log("[postback] task missing tag", {
+          taskKeys: Object.keys(task),
+          dataKeys: task.data ? Object.keys(task.data) : null,
+          taskId: task.id,
+        });
+      }
       continue;
     }
-    const decoded = decodeTag(task.tag);
+    const decoded = decodeTag(rawTag);
     if (!decoded) {
       skipped++;
-      console.log("[postback] could not decode tag", { tag: task.tag });
+      console.log("[postback] could not decode tag", { tag: rawTag });
       continue;
     }
 
