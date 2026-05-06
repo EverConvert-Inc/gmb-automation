@@ -21,34 +21,54 @@ export type ClientRow = {
 };
 
 export async function listClientsWithRollup(): Promise<ClientRow[]> {
-  const rows = await db
+  const baseClients = await db
     .select({
       id: clients.id,
       name: clients.name,
       slug: clients.slug,
       status: clients.status,
+    })
+    .from(clients)
+    .orderBy(clients.name);
+
+  const reviewAgg = await db
+    .select({
+      clientId: locations.clientId,
       locationCount: sql<number>`count(distinct ${locations.id})::int`.as("loc_count"),
       ratingSum: sql<number>`coalesce(sum(${reviews.rating}), 0)::int`.as("rating_sum"),
       totalReviews: sql<number>`count(${reviews.id})::int`.as("total_reviews"),
+    })
+    .from(locations)
+    .leftJoin(reviews, eq(reviews.locationId, locations.id))
+    .groupBy(locations.clientId);
+
+  const scanAgg = await db
+    .select({
+      clientId: locations.clientId,
       lastScanAt: sql<Date | null>`max(${scans.completedAt})`.as("last_scan_at"),
     })
-    .from(clients)
-    .leftJoin(locations, eq(locations.clientId, clients.id))
-    .leftJoin(reviews, eq(reviews.locationId, locations.id))
+    .from(locations)
     .leftJoin(scans, eq(scans.locationId, locations.id))
-    .groupBy(clients.id)
-    .orderBy(clients.name);
+    .groupBy(locations.clientId);
 
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    slug: r.slug,
-    status: r.status,
-    locationCount: r.locationCount ?? 0,
-    weightedRating: r.totalReviews > 0 ? r.ratingSum / r.totalReviews : null,
-    totalReviews: r.totalReviews ?? 0,
-    lastScanAt: r.lastScanAt ?? null,
-  }));
+  const reviewMap = new Map(reviewAgg.map((r) => [r.clientId, r]));
+  const scanMap = new Map(scanAgg.map((s) => [s.clientId, s]));
+
+  return baseClients.map((c) => {
+    const r = reviewMap.get(c.id);
+    const s = scanMap.get(c.id);
+    const totalReviews = r?.totalReviews ?? 0;
+    return {
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      status: c.status,
+      locationCount: r?.locationCount ?? 0,
+      weightedRating: totalReviews > 0 ? (r?.ratingSum ?? 0) / totalReviews : null,
+      totalReviews,
+      lastScanAt: s?.lastScanAt ?? null,
+    };
+  });
 }
 
 export type LocationCardRow = {
