@@ -70,24 +70,45 @@ export async function POST(req: Request) {
 
   const tasks = body.tasks ?? [];
   const scanIdsTouched = new Set<string>();
+  let updated = 0;
+  let errored = 0;
+  let skipped = 0;
+  let ranked = 0;
 
   for (const task of tasks) {
-    if (!task.tag) continue;
+    if (!task.tag) {
+      skipped++;
+      continue;
+    }
     const decoded = decodeTag(task.tag);
-    if (!decoded) continue;
+    if (!decoded) {
+      skipped++;
+      console.log("[postback] could not decode tag", { tag: task.tag });
+      continue;
+    }
 
     const point = await db.query.scanPoints.findFirst({
       where: eq(scanPoints.id, decoded.scanPointId),
     });
-    if (!point) continue;
+    if (!point) {
+      skipped++;
+      console.log("[postback] no scan_point for id", { scanPointId: decoded.scanPointId });
+      continue;
+    }
 
     const scan = await db.query.scans.findFirst({ where: eq(scans.id, point.scanId) });
-    if (!scan) continue;
+    if (!scan) {
+      skipped++;
+      continue;
+    }
 
     const location = await db.query.locations.findFirst({
       where: eq(locations.id, scan.locationId),
     });
-    if (!location) continue;
+    if (!location) {
+      skipped++;
+      continue;
+    }
 
     let result = task.result?.[0];
     if (!result && task.id) {
@@ -104,10 +125,12 @@ export async function POST(req: Request) {
         })
         .where(eq(scanPoints.id, point.id));
       scanIdsTouched.add(scan.id);
+      errored++;
       continue;
     }
 
     const { rank, competitors } = findRankForPlaceId(result, location.placeId);
+    if (rank !== null) ranked++;
 
     await db
       .update(scanPoints)
@@ -120,7 +143,16 @@ export async function POST(req: Request) {
       .where(eq(scanPoints.id, point.id));
 
     scanIdsTouched.add(scan.id);
+    updated++;
   }
+
+  console.log("[postback] processed", {
+    total: tasks.length,
+    updated,
+    ranked,
+    errored,
+    skipped,
+  });
 
   for (const scanId of scanIdsTouched) {
     await maybeCompleteScan(scanId);

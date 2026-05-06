@@ -94,22 +94,42 @@ export async function fetchTaskResult(taskId: string): Promise<SerpMapsResult | 
   return json.tasks?.[0]?.result?.[0] ?? null;
 }
 
+function normalizePlaceId(id: string | undefined | null): string {
+  if (!id) return "";
+  return id.replace(/^places\//, "").trim();
+}
+
 export function findRankForPlaceId(
   result: SerpMapsResult,
   placeId: string,
 ): { rank: number | null; competitors: Array<{ placeId: string; name: string; rank: number }> } {
+  const target = normalizePlaceId(placeId);
   const items = (result.items ?? []).filter(
-    (i) => i.type === "maps_search" && typeof i.rank_absolute === "number",
+    (i) => typeof i.rank_absolute === "number" && i.place_id,
   );
+
   let rank: number | null = null;
+  let matched: SerpMapsResultItem | null = null;
   for (const item of items) {
-    if (item.place_id === placeId) {
+    if (normalizePlaceId(item.place_id) === target) {
       rank = item.rank_absolute ?? null;
+      matched = item;
       break;
     }
   }
+
+  if (!matched) {
+    console.log("[postback] no placeId match", {
+      target,
+      itemCount: result.items?.length ?? 0,
+      rankableCount: items.length,
+      itemTypes: Array.from(new Set((result.items ?? []).map((i) => i.type))),
+      samplePlaceIds: items.slice(0, 5).map((i) => i.place_id),
+    });
+  }
+
   const competitors = items
-    .filter((i) => i.place_id && i.place_id !== placeId)
+    .filter((i) => normalizePlaceId(i.place_id) !== target)
     .slice(0, 5)
     .map((i) => ({
       placeId: i.place_id!,
