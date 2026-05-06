@@ -1,46 +1,108 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { locations, oauthCredentials } from "@/lib/db/schema";
-import { encryptString } from "@/lib/crypto";
+import { clients, locations, oauthCredentials } from "@/lib/db/schema";
+import { encryptString, hmacVerify } from "@/lib/crypto";
+import { listAccounts, listLocations } from "@/lib/gbp";
+import { pollReviewsForLocation } from "@/lib/reviews";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+
+type StatePayload = { locationId: string; nonce: string; exp: number };
+
+function verifyState(state: string): StatePayload | null {
+  const dot = state.indexOf(".");
+  if (dot < 0) return null;
+  const payloadEncoded = state.slice(0, dot);
+  const sig = state.slice(dot + 1);
+  if (!payloadEncoded || !sig) return null;
+  if (!hmacVerify(payloadEncoded, sig)) return null;
+  let payload: StatePayload;
+  try {
+    payload = JSON.parse(
+      Buffer.from(payloadEncoded, "base64url").toString("utf8"),
+    ) as StatePayload;
+  } catch {
+    return null;
+  }
+  if (
+    typeof payload.locationId !== "string" ||
+    typeof payload.exp !== "number" ||
+    payload.exp < Date.now()
+  ) {
+    return null;
+  }
+  return payload;
+}
+
+function redirectWith(
+  origin: URL,
+  slug: string | null,
+  locationId: string | null,
+  params: Record<string, string>,
+) {
+  const path =
+    slug && locationId ? `/clients/${slug}/locations/${locationId}` : "/clients";
+  const dest = new URL(path, origin);
+  for (const [k, v] of Object.entries(params)) dest.searchParams.set(k, v);
+  return NextResponse.redirect(dest);
+}
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const error = url.searchParams.get("error");
-  if (error) {
-    return NextResponse.json({ error }, { status: 400 });
+  const errorParam = url.searchParams.get("error");
+
+  if (errorParam) {
+    return redirectWith(url, null, null, { gbp: "error", reason: errorParam });
   }
   if (!code || !state) {
     return NextResponse.json({ error: "missing code or state" }, { status: 400 });
   }
-  const locationId = state;
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const payload = verifyState(state);
+  if (!payload) {
+    return NextResponse.json({ error: "invalid or expired state" }, { status: 400 });
+  }
+  const { locationId } = payload;
+
+  const clientIdEnv = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
-  if (!clientId || !clientSecret || !redirectUri) {
+  if (!clientIdEnv || !clientSecret || !redirectUri) {
     return NextResponse.json({ error: "OAuth env not set" }, { status: 500 });
   }
+
+  const location = await db.query.locations.findFirst({
+    where: eq(locations.id, locationId),
+  });
+  if (!location) {
+    return NextResponse.json({ error: "location not found" }, { status: 404 });
+  }
+  const client = await db.query.clients.findFirst({
+    where: eq(clients.id, location.clientId),
+  });
+  const slug = client?.slug ?? null;
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: clientId,
+      client_id: clientIdEnv,
       client_secret: clientSecret,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }),
   });
   if (!tokenRes.ok) {
-    return NextResponse.json(
-      { error: `Token exchange failed: ${await tokenRes.text()}` },
-      { status: 502 },
-    );
+    const detail = await tokenRes.text();
+    console.error("OAuth token exchange failed", { status: tokenRes.status, detail });
+    return redirectWith(url, slug, locationId, {
+      gbp: "error",
+      reason: "token_exchange_failed",
+    });
   }
   const tokens = (await tokenRes.json()) as {
     access_token: string;
@@ -48,10 +110,10 @@ export async function GET(req: Request) {
     expires_in: number;
   };
   if (!tokens.refresh_token) {
-    return NextResponse.json(
-      { error: "No refresh_token returned. Revoke and retry with prompt=consent." },
-      { status: 400 },
-    );
+    return redirectWith(url, slug, locationId, {
+      gbp: "error",
+      reason: "no_refresh_token",
+    });
   }
 
   const userInfoRes = await fetch(
@@ -59,24 +121,95 @@ export async function GET(req: Request) {
     { headers: { Authorization: `Bearer ${tokens.access_token}` } },
   );
   const userInfo = (await userInfoRes.json()) as { email?: string };
+  const accountEmail = userInfo.email ?? "unknown";
 
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
-  const [cred] = await db
-    .insert(oauthCredentials)
-    .values({
-      provider: "google_business_profile",
-      accountEmail: userInfo.email ?? "unknown",
-      accessTokenEncrypted: encryptString(tokens.access_token),
-      refreshTokenEncrypted: encryptString(tokens.refresh_token),
-      expiresAt,
-    })
-    .returning();
+  const accessTokenEncrypted = encryptString(tokens.access_token);
+  const refreshTokenEncrypted = encryptString(tokens.refresh_token);
+
+  const existingCred = await db.query.oauthCredentials.findFirst({
+    where: and(
+      eq(oauthCredentials.provider, "google_business_profile"),
+      eq(oauthCredentials.accountEmail, accountEmail),
+    ),
+  });
+  let credId: string;
+  if (existingCred) {
+    await db
+      .update(oauthCredentials)
+      .set({
+        accessTokenEncrypted,
+        refreshTokenEncrypted,
+        expiresAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(oauthCredentials.id, existingCred.id));
+    credId = existingCred.id;
+  } else {
+    const [cred] = await db
+      .insert(oauthCredentials)
+      .values({
+        provider: "google_business_profile",
+        accountEmail,
+        accessTokenEncrypted,
+        refreshTokenEncrypted,
+        expiresAt,
+      })
+      .returning();
+    credId = cred.id;
+  }
 
   await db
     .update(locations)
-    .set({ gbpOauthTokenId: cred.id })
+    .set({ gbpOauthTokenId: credId })
     .where(eq(locations.id, locationId));
 
-  const dest = new URL("/clients", url);
-  return NextResponse.redirect(dest);
+  let gbpAccountId: string | null = null;
+  let gbpLocationId: string | null = null;
+  let discoveryError: string | null = null;
+  try {
+    const accounts = await listAccounts(tokens.access_token);
+    outer: for (const account of accounts) {
+      if (!account.name) continue;
+      const gbpLocations = await listLocations(tokens.access_token, account.name);
+      for (const loc of gbpLocations) {
+        if (loc.metadata?.placeId === location.placeId && loc.name) {
+          gbpAccountId = account.name.replace(/^accounts\//, "");
+          gbpLocationId = loc.name.replace(/^locations\//, "");
+          break outer;
+        }
+      }
+    }
+    if (!gbpAccountId || !gbpLocationId) {
+      discoveryError = "no_gbp_match";
+    }
+  } catch (e) {
+    console.error("GBP discovery failed", { locationId, error: e });
+    discoveryError = "discovery_failed";
+  }
+
+  if (gbpAccountId && gbpLocationId) {
+    await db
+      .update(locations)
+      .set({ gbpAccountId, gbpLocationId })
+      .where(eq(locations.id, locationId));
+  }
+
+  if (discoveryError) {
+    return redirectWith(url, slug, locationId, {
+      gbp: "incomplete",
+      reason: discoveryError,
+    });
+  }
+
+  try {
+    await pollReviewsForLocation(locationId);
+  } catch (e) {
+    console.error("GBP backfill failed", { locationId, error: e });
+    return redirectWith(url, slug, locationId, {
+      gbp: "connected_no_backfill",
+    });
+  }
+
+  return redirectWith(url, slug, locationId, { gbp: "connected" });
 }

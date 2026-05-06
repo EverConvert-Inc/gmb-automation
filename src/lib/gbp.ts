@@ -19,7 +19,7 @@ const STAR_RATING_MAP: Record<string, number> = {
   FIVE: 5,
 };
 
-async function bearerFromCredential(refreshTokenEncrypted: string): Promise<string> {
+export async function getAccessToken(refreshTokenEncrypted: string): Promise<string> {
   const refreshToken = decryptString(refreshTokenEncrypted);
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -38,6 +38,60 @@ async function bearerFromCredential(refreshTokenEncrypted: string): Promise<stri
   return json.access_token;
 }
 
+export type GbpAccount = { name: string; accountName?: string; type?: string; role?: string };
+export type GbpLocation = {
+  name: string;
+  title?: string;
+  storefrontAddress?: { addressLines?: string[]; locality?: string; administrativeArea?: string };
+  metadata?: { placeId?: string };
+};
+
+export async function listAccounts(accessToken: string): Promise<GbpAccount[]> {
+  const out: GbpAccount[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL("https://mybusinessaccountmanagement.googleapis.com/v1/accounts");
+    url.searchParams.set("pageSize", "50");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      throw new Error(`GBP listAccounts failed: ${res.status} ${await res.text()}`);
+    }
+    const json = (await res.json()) as { accounts?: GbpAccount[]; nextPageToken?: string };
+    if (json.accounts) out.push(...json.accounts);
+    pageToken = json.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+export async function listLocations(
+  accessToken: string,
+  accountResourceName: string,
+): Promise<GbpLocation[]> {
+  const out: GbpLocation[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(
+      `https://mybusinessbusinessinformation.googleapis.com/v1/${accountResourceName}/locations`,
+    );
+    url.searchParams.set("readMask", "name,title,storefrontAddress,metadata");
+    url.searchParams.set("pageSize", "100");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      throw new Error(`GBP listLocations failed: ${res.status} ${await res.text()}`);
+    }
+    const json = (await res.json()) as { locations?: GbpLocation[]; nextPageToken?: string };
+    if (json.locations) out.push(...json.locations);
+    pageToken = json.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
 export async function fetchReviews({
   accountId,
   locationId,
@@ -49,7 +103,7 @@ export async function fetchReviews({
   refreshTokenEncrypted: string;
   updatedSince?: Date;
 }): Promise<GbpReview[]> {
-  const token = await bearerFromCredential(refreshTokenEncrypted);
+  const token = await getAccessToken(refreshTokenEncrypted);
   const out: GbpReview[] = [];
   let pageToken: string | undefined;
 

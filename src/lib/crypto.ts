@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 
 const ALGO = "aes-256-gcm";
 
@@ -30,6 +30,14 @@ export function decryptString(payload: string): string {
     decipher.final(),
   ]);
   return dec.toString("utf8");
+}
+
+export function hmacSign(data: string): string {
+  return createHmac("sha256", getKey()).update(data).digest("base64url");
+}
+
+export function hmacVerify(data: string, signature: string): boolean {
+  return timingSafeEqual(hmacSign(data), signature);
 }
 
 export function timingSafeEqual(a: string, b: string): boolean {

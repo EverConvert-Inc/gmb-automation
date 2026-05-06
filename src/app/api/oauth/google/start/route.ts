@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "node:crypto";
+import { hmacSign } from "@/lib/crypto";
+
+export const runtime = "nodejs";
 
 const SCOPES = ["https://www.googleapis.com/auth/business.manage"];
+const STATE_TTL_MS = 10 * 60 * 1000;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -16,6 +21,15 @@ export async function GET(req: Request) {
       { status: 500 },
     );
   }
+
+  const payload = {
+    locationId,
+    nonce: randomBytes(16).toString("base64url"),
+    exp: Date.now() + STATE_TTL_MS,
+  };
+  const payloadEncoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const state = `${payloadEncoded}.${hmacSign(payloadEncoded)}`;
+
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", clientId);
   authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -23,6 +37,6 @@ export async function GET(req: Request) {
   authUrl.searchParams.set("scope", SCOPES.join(" "));
   authUrl.searchParams.set("access_type", "offline");
   authUrl.searchParams.set("prompt", "consent");
-  authUrl.searchParams.set("state", locationId);
+  authUrl.searchParams.set("state", state);
   return NextResponse.redirect(authUrl.toString());
 }
