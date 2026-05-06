@@ -10,7 +10,26 @@ import { Plus } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 export default async function ClientListPage() {
-  const rows = await listClientsWithRollup();
+  let rows;
+  try {
+    rows = await listClientsWithRollup();
+  } catch (err) {
+    console.error("[/clients] listClientsWithRollup failed:", err);
+    return (
+      <Card>
+        <CardContent className="space-y-2 py-8 text-sm">
+          <p className="font-medium">Could not load clients.</p>
+          <pre className="overflow-auto rounded bg-muted p-3 text-xs">
+            {err instanceof Error ? err.message : String(err)}
+          </pre>
+          <p className="text-muted-foreground">
+            Check that DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, and
+            NEXT_PUBLIC_SUPABASE_ANON_KEY are set in this Vercel environment.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between">

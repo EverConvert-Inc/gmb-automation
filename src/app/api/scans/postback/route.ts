@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { gunzipSync, inflateSync, brotliDecompressSync } from "node:zlib";
 import { db } from "@/lib/db/client";
 import { locations, scanPoints, scans } from "@/lib/db/schema";
 import {
@@ -24,6 +25,18 @@ type PostbackBody = {
   }>;
 };
 
+async function readBody(req: Request): Promise<string> {
+  const encoding = req.headers.get("content-encoding")?.toLowerCase() ?? "";
+  if (!encoding || encoding === "identity") {
+    return await req.text();
+  }
+  const buf = Buffer.from(await req.arrayBuffer());
+  if (encoding.includes("gzip")) return gunzipSync(buf).toString("utf-8");
+  if (encoding.includes("deflate")) return inflateSync(buf).toString("utf-8");
+  if (encoding.includes("br")) return brotliDecompressSync(buf).toString("utf-8");
+  return buf.toString("utf-8");
+}
+
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const token = url.searchParams.get("token") ?? "";
@@ -32,11 +45,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const raw = await readBody(req);
+  console.log("[postback] received", {
+    length: raw.length,
+    contentType: req.headers.get("content-type"),
+    contentEncoding: req.headers.get("content-encoding"),
+    preview: raw.slice(0, 200),
+  });
+
   let body: PostbackBody;
-  try {
-    body = (await req.json()) as PostbackBody;
-  } catch {
-    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  if (raw.length === 0) {
+    body = {};
+  } else {
+    try {
+      body = JSON.parse(raw) as PostbackBody;
+    } catch (err) {
+      console.error("[postback] JSON parse failed", {
+        error: (err as Error).message,
+        preview: raw.slice(0, 500),
+      });
+      return NextResponse.json({ error: "invalid json" }, { status: 400 });
+    }
   }
 
   const tasks = body.tasks ?? [];
