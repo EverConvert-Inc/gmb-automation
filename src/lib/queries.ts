@@ -54,11 +54,13 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     .groupBy(locations.clientId);
 
   const { cutoff30, cutoff60 } = velocityCutoffs();
+  const cutoff30Iso = cutoff30.toISOString();
+  const cutoff60Iso = cutoff60.toISOString();
   const velocityAgg = await db
     .select({
       clientId: locations.clientId,
-      this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30})::int`.as("this_30"),
-      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60} and ${reviews.createdAt} < ${cutoff30})::int`.as("prior_30"),
+      this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30Iso})::int`.as("this_30"),
+      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60Iso} and ${reviews.createdAt} < ${cutoff30Iso})::int`.as("prior_30"),
     })
     .from(locations)
     .leftJoin(reviews, eq(reviews.locationId, locations.id))
@@ -120,6 +122,8 @@ export async function listLocationsForClient(clientId: string): Promise<Location
   });
 
   const { cutoff30, cutoff60 } = velocityCutoffs();
+  const cutoff30Iso = cutoff30.toISOString();
+  const cutoff60Iso = cutoff60.toISOString();
 
   return Promise.all(
     locs.map(async (l) => {
@@ -128,8 +132,8 @@ export async function listLocationsForClient(clientId: string): Promise<Location
           rating: sql<number | null>`avg(${reviews.rating})`,
           count: sql<number>`count(${reviews.id})::int`,
           last: sql<Date | null>`max(${reviews.createdAt})`,
-          this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30})::int`,
-          prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60} and ${reviews.createdAt} < ${cutoff30})::int`,
+          this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30Iso})::int`,
+          prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60Iso} and ${reviews.createdAt} < ${cutoff30Iso})::int`,
         })
         .from(reviews)
         .where(eq(reviews.locationId, l.id));
@@ -195,11 +199,14 @@ export async function getLocationReviewStats(locationId: string): Promise<{
 }> {
   const { cutoff30, cutoff60 } = velocityCutoffs();
   const cutoff90 = new Date(Date.now() - 90 * 86_400_000);
+  const cutoff30Iso = cutoff30.toISOString();
+  const cutoff60Iso = cutoff60.toISOString();
+  const cutoff90Iso = cutoff90.toISOString();
   const [row] = await db
     .select({
-      this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30})::int`,
-      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60} and ${reviews.createdAt} < ${cutoff30})::int`,
-      this90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff90})::int`,
+      this30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff30Iso})::int`,
+      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60Iso} and ${reviews.createdAt} < ${cutoff30Iso})::int`,
+      this90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff90Iso})::int`,
       lastAt: sql<Date | null>`max(${reviews.createdAt})`,
     })
     .from(reviews)
