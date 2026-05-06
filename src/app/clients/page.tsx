@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RowActions } from "@/components/row-actions";
 import { listClientsWithRollup } from "@/lib/queries";
 import { formatRelativeDate } from "@/lib/utils";
 import { Plus } from "lucide-react";
@@ -47,6 +48,7 @@ export default async function ClientListPage() {
                 <th className="px-4 py-3 font-medium">Reviews</th>
                 <th className="px-4 py-3 font-medium">Last scan</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="w-12 px-4 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -69,6 +71,14 @@ export default async function ClientListPage() {
                     <Badge variant={c.status === "active" ? "success" : "secondary"}>
                       {c.status}
                     </Badge>
+                  </td>
+                  <td className="px-2 py-3 text-right">
+                    <RowActions
+                      entity="client"
+                      id={c.id}
+                      name={c.name}
+                      cascadeDetail={`and its ${c.locationCount} location${c.locationCount === 1 ? "" : "s"} and ${c.totalReviews} review${c.totalReviews === 1 ? "" : "s"}`}
+                    />
                   </td>
                 </tr>
               ))}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RowActions } from "@/components/row-actions";
 import { recencyColor, formatRelativeDate } from "@/lib/utils";
 import { ChevronDown, MapPin, Star } from "lucide-react";
 import type { LocationCardRow } from "@/lib/queries";
@@ -47,48 +48,58 @@ export function LocationAccordion({
         const open = openId === loc.id;
         return (
           <div key={loc.id} className="overflow-hidden rounded-lg border bg-card">
-            <button
-              type="button"
-              className="flex w-full items-center gap-4 p-4 text-left transition-colors hover:bg-muted/30"
-              onClick={() => setOpenId(open ? null : loc.id)}
-            >
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{loc.name}</span>
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <MapPin className="h-3 w-3" />
-                    {loc.address}
-                  </span>
+            <div className="flex items-stretch">
+              <button
+                type="button"
+                className="flex flex-1 items-center gap-4 p-4 text-left transition-colors hover:bg-muted/30"
+                onClick={() => setOpenId(open ? null : loc.id)}
+              >
+                <ChevronDown
+                  className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{loc.name}</span>
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <MapPin className="h-3 w-3" />
+                      {loc.address}
+                    </span>
+                  </div>
                 </div>
+                <div className="hidden items-center gap-8 md:flex">
+                  <StarBar rating={loc.rating} />
+                  <div className="text-sm">
+                    <span className="font-medium">{loc.reviewCount}</span>
+                    <span className="ml-1 text-muted-foreground">reviews</span>
+                  </div>
+                  <div className={`text-sm ${recencyColor(loc.daysSinceLastReview)}`}>
+                    {loc.daysSinceLastReview === null
+                      ? "no reviews"
+                      : `${loc.daysSinceLastReview}d since last`}
+                  </div>
+                  <div className="text-sm">
+                    {loc.latestScan?.arp !== null && loc.latestScan?.arp !== undefined ? (
+                      <>
+                        <span className="font-medium">ARP {loc.latestScan.arp.toFixed(1)}</span>
+                        <span className="ml-2 text-muted-foreground">
+                          SoLV {loc.latestScan.solv?.toFixed(0) ?? "—"}%
+                        </span>
+                      </>
+                    ) : (
+                      <Badge variant="secondary">no scan</Badge>
+                    )}
+                  </div>
+                </div>
+              </button>
+              <div className="flex items-center pr-3">
+                <RowActions
+                  entity="location"
+                  id={loc.id}
+                  name={loc.name}
+                  cascadeDetail={`and its ${loc.reviewCount} review${loc.reviewCount === 1 ? "" : "s"}`}
+                />
               </div>
-              <div className="hidden items-center gap-8 md:flex">
-                <StarBar rating={loc.rating} />
-                <div className="text-sm">
-                  <span className="font-medium">{loc.reviewCount}</span>
-                  <span className="ml-1 text-muted-foreground">reviews</span>
-                </div>
-                <div className={`text-sm ${recencyColor(loc.daysSinceLastReview)}`}>
-                  {loc.daysSinceLastReview === null
-                    ? "no reviews"
-                    : `${loc.daysSinceLastReview}d since last`}
-                </div>
-                <div className="text-sm">
-                  {loc.latestScan?.arp !== null && loc.latestScan?.arp !== undefined ? (
-                    <>
-                      <span className="font-medium">ARP {loc.latestScan.arp.toFixed(1)}</span>
-                      <span className="ml-2 text-muted-foreground">
-                        SoLV {loc.latestScan.solv?.toFixed(0) ?? "—"}%
-                      </span>
-                    </>
-                  ) : (
-                    <Badge variant="secondary">no scan</Badge>
-                  )}
-                </div>
-              </div>
-            </button>
+            </div>
             {open && (
               <div className="border-t bg-muted/10 p-4">
                 <div className="grid gap-4 md:grid-cols-2">

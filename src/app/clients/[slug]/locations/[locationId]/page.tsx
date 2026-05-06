@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
+import { RowActions } from "@/components/row-actions";
 import {
   getClientBySlug,
   getLocationWithLatestScan,
@@ -54,6 +55,13 @@ export default async function LocationDetailPage({
               <Button variant="outline">Connect Google Business Profile</Button>
             </Link>
           )}
+          <RowActions
+            entity="location"
+            id={location.id}
+            name={location.name}
+            cascadeDetail="and all its reviews and scan history"
+            redirectTo={`/clients/${slug}`}
+          />
         </div>
       </div>
 
