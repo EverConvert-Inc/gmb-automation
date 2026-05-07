@@ -51,7 +51,7 @@ export async function POST(req: Request) {
     length: raw.length,
     contentType: req.headers.get("content-type"),
     contentEncoding: req.headers.get("content-encoding"),
-    preview: raw.slice(0, 200),
+    preview: raw.slice(0, 800),
   });
 
   let body: PostbackBody;
