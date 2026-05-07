@@ -4,9 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
+import { ScanManagementPanel } from "@/components/scan-management-panel";
 import {
+  getActiveScanForLocation,
   getClientBySlug,
   getLocationWithLatestScan,
+  listGridConfigsForLocation,
+  listKeywordsForLocation,
   listRecentScansForLocation,
 } from "@/lib/queries";
 import { computeScanMetrics } from "@/lib/metrics";
@@ -27,7 +31,12 @@ export default async function LocationDetailPage({
   if (!data || data.location.clientId !== client.id) notFound();
 
   const { location, latestScan, points, completedPoints, recentReviews } = data;
-  const recentScans = await listRecentScansForLocation(locationId);
+  const [recentScans, allKeywords, gridConfigList, activeScan] = await Promise.all([
+    listRecentScansForLocation(locationId),
+    listKeywordsForLocation(locationId),
+    listGridConfigsForLocation(locationId),
+    getActiveScanForLocation(locationId),
+  ]);
 
   const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
   const heatMapPoints = points.map((p) => ({
@@ -90,76 +99,59 @@ export default async function LocationDetailPage({
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Scan history</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentScans.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No scans yet.</div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="text-left text-muted-foreground">
-                  <tr>
-                    <th className="pb-2 font-medium">Started</th>
-                    <th className="pb-2 font-medium">Status</th>
-                    <th className="pb-2 font-medium">Triggered</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentScans.map((s) => (
-                    <tr key={s.id} className="border-t">
-                      <td className="py-2">{formatRelativeDate(s.startedAt)}</td>
-                      <td className="py-2">
-                        <Badge
-                          variant={
-                            s.status === "completed"
-                              ? "success"
-                              : s.status === "errored"
-                                ? "destructive"
-                                : "secondary"
-                          }
-                        >
-                          {s.status}
-                        </Badge>
-                      </td>
-                      <td className="py-2 text-muted-foreground">{s.triggeredBy}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </CardContent>
-        </Card>
+      <ScanManagementPanel
+        locationId={location.id}
+        allKeywords={allKeywords.map((k) => ({
+          id: k.id,
+          keyword: k.keyword,
+          isPrimary: k.isPrimary,
+        }))}
+        gridConfigs={gridConfigList.map((g) => ({
+          id: g.id,
+          name: g.name,
+          size: g.size,
+          radiusMiles: Number(g.radiusMiles),
+          isDefault: g.isDefault,
+        }))}
+        recentScans={recentScans.map((s) => ({
+          id: s.id,
+          startedAt: s.startedAt,
+          completedAt: s.completedAt,
+          status: s.status,
+          triggeredBy: s.triggeredBy,
+          totalKeywords: s.totalKeywords,
+          totalPoints: s.totalPoints,
+          gridConfigId: s.gridConfigId,
+        }))}
+        initialActiveScan={activeScan}
+      />
 
-        <Card id="reviews">
-          <CardHeader>
-            <CardTitle>Recent reviews</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentReviews.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No reviews yet.</div>
-            ) : (
-              <ul className="space-y-3">
-                {recentReviews.map((r) => (
-                  <li key={r.id} className="border-b pb-3 last:border-0">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-medium">{r.reviewerName ?? "Anonymous"}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {r.rating}★ · {formatRelativeDate(r.createdAt)}
-                      </div>
+      <Card id="reviews">
+        <CardHeader>
+          <CardTitle>Recent reviews</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {recentReviews.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No reviews yet.</div>
+          ) : (
+            <ul className="space-y-3">
+              {recentReviews.map((r) => (
+                <li key={r.id} className="border-b pb-3 last:border-0">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium">{r.reviewerName ?? "Anonymous"}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {r.rating}★ · {formatRelativeDate(r.createdAt)}
                     </div>
-                    {r.text && (
-                      <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">{r.text}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                  </div>
+                  {r.text && (
+                    <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">{r.text}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

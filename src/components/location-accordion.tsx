@@ -117,7 +117,9 @@ export function LocationAccordion({
                         View All Reviews
                       </Button>
                     </Link>
-                    <RunScanButton locationId={loc.id} />
+                    <Link href={`/clients/${clientSlug}/locations/${loc.id}#scan`}>
+                      <Button size="sm">Run / manage scans</Button>
+                    </Link>
                   </div>
                 </div>
               </div>
@@ -129,36 +131,3 @@ export function LocationAccordion({
   );
 }
 
-function RunScanButton({ locationId }: { locationId: string }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function run() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/scans/dispatch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locationId, triggeredBy: "manual" }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      {error && <span className="text-xs text-red-600">{error}</span>}
-      <Button size="sm" disabled={busy} onClick={run}>
-        {busy ? "Dispatching…" : "Run New Scan"}
-      </Button>
-    </div>
-  );
-}

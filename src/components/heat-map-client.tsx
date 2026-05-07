@@ -84,7 +84,7 @@ export function HeatMapClient({
         />
       ) : (
         <div className="flex h-[600px] items-center justify-center text-sm text-muted-foreground">
-          No scan data yet. Run a scan from the client view.
+          No scan data yet. Use the scan management panel below to run one.
         </div>
       )}
     </div>

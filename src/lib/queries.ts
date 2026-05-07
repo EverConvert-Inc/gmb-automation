@@ -1,7 +1,8 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   clients,
+  gridConfigs,
   locationDailyMetrics,
   locations,
   reviews,
@@ -168,6 +169,91 @@ export async function listRecentScansForLocation(locationId: string, limit = 30)
     where: eq(scans.locationId, locationId),
     orderBy: (cols, ops) => ops.desc(cols.startedAt),
     limit,
+  });
+}
+
+export type ActiveScanInfo = {
+  id: string;
+  status: string;
+  totalPoints: number;
+  completedPoints: number;
+};
+
+export async function getActiveScanForLocation(
+  locationId: string,
+): Promise<ActiveScanInfo | null> {
+  const scan = await db.query.scans.findFirst({
+    where: and(
+      eq(scans.locationId, locationId),
+      inArray(scans.status, ["queued", "running"]),
+    ),
+    orderBy: (cols, ops) => ops.desc(cols.startedAt),
+  });
+  if (!scan) return null;
+
+  const completed = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(scanPoints)
+    .where(
+      and(
+        eq(scanPoints.scanId, scan.id),
+        inArray(scanPoints.status, ["completed", "errored"]),
+      ),
+    );
+
+  return {
+    id: scan.id,
+    status: scan.status,
+    totalPoints: scan.totalPoints,
+    completedPoints: completed[0]?.count ?? 0,
+  };
+}
+
+export type ScanReplayConfig = {
+  keywordIds: string[];
+  gridConfigId: string | null;
+};
+
+export async function getScanReplayConfig(
+  scanId: string,
+): Promise<ScanReplayConfig | null> {
+  const scan = await db.query.scans.findFirst({
+    where: eq(scans.id, scanId),
+    columns: { id: true, gridConfigId: true, locationId: true },
+  });
+  if (!scan) return null;
+
+  const distinctKeywords = await db
+    .selectDistinct({ keywordId: scanPoints.keywordId })
+    .from(scanPoints)
+    .where(eq(scanPoints.scanId, scanId));
+
+  let gridConfigId: string | null = null;
+  if (scan.gridConfigId) {
+    const config = await db.query.gridConfigs.findFirst({
+      where: eq(gridConfigs.id, scan.gridConfigId),
+      columns: { id: true },
+    });
+    if (config) gridConfigId = config.id;
+  }
+
+  return {
+    keywordIds: distinctKeywords.map((row) => row.keywordId),
+    gridConfigId,
+  };
+}
+
+export async function listKeywordsForLocation(locationId: string) {
+  return db.query.keywords.findMany({
+    where: (cols, ops) => ops.eq(cols.locationId, locationId),
+    orderBy: (cols, ops) => [ops.desc(cols.isPrimary), ops.asc(cols.createdAt)],
+  });
+}
+
+export async function listGridConfigsForLocation(locationId: string) {
+  return db.query.gridConfigs.findMany({
+    where: (cols, ops) => ops.eq(cols.locationId, locationId),
+    orderBy: (cols, ops) => [ops.desc(cols.isDefault), ops.asc(cols.createdAt)],
   });
 }
 
