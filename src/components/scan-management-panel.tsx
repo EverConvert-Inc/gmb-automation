@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormError, Input, Label, Select, Textarea } from "@/components/ui/form";
 import { formatRelativeDate } from "@/lib/utils";
-import { Star } from "lucide-react";
+import { ChevronDown, Plus, Star } from "lucide-react";
 import { replayScan } from "@/app/clients/[slug]/locations/[locationId]/actions";
 
 const GRID_SIZES = [3, 5, 7, 9, 11, 13] as const;
@@ -91,6 +91,12 @@ export function ScanManagementPanel({
   const [toast, setToast] = useState<{ kind: "info" | "error"; message: string } | null>(
     null,
   );
+  const [formOpen, setFormOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash === "#scan-new") setFormOpen(true);
+  }, []);
 
   const parsedNewKeywords = useMemo(
     () =>
@@ -248,32 +254,61 @@ export function ScanManagementPanel({
       <CardHeader>
         <CardTitle>Scan management</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-8">
-        <section>
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Run a scan
-          </h3>
+      <CardContent className="space-y-6">
+        {isActive && activeScan && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+            Scan in progress · {activeScan.completedPoints}/{activeScan.totalPoints}{" "}
+            points complete · live updates above
+          </div>
+        )}
 
-          {isActive && activeScan && (
-            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
-              Scan in progress · {activeScan.completedPoints}/{activeScan.totalPoints}{" "}
-              points complete · live updates below
+        {toast && (
+          <div
+            className={`rounded-md border p-3 text-sm ${
+              toast.kind === "error"
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-blue-200 bg-blue-50 text-blue-700"
+            }`}
+          >
+            {toast.message}
+          </div>
+        )}
+
+        {!formOpen ? (
+          <button
+            type="button"
+            onClick={() => setFormOpen(true)}
+            disabled={isActive}
+            className="flex w-full items-center justify-between rounded-md border border-dashed bg-muted/20 p-4 text-left transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              <span className="font-medium">Run new scan</span>
+              <span className="text-xs text-muted-foreground">
+                {summarizeDefaults(allKeywords.length, defaultGrid)}
+              </span>
+            </span>
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          </button>
+        ) : (
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Run a scan
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setFormOpen(false);
+                  setFormError(null);
+                }}
+                className="text-xs text-muted-foreground hover:underline"
+              >
+                Cancel
+              </button>
             </div>
-          )}
 
-          {toast && (
-            <div
-              className={`mb-4 rounded-md border p-3 text-sm ${
-                toast.kind === "error"
-                  ? "border-red-200 bg-red-50 text-red-700"
-                  : "border-blue-200 bg-blue-50 text-blue-700"
-              }`}
-            >
-              {toast.message}
-            </div>
-          )}
-
-          <form onSubmit={submitForm} className="space-y-5">
+            <form onSubmit={submitForm} className="space-y-5">
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <Label className="mb-0">Keywords</Label>
@@ -441,7 +476,8 @@ export function ScanManagementPanel({
               </Button>
             </div>
           </form>
-        </section>
+          </section>
+        )}
 
         <section>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -523,4 +559,15 @@ function gridPointEstimate(
   if (mode === "existing" && existingGrid) return existingGrid.size * existingGrid.size;
   if (mode === "custom") return customSize * customSize;
   return 0;
+}
+
+function summarizeDefaults(
+  keywordCount: number,
+  defaultGrid: GridConfigOption | null,
+): string {
+  const kw = `${keywordCount} keyword${keywordCount === 1 ? "" : "s"}`;
+  const grid = defaultGrid
+    ? `${defaultGrid.size}×${defaultGrid.size}, ${Number(defaultGrid.radiusMiles)}mi`
+    : "no default grid";
+  return `${kw} · ${grid}`;
 }

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
+import { StarBar } from "@/components/star-bar";
 import {
   getActiveScanForLocation,
   getClientBySlug,
@@ -13,7 +14,6 @@ import {
   listKeywordsForLocation,
   listRecentScansForLocation,
 } from "@/lib/queries";
-import { computeScanMetrics } from "@/lib/metrics";
 import { formatRelativeDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,15 @@ export default async function LocationDetailPage({
   const data = await getLocationWithLatestScan(locationId);
   if (!data || data.location.clientId !== client.id) notFound();
 
-  const { location, latestScan, points, completedPoints, recentReviews } = data;
+  const {
+    location,
+    latestScan,
+    points,
+    completedPoints,
+    recentReviews,
+    rating,
+    reviewCount,
+  } = data;
   const [recentScans, allKeywords, gridConfigList, activeScan] = await Promise.all([
     listRecentScansForLocation(locationId),
     listKeywordsForLocation(locationId),
@@ -38,7 +46,6 @@ export default async function LocationDetailPage({
     getActiveScanForLocation(locationId),
   ]);
 
-  const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
   const heatMapPoints = points.map((p) => ({
     gridX: p.gridX,
     gridY: p.gridY,
@@ -46,15 +53,21 @@ export default async function LocationDetailPage({
     lng: Number(p.lng),
     rank: p.rank ?? null,
     status: p.status,
-    competitors: (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ?? [],
+    keywordId: p.keywordId,
+    competitors:
+      (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ?? [],
   }));
+  const latestScanKeywordIds = Array.from(
+    new Set(points.map((p) => p.keywordId)),
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="space-y-1">
           <h1 className="text-2xl font-semibold">{location.name}</h1>
           <p className="text-sm text-muted-foreground">{location.address}</p>
+          <StarBar rating={rating} reviewCount={reviewCount} />
         </div>
         <div className="flex items-center gap-2">
           {location.gbpOauthTokenId ? (
@@ -65,22 +78,6 @@ export default async function LocationDetailPage({
             </Link>
           )}
         </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        <Stat label="ARP" value={metrics.arp !== null ? metrics.arp.toFixed(1) : "—"} />
-        <Stat
-          label="SoLV"
-          value={metrics.totalPoints ? `${metrics.solv.toFixed(0)}%` : "—"}
-        />
-        <Stat
-          label="Coverage"
-          value={metrics.totalPoints ? `${metrics.coverage.toFixed(0)}%` : "—"}
-        />
-        <Stat
-          label="Last scan"
-          value={latestScan ? formatRelativeDate(latestScan.completedAt) : "—"}
-        />
       </div>
 
       <Card>
@@ -95,6 +92,13 @@ export default async function LocationDetailPage({
             initialPoints={heatMapPoints}
             initialStatus={latestScan?.status ?? null}
             initialCompletedPoints={completedPoints}
+            keywords={allKeywords.map((k) => ({
+              id: k.id,
+              keyword: k.keyword,
+              isPrimary: k.isPrimary,
+            }))}
+            latestScanKeywordIds={latestScanKeywordIds}
+            latestScanCompletedAt={latestScan?.completedAt ?? null}
           />
         </CardContent>
       </Card>
@@ -156,13 +160,3 @@ export default async function LocationDetailPage({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs uppercase text-muted-foreground">{label}</div>
-        <div className="mt-1 text-2xl font-semibold">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}

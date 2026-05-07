@@ -4,25 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StarBar } from "@/components/star-bar";
 import { recencyColor, formatRelativeDate } from "@/lib/utils";
-import { ChevronDown, MapPin, Star } from "lucide-react";
+import { ChevronDown, MapPin } from "lucide-react";
 import type { LocationCardRow } from "@/lib/queries";
 
-function StarBar({ rating }: { rating: number | null }) {
-  if (rating === null) return <span className="text-muted-foreground">—</span>;
-  const full = Math.round(rating);
-  return (
-    <div className="flex items-center gap-1">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <Star
-          key={i}
-          className={i <= full ? "h-4 w-4 fill-yellow-400 text-yellow-400" : "h-4 w-4 text-muted-foreground"}
-        />
-      ))}
-      <span className="ml-1 text-sm font-medium">{rating.toFixed(1)}</span>
-    </div>
-  );
-}
 
 export function LocationAccordion({
   clientSlug,

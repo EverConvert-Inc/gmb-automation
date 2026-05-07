@@ -24,7 +24,7 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
   const [picked, setPicked] = useState<PlaceCandidate | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [keywordsText, setKeywordsText] = useState("");
-  const [gridSize, setGridSize] = useState<number>(7);
+  const [gridSize, setGridSize] = useState<number>(11);
   const [radiusMiles, setRadiusMiles] = useState<number>(5);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

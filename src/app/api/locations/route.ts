@@ -13,7 +13,7 @@ const Body = z.object({
   lat: z.number(),
   lng: z.number(),
   keywords: z.array(z.string().min(1)).min(1),
-  gridSize: z.union([z.literal(3), z.literal(5), z.literal(7), z.literal(9), z.literal(11), z.literal(13)]).default(7),
+  gridSize: z.union([z.literal(3), z.literal(5), z.literal(7), z.literal(9), z.literal(11), z.literal(13)]).default(11),
   radiusMiles: z.number().positive().default(5),
 });
 

@@ -12,6 +12,7 @@ export type HeatMapPoint = {
   lng: number;
   rank: number | null;
   status?: string | null;
+  keywordId?: string;
   competitors?: Array<{ placeId: string; name: string; rank: number }>;
 };
 
@@ -78,7 +79,7 @@ export function HeatMap({
         <FitBounds points={points} />
         {points.map((p) => (
           <Marker
-            key={`${p.gridX}-${p.gridY}`}
+            key={`${p.gridX}-${p.gridY}-${p.keywordId ?? ""}`}
             position={[p.lat, p.lng]}
             icon={makeRankIcon(p.status, p.rank)}
           >

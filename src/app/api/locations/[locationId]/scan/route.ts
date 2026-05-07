@@ -42,6 +42,7 @@ export async function GET(
       lng: Number(p.lng),
       rank: p.rank ?? null,
       status: p.status,
+      keywordId: p.keywordId,
       competitors:
         (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ??
         [],

@@ -161,7 +161,28 @@ export async function getLocationWithLatestScan(locationId: string) {
     limit: 10,
   });
 
-  return { location, latestScan, points, completedPoints, recentReviews };
+  const reviewAgg = await db
+    .select({
+      rating: sql<number | null>`avg(${reviews.rating})`,
+      count: sql<number>`count(${reviews.id})::int`,
+    })
+    .from(reviews)
+    .where(eq(reviews.locationId, location.id));
+  const rating =
+    reviewAgg[0]?.rating !== null && reviewAgg[0]?.rating !== undefined
+      ? Number(reviewAgg[0].rating)
+      : null;
+  const reviewCount = reviewAgg[0]?.count ?? 0;
+
+  return {
+    location,
+    latestScan,
+    points,
+    completedPoints,
+    recentReviews,
+    rating,
+    reviewCount,
+  };
 }
 
 export async function listRecentScansForLocation(locationId: string, limit = 30) {
