@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listClientsWithRollup } from "@/lib/queries";
 import { formatRelativeDate } from "@/lib/utils";
-import { Plus } from "lucide-react";
+import { ArrowRight, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +66,7 @@ export default async function ClientListPage() {
                 <th className="px-4 py-3 font-medium">Reviews</th>
                 <th className="px-4 py-3 font-medium">Last scan</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="w-px px-4 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -88,6 +89,14 @@ export default async function ClientListPage() {
                     <Badge variant={c.status === "active" ? "success" : "secondary"}>
                       {c.status}
                     </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Link href={`/clients/${c.slug}`}>
+                      <Button size="sm" variant="outline">
+                        View client
+                        <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                      </Button>
+                    </Link>
                   </td>
                 </tr>
               ))}
