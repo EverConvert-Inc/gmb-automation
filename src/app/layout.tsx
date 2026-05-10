@@ -4,7 +4,10 @@ import "leaflet/dist/leaflet.css";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Local Visibility Platform",
+  title: {
+    default: "Local Visibility Platform",
+    template: "%s · Local Visibility Platform",
+  },
   description: "Internal GBP rank tracking and review dashboard",
 };
 

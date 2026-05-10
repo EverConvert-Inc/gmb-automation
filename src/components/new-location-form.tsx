@@ -90,7 +90,11 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      router.push(`/clients/${clientSlug}`);
+      const created = (await res.json().catch(() => null)) as { id?: string } | null;
+      const redirectTo = created?.id
+        ? `/clients/${clientSlug}?location=${created.id}&just_added=1`
+        : `/clients/${clientSlug}`;
+      router.push(redirectTo);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -100,6 +104,11 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
 
   return (
     <form onSubmit={submit} className="space-y-6">
+      <ol className="list-decimal space-y-1 rounded-md border bg-muted/20 p-4 pl-7 text-xs text-muted-foreground">
+        <li>Search for the business by name or address.</li>
+        <li>Pick the matching result from Google.</li>
+        <li>Add at least one keyword, then Create location.</li>
+      </ol>
       <div>
         <Label htmlFor="q">Search Google Places</Label>
         <div className="flex gap-2">
@@ -107,7 +116,7 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
             id="q"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Smith Law Atlanta or 123 Peachtree St NE, Atlanta, GA"
+            placeholder="e.g. Smith Law Atlanta or 123 Peachtree St NE, Atlanta, GA"
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -119,6 +128,11 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
             {searching ? "Searching…" : "Search"}
           </Button>
         </div>
+        {!picked && results.length === 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Run a search first, then pick a place to fill in the rest of the form.
+          </p>
+        )}
       </div>
 
       {results.length > 0 && (
@@ -168,8 +182,9 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
               id="kw"
               value={keywordsText}
               onChange={(e) => setKeywordsText(e.target.value)}
-              placeholder={"personal injury lawyer\ncar accident attorney"}
+              placeholder={"e.g.\npersonal injury lawyer\ncar accident attorney"}
               rows={4}
+              className="placeholder:italic"
             />
             <p className="mt-1 text-xs text-muted-foreground">
               One per line. The first becomes the primary keyword.

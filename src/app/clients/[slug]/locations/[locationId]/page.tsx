@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,16 @@ import {
 import { formatRelativeDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string; locationId: string }>;
+}): Promise<Metadata> {
+  const { locationId } = await params;
+  const data = await getLocationWithLatestScan(locationId);
+  return { title: data?.location.name ?? "Location" };
+}
 
 export default async function LocationDetailPage({
   params,

@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignOutButton } from "@/components/sign-out-button";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   let email: string | null = null;
@@ -29,20 +32,6 @@ export default async function SettingsPage() {
             <div className="text-sm">{email ?? "—"}</div>
           </div>
           <SignOutButton />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Internal notes</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>
-            All internal users see all clients (RFD §10.4). Role-based scoping is open work.
-          </p>
-          <p>
-            ARP defaults to <code>ignore_null</code>. Toggle is exposed per-call but not yet
-            surfaced in the UI.
-          </p>
         </CardContent>
       </Card>
     </div>

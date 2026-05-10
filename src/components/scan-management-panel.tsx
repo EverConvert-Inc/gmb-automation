@@ -358,8 +358,9 @@ export function ScanManagementPanel({
                 id="newKeywords"
                 value={newKeywordsText}
                 onChange={(e) => setNewKeywordsText(e.target.value)}
-                placeholder={"family lawyer\ndivorce attorney near me"}
+                placeholder={"e.g.\nfamily lawyer\ndivorce attorney near me"}
                 rows={3}
+                className="placeholder:italic"
               />
               <p className="mt-1 text-xs text-muted-foreground">
                 One per line. New keywords are saved to this location for future scans.

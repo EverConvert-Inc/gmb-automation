@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MapPin, Plus } from "lucide-react";
+import { MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type LocationSwitcherItem = {
@@ -20,7 +20,7 @@ export function LocationSwitcher({
     <div
       role="tablist"
       aria-label="Locations"
-      className="flex gap-2 overflow-x-auto border-b pb-px"
+      className="flex gap-1 overflow-x-auto border-b"
     >
       {locations.map((loc) => {
         const active = loc.id === currentLocationId;
@@ -32,10 +32,10 @@ export function LocationSwitcher({
             aria-selected={active}
             scroll={false}
             className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 px-3 py-2 text-sm font-medium transition-colors",
+              "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors",
               active
-                ? "border-border bg-card text-foreground"
-                : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+                ? "border-primary bg-muted/40 text-foreground"
+                : "border-transparent text-muted-foreground hover:bg-muted/30 hover:text-foreground",
             )}
           >
             <MapPin className="h-3.5 w-3.5" />
@@ -43,13 +43,6 @@ export function LocationSwitcher({
           </Link>
         );
       })}
-      <Link
-        href={`/clients/${clientSlug}/locations/new`}
-        className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 border-dashed px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Add location
-      </Link>
     </div>
   );
 }

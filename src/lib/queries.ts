@@ -19,25 +19,52 @@ export type ClientRow = {
   weightedRating: number | null;
   totalReviews: number;
   lastScanAt: Date | null;
+  lastScanLocationName: string | null;
 };
 
 export async function listClientsWithRollup(): Promise<ClientRow[]> {
+  // Use correlated subqueries so reviews and scans don't multiply each other
+  // via a Cartesian join (which inflated `totalReviews` by the per-location
+  // scan count when both were joined-and-grouped together).
   const rows = await db
     .select({
       id: clients.id,
       name: clients.name,
       slug: clients.slug,
       status: clients.status,
-      locationCount: sql<number>`count(distinct ${locations.id})::int`.as("loc_count"),
-      ratingSum: sql<number>`coalesce(sum(${reviews.rating}), 0)::int`.as("rating_sum"),
-      totalReviews: sql<number>`count(${reviews.id})::int`.as("total_reviews"),
-      lastScanAt: sql<Date | null>`max(${scans.completedAt})`.as("last_scan_at"),
+      locationCount: sql<number>`(
+        SELECT COUNT(*)::int
+        FROM ${locations} l
+        WHERE l.client_id = ${clients.id}
+      )`.as("loc_count"),
+      ratingSum: sql<number>`(
+        SELECT COALESCE(SUM(r.rating), 0)::int
+        FROM ${reviews} r
+        JOIN ${locations} l ON l.id = r.location_id
+        WHERE l.client_id = ${clients.id}
+      )`.as("rating_sum"),
+      totalReviews: sql<number>`(
+        SELECT COUNT(*)::int
+        FROM ${reviews} r
+        JOIN ${locations} l ON l.id = r.location_id
+        WHERE l.client_id = ${clients.id}
+      )`.as("total_reviews"),
+      lastScanAt: sql<Date | null>`(
+        SELECT MAX(s.completed_at)
+        FROM ${scans} s
+        JOIN ${locations} l ON l.id = s.location_id
+        WHERE l.client_id = ${clients.id}
+      )`.as("last_scan_at"),
+      lastScanLocationName: sql<string | null>`(
+        SELECT l.name
+        FROM ${scans} s
+        JOIN ${locations} l ON l.id = s.location_id
+        WHERE l.client_id = ${clients.id} AND s.completed_at IS NOT NULL
+        ORDER BY s.completed_at DESC
+        LIMIT 1
+      )`.as("last_scan_location_name"),
     })
     .from(clients)
-    .leftJoin(locations, eq(locations.clientId, clients.id))
-    .leftJoin(reviews, eq(reviews.locationId, locations.id))
-    .leftJoin(scans, eq(scans.locationId, locations.id))
-    .groupBy(clients.id)
     .orderBy(clients.name);
 
   return rows.map((r) => ({
@@ -49,6 +76,7 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     weightedRating: r.totalReviews > 0 ? r.ratingSum / r.totalReviews : null,
     totalReviews: r.totalReviews ?? 0,
     lastScanAt: r.lastScanAt ?? null,
+    lastScanLocationName: r.lastScanLocationName ?? null,
   }));
 }
 

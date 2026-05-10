@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,21 +18,29 @@ import {
   listRecentScansForLocation,
 } from "@/lib/queries";
 import { formatRelativeDate } from "@/lib/utils";
-import { Plus } from "lucide-react";
+import { CheckCircle2, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const client = await getClientBySlug(slug);
+  return { title: client?.name ?? "Client" };
+}
 
 export default async function ClientDashboardPage({
   params,
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ location?: string }>;
+  searchParams: Promise<{ location?: string; just_added?: string }>;
 }) {
-  const [{ slug }, { location: locationParam }] = await Promise.all([
-    params,
-    searchParams,
-  ]);
+  const [{ slug }, { location: locationParam, just_added: justAdded }] =
+    await Promise.all([params, searchParams]);
   const client = await getClientBySlug(slug);
   if (!client) notFound();
 
@@ -73,6 +82,8 @@ export default async function ClientDashboardPage({
   }
 
   const selectedId = locs.find((l) => l.id === locationParam)?.id ?? locs[0].id;
+  const justAddedThis = justAdded === "1" && selectedId === locationParam;
+
   const data = await getLocationWithLatestScan(selectedId);
   if (!data) notFound();
 
@@ -104,6 +115,8 @@ export default async function ClientDashboardPage({
       (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ?? [],
   }));
   const latestScanKeywordIds = Array.from(new Set(points.map((p) => p.keywordId)));
+  const hasGbpConnected = location.gbpOauthTokenId !== null;
+  const hasNoReviews = reviewCount === 0;
 
   return (
     <div className="space-y-6">
@@ -118,6 +131,11 @@ export default async function ClientDashboardPage({
             </span>
           </div>
         </div>
+        <Link href={`/clients/${client.slug}/locations/new`}>
+          <Button variant="outline">
+            <Plus className="mr-2 h-4 w-4" /> Add location
+          </Button>
+        </Link>
       </div>
 
       <LocationSwitcher
@@ -126,14 +144,37 @@ export default async function ClientDashboardPage({
         currentLocationId={selectedId}
       />
 
+      {justAddedThis && (
+        <div className="flex items-start gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
+          <div className="flex-1">
+            <div className="font-medium">{location.name} added.</div>
+            <div className="mt-0.5 text-green-800">
+              Run a scan below to populate the heat map. Reviews will sync once
+              Google Business Profile is connected.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold">{location.name}</h2>
           <p className="text-sm text-muted-foreground">{location.address}</p>
-          <StarBar rating={rating} reviewCount={reviewCount} />
+          {rating !== null ? (
+            <StarBar rating={rating} reviewCount={reviewCount} />
+          ) : hasGbpConnected ? (
+            <p className="text-sm text-muted-foreground">
+              Awaiting first review sync from Google.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No reviews yet. Connect Google Business Profile to start syncing.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {location.gbpOauthTokenId ? (
+          {hasGbpConnected ? (
             <Badge variant="success">GBP connected</Badge>
           ) : (
             <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
@@ -149,6 +190,7 @@ export default async function ClientDashboardPage({
         </CardHeader>
         <CardContent>
           <HeatMapClient
+            key={location.id}
             locationId={location.id}
             centerLat={Number(location.lat)}
             centerLng={Number(location.lng)}
@@ -167,6 +209,7 @@ export default async function ClientDashboardPage({
       </Card>
 
       <ScanManagementPanel
+        key={location.id}
         locationId={location.id}
         allKeywords={allKeywords.map((k) => ({
           id: k.id,
@@ -199,7 +242,22 @@ export default async function ClientDashboardPage({
         </CardHeader>
         <CardContent>
           {recentReviews.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No reviews yet.</div>
+            <div className="space-y-3 py-6 text-center text-sm text-muted-foreground">
+              <p>No reviews yet for this location.</p>
+              {!hasGbpConnected && (
+                <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
+                  <Button size="sm" variant="outline">
+                    Connect Google Business Profile to sync reviews
+                  </Button>
+                </Link>
+              )}
+              {hasGbpConnected && hasNoReviews && (
+                <p className="text-xs">
+                  Reviews sync automatically every day. The first batch will
+                  appear here once Google returns it.
+                </p>
+              )}
+            </div>
           ) : (
             <ul className="space-y-3">
               {recentReviews.map((r) => (

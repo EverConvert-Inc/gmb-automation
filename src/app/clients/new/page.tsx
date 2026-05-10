@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import { NewClientForm } from "@/components/new-client-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export const metadata: Metadata = { title: "New client" };
 
 export default function NewClientPage() {
   return (

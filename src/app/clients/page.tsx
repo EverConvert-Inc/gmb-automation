@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,8 @@ import { formatRelativeDate } from "@/lib/utils";
 import { ArrowRight, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Clients" };
 
 export default async function ClientListPage() {
   let rows;
@@ -35,7 +38,7 @@ export default async function ClientListPage() {
         <div>
           <h1 className="text-2xl font-semibold">Clients</h1>
           <p className="text-sm text-muted-foreground">
-            {rows.length} clients · GBP rollup across all managed locations
+            {rows.length} clients · performance summary across all client locations
           </p>
         </div>
         <Link href="/clients/new">
@@ -72,18 +75,25 @@ export default async function ClientListPage() {
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3">
-                    <Link href={`/clients/${c.slug}`} className="font-medium hover:underline">
-                      {c.name}
-                    </Link>
-                  </td>
+                  <td className="px-4 py-3 font-medium">{c.name}</td>
                   <td className="px-4 py-3">{c.locationCount}</td>
                   <td className="px-4 py-3">
                     {c.weightedRating !== null ? c.weightedRating.toFixed(1) : "—"}
                   </td>
                   <td className="px-4 py-3">{c.totalReviews}</td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {formatRelativeDate(c.lastScanAt)}
+                    {c.lastScanAt ? (
+                      <>
+                        {formatRelativeDate(c.lastScanAt)}
+                        {c.locationCount > 1 && c.lastScanLocationName && (
+                          <span className="ml-1 text-xs">
+                            ({c.lastScanLocationName})
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Badge variant={c.status === "active" ? "success" : "secondary"}>
@@ -92,7 +102,7 @@ export default async function ClientListPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link href={`/clients/${c.slug}`}>
-                      <Button size="sm" variant="outline">
+                      <Button size="sm" variant="outline" className="whitespace-nowrap">
                         View client
                         <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
                       </Button>
