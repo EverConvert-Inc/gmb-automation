@@ -42,7 +42,6 @@ export function ClientsTable({
             <th className="px-4 py-3 font-medium">Locations</th>
             <th className="px-4 py-3 font-medium">Rating</th>
             <th className="px-4 py-3 font-medium">Reviews</th>
-            <th className="px-4 py-3 font-medium">30d</th>
             <th className="px-4 py-3 font-medium">Last scan</th>
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="w-px px-4 py-3" />
@@ -85,15 +84,6 @@ export function ClientsTable({
                     {c.weightedRating !== null ? c.weightedRating.toFixed(1) : "—"}
                   </td>
                   <td className="px-4 py-3">{c.totalReviews}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-2 tabular-nums">
-                      <span className="font-medium">{c.velocity.this30}</span>
-                      <DeltaPill
-                        current={c.velocity.this30}
-                        prior={c.velocity.prior30}
-                      />
-                    </span>
-                  </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {c.lastScanAt ? (
                       <>
@@ -140,7 +130,7 @@ export function ClientsTable({
                 {isExpanded && (
                   <tr id={`client-${c.id}-locations`}>
                     <td
-                      colSpan={9}
+                      colSpan={8}
                       className="border-b bg-muted/10 px-4 py-4 last:border-0"
                     >
                       {clientLocs.length === 0 ? (
