@@ -15,7 +15,7 @@ export async function findGbpLocationByPlaceId({
   refreshTokenEncrypted: string;
   placeId: string;
 }): Promise<GbpLocationMatch | null> {
-  const token = await bearerFromCredential(refreshTokenEncrypted);
+  const token = await getAccessToken(refreshTokenEncrypted);
   const accountsRes = await fetch(
     "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
     { headers: { Authorization: `Bearer ${token}` } },
@@ -101,7 +101,7 @@ export async function fetchPerformanceMetrics({
   startDate: Date;
   endDate: Date;
 }): Promise<PerformanceTimeSeries[]> {
-  const token = await bearerFromCredential(refreshTokenEncrypted);
+  const token = await getAccessToken(refreshTokenEncrypted);
   const url = new URL(
     `https://businessprofileperformance.googleapis.com/v1/locations/${locationId}:fetchMultiDailyMetricsTimeSeries`,
   );
