@@ -34,6 +34,13 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        brand: {
+          DEFAULT: "hsl(var(--brand))",
+          foreground: "hsl(var(--brand-foreground))",
+          dark: "hsl(var(--brand-dark))",
+          "dark-foreground": "hsl(var(--brand-dark-foreground))",
+          muted: "hsl(var(--brand-muted))",
+        },
         rank: {
           excellent: "#22c55e",
           good: "#facc15",
@@ -42,10 +49,17 @@ const config: Config = {
           none: "#9ca3af",
         },
       },
+      fontFamily: {
+        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "var(--font-sans)", "sans-serif"],
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        card: "0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06)",
       },
     },
   },
