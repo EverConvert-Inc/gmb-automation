@@ -2,9 +2,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "./db/client";
 import { serpRankings, serpScanJobs, trackedKeywords } from "./db/schema";
 import {
+  detectCity,
   dispatchWithConcurrency,
   extractHostname,
   findOrganicRankForDomain,
+  METRO_LOCATIONS,
   pullOrganicSerp,
   type SerpOrganicItem,
 } from "./dataforseo";
@@ -75,6 +77,14 @@ export async function runSerpScan(
         throw new Error(`invalid target_url: ${kw.targetUrl}`);
       }
 
+      // Three searches per keyword:
+      //  1. national: full keyword, no location
+      //  2. geo (full kw): full keyword, from within the city
+      //  3. geo (bare kw): keyword with city stripped, from within the city
+      // The city is auto-detected from the keyword text; if detection fails,
+      // we fall back to the explicit geoCity on the tracked_keyword (which
+      // covers cases where the city isn't in the keyword text).
+
       let nationalItems: SerpOrganicItem[] | null = null;
       try {
         nationalItems = await pullOrganicSerp(kw.keyword);
@@ -83,18 +93,45 @@ export async function runSerpScan(
       }
       const nationalMatch = findOrganicRankForDomain(nationalItems, hostname);
 
+      const detection = detectCity(kw.keyword);
+      const effectiveCity = detection.city ?? kw.geoCity ?? null;
+      const effectiveCode = effectiveCity
+        ? (METRO_LOCATIONS[effectiveCity] ?? kw.geoLocationCode ?? null)
+        : (kw.geoLocationCode ?? null);
+
       let geoMatch: { rank: number | null; url: string | null } = {
         rank: null,
         url: null,
       };
-      if (kw.geoLocationCode) {
+      let geoBareMatch: { rank: number | null; url: string | null } = {
+        rank: null,
+        url: null,
+      };
+
+      if (effectiveCode) {
         let geoItems: SerpOrganicItem[] | null = null;
         try {
-          geoItems = await pullOrganicSerp(kw.keyword, kw.geoLocationCode);
+          geoItems = await pullOrganicSerp(kw.keyword, effectiveCode);
         } catch (err) {
           throw new Error(`geo: ${(err as Error).message}`);
         }
         geoMatch = findOrganicRankForDomain(geoItems, hostname);
+
+        // Only do the bare search if the city was detected IN the keyword
+        // (so we have a meaningful "bare" version). If detection failed but
+        // the user set an explicit geoCity, the bare and full are the same.
+        if (detection.city && detection.bareKeyword !== kw.keyword) {
+          let bareItems: SerpOrganicItem[] | null = null;
+          try {
+            bareItems = await pullOrganicSerp(
+              detection.bareKeyword,
+              effectiveCode,
+            );
+          } catch (err) {
+            throw new Error(`geo-bare: ${(err as Error).message}`);
+          }
+          geoBareMatch = findOrganicRankForDomain(bareItems, hostname);
+        }
       }
 
       await db.insert(serpRankings).values({
@@ -106,8 +143,10 @@ export async function runSerpScan(
         nationalUrl: nationalMatch.url,
         geoRank: geoMatch.rank,
         geoUrl: geoMatch.url,
-        geoCity: kw.geoCity,
-        geoLocationCode: kw.geoLocationCode,
+        geoBareRank: geoBareMatch.rank,
+        geoBareUrl: geoBareMatch.url,
+        geoCity: effectiveCity,
+        geoLocationCode: effectiveCode,
         checkedAt: new Date(),
       });
     },

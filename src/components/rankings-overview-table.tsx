@@ -99,8 +99,15 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
             <th className="px-3 py-2 font-medium">Client</th>
             <th className="px-3 py-2 font-medium">H1 / Target Keyword</th>
             <th className="px-3 py-2 font-medium">URL</th>
-            <th className="px-3 py-2 font-medium text-right">Keyword Rank</th>
-            <th className="px-3 py-2 font-medium text-right">Geo + Keyword Rank</th>
+            <th className="px-3 py-2 font-medium text-right" title="Full keyword searched without a location filter">
+              National
+            </th>
+            <th className="px-3 py-2 font-medium text-right" title="Full keyword (including city) searched from within the city">
+              In-city · full
+            </th>
+            <th className="px-3 py-2 font-medium text-right" title="Keyword with city stripped (e.g. 'car accident lawyer') searched from within the city. Usually the most meaningful.">
+              In-city · bare
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -109,7 +116,14 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
               <td className="px-3 py-2">
                 <ClientBadge name={r.clientName} slug={r.clientSlug} />
               </td>
-              <td className="px-3 py-2 font-medium">{r.keyword}</td>
+              <td className="px-3 py-2">
+                <div className="font-medium">{r.keyword}</div>
+                {r.bareKeyword && (
+                  <div className="text-[11px] text-muted-foreground">
+                    bare: &ldquo;{r.bareKeyword}&rdquo;
+                  </div>
+                )}
+              </td>
               <td className="px-3 py-2 text-muted-foreground" title={r.targetUrl}>
                 <a
                   href={r.targetUrl}
@@ -124,9 +138,9 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
                 <RankCell ann={r.national} />
               </td>
               <td className="px-3 py-2 text-right">
-                {r.geo ? (
+                {r.geoFull ? (
                   <div className="flex flex-col items-end">
-                    <RankCell ann={r.geo} />
+                    <RankCell ann={r.geoFull} />
                     {r.geoCity && (
                       <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                         {r.geoCity}
@@ -137,6 +151,20 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
                   <span className="text-xs italic text-muted-foreground">
                     national only
                   </span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-right">
+                {r.geoBare ? (
+                  <RankCell ann={r.geoBare} />
+                ) : r.geoFull ? (
+                  <span
+                    className="text-xs italic text-muted-foreground"
+                    title="No city in the keyword to strip — same as full"
+                  >
+                    same as full
+                  </span>
+                ) : (
+                  <span className="text-xs italic text-muted-foreground">—</span>
                 )}
               </td>
             </tr>

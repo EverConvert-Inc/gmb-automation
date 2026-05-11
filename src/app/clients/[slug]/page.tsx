@@ -19,7 +19,7 @@ import {
   getPerformanceInsights,
   getRecentScanComparisons,
   getReviewInsights,
-  getSerpRankingsForClient,
+  getRankingsOverview,
   listGridConfigsForLocation,
   listKeywordsForLocation,
   listLocationsForClient,
@@ -129,7 +129,7 @@ export default async function ClientDashboardPage({
     getReviewInsights(selectedId),
     getRecentScanComparisons(selectedId, 6),
     getPerformanceInsights(selectedId),
-    getSerpRankingsForClient(client.id),
+    getRankingsOverview(client.id),
   ]);
 
   const heatMapPoints = points.map((p) => ({

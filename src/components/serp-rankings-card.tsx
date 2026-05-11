@@ -3,24 +3,64 @@ import { AlertTriangle, KeyRound, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
-import { NumericDeltaPill, SparkLine } from "@/components/charts";
-import { formatRelativeDate } from "@/lib/utils";
-import type { SerpKeywordRollup } from "@/lib/queries";
+import type { RankAnnotation, RankingsOverviewRow } from "@/lib/queries";
 
-function renderRank(rank: number | null): string {
-  return rank == null ? "—" : `#${rank}`;
+const NATIONAL_ONLY_KEY = "__national__";
+
+function RankCell({ ann }: { ann: RankAnnotation | null }) {
+  if (ann == null) {
+    return <span className="text-xs italic text-muted-foreground">—</span>;
+  }
+  if (ann.kind === "nr") {
+    return <span className="text-muted-foreground">NR</span>;
+  }
+  if (ann.kind === "nr_lost") {
+    return (
+      <span className="text-red-700" title={`Previously #${ann.priorRank}`}>
+        NR (LOST)
+      </span>
+    );
+  }
+  const { rank, delta, isNew, isWrongPage, actualUrl } = ann;
+  let annotation: React.ReactNode = null;
+  let toneClass = "text-foreground";
+  if (isNew) {
+    annotation = <span className="ml-1 text-green-700">(NEW)</span>;
+    toneClass = "text-green-700";
+  } else if (delta != null && delta > 0) {
+    annotation = <span className="ml-1 text-green-700">(+{delta})</span>;
+    toneClass = "text-green-700";
+  } else if (delta != null && delta < 0) {
+    annotation = <span className="ml-1 text-red-700">({delta})</span>;
+    toneClass = "text-red-700";
+  } else if (delta === 0) {
+    annotation = <span className="ml-1 text-muted-foreground">(–)</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`font-medium tabular-nums ${toneClass}`}>#{rank}</span>
+      {annotation}
+      {isWrongPage && (
+        <span
+          title={actualUrl ? `Ranking page: ${actualUrl}` : "Wrong page"}
+          className="inline-flex items-center text-amber-700"
+        >
+          <AlertTriangle className="h-3 w-3" />
+          <span className="ml-0.5 text-xs">other URL</span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function SerpRankingsCard({
   data,
   clientSlug,
 }: {
-  data: SerpKeywordRollup[];
+  data: RankingsOverviewRow[];
   clientSlug: string;
 }) {
-  const activeRows = data.filter((r) => r.isActive);
-
-  if (activeRows.length === 0) {
+  if (data.length === 0) {
     return (
       <Card>
         <CardHeader className="border-b border-border/60 pb-4">
@@ -41,7 +81,7 @@ export function SerpRankingsCard({
               <p className="text-xs text-muted-foreground">
                 Add the keywords you want to rank for and the target pages on
                 your site. We&apos;ll check Google every Thursday and surface
-                national + geo-targeted ranks here.
+                national + in-city ranks here.
               </p>
             </div>
             <Link href={`/clients/${clientSlug}/keywords`}>
@@ -55,6 +95,21 @@ export function SerpRankingsCard({
     );
   }
 
+  // Group keywords by city (or "national only" if no city).
+  const byCity = new Map<string, RankingsOverviewRow[]>();
+  for (const r of data) {
+    const key = r.geoCity ?? NATIONAL_ONLY_KEY;
+    const list = byCity.get(key);
+    if (list) list.push(r);
+    else byCity.set(key, [r]);
+  }
+  // City sections sorted alphabetically; "National only" last.
+  const cityKeys = Array.from(byCity.keys()).sort((a, b) => {
+    if (a === NATIONAL_ONLY_KEY) return 1;
+    if (b === NATIONAL_ONLY_KEY) return -1;
+    return a.localeCompare(b);
+  });
+
   return (
     <Card>
       <CardHeader className="border-b border-border/60 pb-4">
@@ -63,9 +118,11 @@ export function SerpRankingsCard({
             <Search className="h-4 w-4 text-brand" />
             Search rankings
             <InfoTooltip>
-              Organic Google ranks for each tracked keyword, pulled weekly via
-              DataForSEO. National (US) and geo-targeted by city. Lower is
-              better — #1 is the top result.
+              Three ranks per keyword from DataForSEO: the keyword searched
+              nationally, the full keyword searched from within the target
+              city, and the keyword with the city stripped (e.g.
+              &ldquo;car accident lawyer&rdquo;) searched from within the
+              city. Lower number = closer to #1 = better.
             </InfoTooltip>
           </span>
           <Link href={`/clients/${clientSlug}/keywords`}>
@@ -75,107 +132,112 @@ export function SerpRankingsCard({
           </Link>
         </CardTitle>
       </CardHeader>
-      <CardContent className="pt-6">
-        <div className="overflow-hidden rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-medium">Keyword</th>
-                <th className="px-3 py-2 font-medium">Target</th>
-                <th className="px-3 py-2 font-medium text-right">National</th>
-                <th className="px-3 py-2 font-medium text-right">Geo</th>
-                <th className="px-3 py-2 font-medium">Last checked</th>
-                <th className="px-3 py-2 font-medium">Trend</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeRows.map((r) => {
-                const nationalDelta = (
-                  <NumericDeltaPill
-                    current={r.latest?.nationalRank ?? null}
-                    prior={r.weekAgo?.nationalRank ?? null}
-                    precision={0}
-                    invert
-                  />
-                );
-                const geoDelta = (
-                  <NumericDeltaPill
-                    current={r.latest?.geoRank ?? null}
-                    prior={r.weekAgo?.geoRank ?? null}
-                    precision={0}
-                    invert
-                  />
-                );
-                const sparkValues = r.history.map((h) =>
-                  h.rank === null ? null : -h.rank,
-                );
-                return (
-                  <tr key={r.trackedKeywordId} className="border-b last:border-0">
-                    <td className="px-3 py-2 font-medium">{r.keyword}</td>
-                    <td
-                      className="px-3 py-2 text-muted-foreground"
-                      title={r.targetUrl}
-                    >
-                      <span className="block max-w-[28ch] truncate">
-                        {r.targetUrl.replace(/^https?:\/\//, "")}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {nationalDelta}
-                        <span>{renderRank(r.latest?.nationalRank ?? null)}</span>
-                        {r.nationalIsWrongPage && (
-                          <span title={`Ranking page: ${r.latest?.nationalUrl}`}>
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {r.geoCity ? (
+      <CardContent className="space-y-6 pt-6">
+        {cityKeys.map((city) => {
+          const rows = byCity.get(city)!;
+          const isNationalOnly = city === NATIONAL_ONLY_KEY;
+          return (
+            <section key={city}>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {isNationalOnly ? "National only" : city}
+              </h3>
+              <div className="overflow-hidden rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">H1 / Target Keyword</th>
+                      <th className="px-3 py-2 font-medium">URL</th>
+                      <th className="px-3 py-2 font-medium text-right">
+                        <span className="inline-flex items-center gap-1">
+                          National
+                          <InfoTooltip>
+                            The exact keyword searched without a location
+                            filter — i.e. nationwide.
+                          </InfoTooltip>
+                        </span>
+                      </th>
+                      {!isNationalOnly && (
                         <>
-                          <div className="flex items-center justify-end gap-1.5">
-                            {geoDelta}
-                            <span>{renderRank(r.latest?.geoRank ?? null)}</span>
-                            {r.geoIsWrongPage && (
-                              <span title={`Ranking page: ${r.latest?.geoUrl}`}>
-                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            {r.geoCity}
-                          </div>
+                          <th className="px-3 py-2 font-medium text-right">
+                            <span className="inline-flex items-center gap-1">
+                              In {city}: full kw
+                              <InfoTooltip>
+                                The exact keyword (including the city name)
+                                searched from within {city}.
+                              </InfoTooltip>
+                            </span>
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            <span className="inline-flex items-center gap-1">
+                              In {city}: bare kw
+                              <InfoTooltip>
+                                The keyword with the city stripped (e.g.
+                                &ldquo;car accident lawyer&rdquo; for
+                                &ldquo;{city} car accident lawyer&rdquo;)
+                                searched from within {city}. Usually the most
+                                meaningful — most local searchers don&apos;t
+                                type their city.
+                              </InfoTooltip>
+                            </span>
+                          </th>
                         </>
-                      ) : (
-                        <span className="text-xs italic text-muted-foreground">
-                          national only
-                        </span>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {r.latest ? formatRelativeDate(r.latest.checkedAt) : "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      {sparkValues.length >= 2 ? (
-                        <SparkLine
-                          values={sparkValues}
-                          width={120}
-                          height={28}
-                          className="text-brand"
-                        />
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          building history
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.trackedKeywordId} className="border-b last:border-0">
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{r.keyword}</div>
+                          {r.bareKeyword && (
+                            <div className="text-[11px] text-muted-foreground">
+                              bare: &ldquo;{r.bareKeyword}&rdquo;
+                            </div>
+                          )}
+                        </td>
+                        <td
+                          className="px-3 py-2 text-muted-foreground"
+                          title={r.targetUrl}
+                        >
+                          <a
+                            href={r.targetUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block max-w-[32ch] truncate text-brand hover:underline"
+                          >
+                            {r.targetUrl.replace(/^https?:\/\//, "")}
+                          </a>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <RankCell ann={r.national} />
+                        </td>
+                        {!isNationalOnly && (
+                          <>
+                            <td className="px-3 py-2 text-right">
+                              <RankCell ann={r.geoFull} />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {r.bareKeyword ? (
+                                <RankCell ann={r.geoBare} />
+                              ) : (
+                                <span
+                                  className="text-xs italic text-muted-foreground"
+                                  title="No city in the keyword to strip — bare = full"
+                                >
+                                  same as full
+                                </span>
+                              )}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })}
       </CardContent>
     </Card>
   );

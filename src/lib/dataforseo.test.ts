@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeTag,
+  detectCity,
   dispatchWithConcurrency,
   encodeTag,
   estimateScanCost,
   findRankForPlaceId,
+  stripCityFromKeyword,
 } from "./dataforseo";
 
 describe("encode/decodeTag", () => {
@@ -103,5 +105,59 @@ describe("estimateScanCost", () => {
   it("matches the RFD's 7x7 x 5kw ~ $0.147 estimate", () => {
     const cost = estimateScanCost(7, 5);
     expect(cost).toBeCloseTo(0.147, 3);
+  });
+});
+
+describe("detectCity / stripCityFromKeyword", () => {
+  it("detects a city at the start of the keyword", () => {
+    const { city, bareKeyword } = detectCity("Atlanta Car Accident Lawyer");
+    expect(city).toBe("Atlanta");
+    expect(bareKeyword).toBe("Car Accident Lawyer");
+  });
+
+  it("detects a city at the end with a preposition (in)", () => {
+    const { city, bareKeyword } = detectCity(
+      "Whiplash Injury Treatment in Atlanta",
+    );
+    expect(city).toBe("Atlanta");
+    expect(bareKeyword).toBe("Whiplash Injury Treatment");
+  });
+
+  it("detects a city at the end with a Spanish preposition (de)", () => {
+    const { city, bareKeyword } = detectCity(
+      "Abogado de Compensación Laboral de Miami",
+    );
+    expect(city).toBe("Miami");
+    expect(bareKeyword).toBe("Abogado de Compensación Laboral");
+  });
+
+  it("detects a city at the end with a Spanish preposition (en)", () => {
+    const { city, bareKeyword } = detectCity(
+      "El Abogado de Compensación de los Trabajadores en Atlanta",
+    );
+    expect(city).toBe("Atlanta");
+    expect(bareKeyword).toBe(
+      "El Abogado de Compensación de los Trabajadores",
+    );
+  });
+
+  it("prefers multi-word cities over substrings", () => {
+    const { city, bareKeyword } = detectCity(
+      "Coral Gables Workers' Compensation Lawyer",
+    );
+    expect(city).toBe("Coral Gables");
+    expect(bareKeyword).toBe("Workers' Compensation Lawyer");
+  });
+
+  it("returns null city when no known city appears", () => {
+    const { city, bareKeyword } = detectCity("Drug Rehab");
+    expect(city).toBeNull();
+    expect(bareKeyword).toBe("Drug Rehab");
+  });
+
+  it("strips a city case-insensitively", () => {
+    expect(stripCityFromKeyword("ATLANTA car accident lawyer", "Atlanta")).toBe(
+      "car accident lawyer",
+    );
   });
 });

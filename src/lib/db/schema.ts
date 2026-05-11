@@ -276,6 +276,8 @@ export const serpRankings = pgTable(
     nationalUrl: text("national_url"),
     geoRank: integer("geo_rank"),
     geoUrl: text("geo_url"),
+    geoBareRank: integer("geo_bare_rank"),
+    geoBareUrl: text("geo_bare_url"),
     geoCity: text("geo_city"),
     geoLocationCode: integer("geo_location_code"),
     checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),

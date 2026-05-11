@@ -284,3 +284,47 @@ export function getLocationCodeForCity(
   if (!city) return undefined;
   return METRO_LOCATIONS[city];
 }
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Find a city from METRO_LOCATIONS in the keyword and return both the
+// detected city + the keyword with the city removed (the "bare" version).
+// Multi-word cities are tried first so "Coral Gables" wins over a hypothetical
+// shorter "Coral". Returns { city: null, bareKeyword: keyword } if no city
+// is found.
+export function detectCity(keyword: string): {
+  city: string | null;
+  bareKeyword: string;
+} {
+  const cities = Object.keys(METRO_LOCATIONS).sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const city of cities) {
+    const re = new RegExp(`\\b${escapeRegExp(city)}\\b`, "i");
+    if (re.test(keyword)) {
+      return { city, bareKeyword: stripCityFromKeyword(keyword, city) };
+    }
+  }
+  return { city: null, bareKeyword: keyword };
+}
+
+// Remove a known city name from a keyword + clean up dangling prepositions.
+// Handles patterns like "in Atlanta" / "de Miami" / "en Atlanta" at the end,
+// city at the start, city at the end, or anywhere as a fallback.
+export function stripCityFromKeyword(keyword: string, city: string): string {
+  const c = escapeRegExp(city);
+  const patterns = [
+    new RegExp(`\\s+(?:in|en|de|of)\\s+${c}\\s*$`, "i"),
+    new RegExp(`^${c}\\s+`, "i"),
+    new RegExp(`\\s+${c}\\s*$`, "i"),
+    new RegExp(`\\s*${c}\\s*`, "i"),
+  ];
+  for (const p of patterns) {
+    if (p.test(keyword)) {
+      return keyword.replace(p, " ").replace(/\s+/g, " ").trim();
+    }
+  }
+  return keyword;
+}
