@@ -9,7 +9,10 @@ import {
   reviews,
   scanPoints,
   scans,
+  serpRankings,
+  trackedKeywords,
 } from "./db/schema";
+import { stripTrailingSlash } from "./dataforseo";
 import { PERFORMANCE_METRICS, type PerformanceMetric } from "./gbp";
 
 export type Velocity = { this30: number; prior30: number };
@@ -889,4 +892,118 @@ export async function getPerformanceInsights(
   });
 
   return { tiles, lastDataDate, earliestDataDate };
+}
+
+export type SerpKeywordRollup = {
+  trackedKeywordId: string;
+  keyword: string;
+  targetUrl: string;
+  geoCity: string | null;
+  isActive: boolean;
+  latest: {
+    nationalRank: number | null;
+    nationalUrl: string | null;
+    geoRank: number | null;
+    geoUrl: string | null;
+    checkedAt: Date;
+  } | null;
+  weekAgo: {
+    nationalRank: number | null;
+    geoRank: number | null;
+    checkedAt: Date;
+  } | null;
+  history: Array<{ checkedAt: Date; rank: number | null }>;
+  nationalIsWrongPage: boolean;
+  geoIsWrongPage: boolean;
+};
+
+export async function getSerpRankingsForClient(
+  clientId: string,
+): Promise<SerpKeywordRollup[]> {
+  const keywords = await db.query.trackedKeywords.findMany({
+    where: eq(trackedKeywords.clientId, clientId),
+    orderBy: [desc(trackedKeywords.isActive), desc(trackedKeywords.createdAt)],
+  });
+  if (keywords.length === 0) return [];
+
+  const cutoff = new Date(Date.now() - 90 * 86_400_000);
+  const recent = await db.query.serpRankings.findMany({
+    where: and(
+      eq(serpRankings.clientId, clientId),
+      gte(serpRankings.checkedAt, cutoff),
+    ),
+    orderBy: [desc(serpRankings.checkedAt)],
+  });
+
+  const byKeyword = new Map<string, typeof recent>();
+  for (const r of recent) {
+    const list = byKeyword.get(r.trackedKeywordId);
+    if (list) list.push(r);
+    else byKeyword.set(r.trackedKeywordId, [r]);
+  }
+
+  const sevenDaysMs = 7 * 86_400_000;
+
+  return keywords.map((kw) => {
+    const rows = byKeyword.get(kw.id) ?? [];
+    const latest = rows[0] ?? null;
+
+    let weekAgo: (typeof rows)[number] | null = null;
+    if (latest) {
+      const target = latest.checkedAt.getTime() - sevenDaysMs;
+      let bestDelta = Number.POSITIVE_INFINITY;
+      for (const r of rows) {
+        const delta = Math.abs(r.checkedAt.getTime() - target);
+        if (delta < bestDelta && r.checkedAt < latest.checkedAt) {
+          bestDelta = delta;
+          weekAgo = r;
+        }
+      }
+    }
+
+    const history = rows
+      .slice()
+      .reverse()
+      .map((r) => ({
+        checkedAt: r.checkedAt,
+        rank: r.geoRank ?? r.nationalRank ?? null,
+      }));
+
+    const targetStripped = stripTrailingSlash(kw.targetUrl);
+    const nationalIsWrongPage =
+      latest?.nationalUrl != null &&
+      latest.nationalRank != null &&
+      stripTrailingSlash(latest.nationalUrl) !== targetStripped;
+    const geoIsWrongPage =
+      latest?.geoUrl != null &&
+      latest.geoRank != null &&
+      stripTrailingSlash(latest.geoUrl) !== targetStripped;
+
+    return {
+      trackedKeywordId: kw.id,
+      keyword: kw.keyword,
+      targetUrl: kw.targetUrl,
+      geoCity: kw.geoCity,
+      isActive: kw.isActive,
+      latest: latest
+        ? {
+            nationalRank: latest.nationalRank,
+            nationalUrl: latest.nationalUrl,
+            geoRank: latest.geoRank,
+            geoUrl: latest.geoUrl,
+            checkedAt: latest.checkedAt,
+          }
+        : null,
+      weekAgo: weekAgo
+        ? {
+            nationalRank: weekAgo.nationalRank,
+            geoRank: weekAgo.geoRank,
+            checkedAt: weekAgo.checkedAt,
+          }
+        : null,
+      history,
+      nationalIsWrongPage,
+      geoIsWrongPage,
+    };
+  });
 }

@@ -168,3 +168,119 @@ export async function dispatchWithConcurrency<T, R>(
 export function estimateScanCost(gridSize: number, keywordCount: number): number {
   return gridSize * gridSize * keywordCount * 0.0006;
 }
+
+const ORGANIC_LIVE_URL =
+  "https://api.dataforseo.com/v3/serp/google/organic/live/regular";
+
+export type SerpOrganicItem = {
+  type?: string;
+  rank_group?: number;
+  rank_absolute?: number;
+  url?: string;
+  domain?: string;
+  title?: string;
+};
+
+type OrganicLiveResponse = {
+  status_code: number;
+  status_message?: string;
+  tasks?: Array<{
+    status_code?: number;
+    status_message?: string;
+    result?: Array<{ items?: SerpOrganicItem[] }>;
+  }>;
+};
+
+export async function pullOrganicSerp(
+  keyword: string,
+  locationCode?: number,
+): Promise<SerpOrganicItem[] | null> {
+  const payload: Record<string, unknown> = {
+    keyword,
+    language_code: "en",
+    device: "desktop",
+    depth: 100,
+  };
+  if (locationCode) payload.location_code = locationCode;
+
+  const res = await fetch(ORGANIC_LIVE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: authHeader(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify([payload]),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `DataForSEO organic SERP failed: ${res.status} ${await res.text()}`,
+    );
+  }
+  const json = (await res.json()) as OrganicLiveResponse;
+  if (json.status_code !== 20000) {
+    throw new Error(
+      `DataForSEO organic SERP returned ${json.status_code}: ${json.status_message ?? "unknown"}`,
+    );
+  }
+  return json.tasks?.[0]?.result?.[0]?.items ?? null;
+}
+
+export function extractHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+export function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+export function findOrganicRankForDomain(
+  items: SerpOrganicItem[] | null,
+  hostname: string,
+): { rank: number | null; url: string | null } {
+  if (!items || !hostname) return { rank: null, url: null };
+  for (const item of items) {
+    if (item.type !== "organic") continue;
+    if (typeof item.rank_absolute !== "number" || !item.url) continue;
+    const itemHost = extractHostname(item.url);
+    if (itemHost && itemHost === hostname) {
+      return { rank: item.rank_absolute, url: item.url };
+    }
+  }
+  return { rank: null, url: null };
+}
+
+// DataForSEO Google Ads location codes for metros where Big 5 clients operate.
+// Add more cities here as needed.
+export const METRO_LOCATIONS: Record<string, number> = {
+  // Georgia (Atlanta metro)
+  Atlanta: 1015116,
+  Cumming: 1015116,
+  Marietta: 1015116,
+  Norcross: 1015116,
+  Alpharetta: 1015116,
+  Lawrenceville: 1015116,
+  Decatur: 1015116,
+  Kennesaw: 1015116,
+  // Florida (Miami metro)
+  Miami: 1015042,
+  "Coral Gables": 1015042,
+  // South Carolina (Charleston metro)
+  Charleston: 1017942,
+  Beaufort: 1017942,
+  Bluffton: 1017942,
+  // North Carolina (Raleigh metro)
+  Raleigh: 1015150,
+  Durham: 1015150,
+  Fayetteville: 1015150,
+};
+
+export function getLocationCodeForCity(
+  city: string | null | undefined,
+): number | undefined {
+  if (!city) return undefined;
+  return METRO_LOCATIONS[city];
+}

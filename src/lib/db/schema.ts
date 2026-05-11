@@ -235,6 +235,74 @@ export const locationDailyMetrics = pgTable(
   }),
 );
 
+export const trackedKeywords = pgTable(
+  "tracked_keywords",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    keyword: text("keyword").notNull(),
+    targetUrl: text("target_url").notNull(),
+    geoCity: text("geo_city"),
+    geoLocationCode: integer("geo_location_code"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    clientActiveIdx: index("tracked_keywords_client_active_idx").on(t.clientId, t.isActive),
+    uniqPerClient: unique("tracked_keywords_unique_per_client").on(
+      t.clientId,
+      t.keyword,
+      t.geoCity,
+    ),
+  }),
+);
+
+export const serpRankings = pgTable(
+  "serp_rankings",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    trackedKeywordId: uuid("tracked_keyword_id")
+      .notNull()
+      .references(() => trackedKeywords.id, { onDelete: "cascade" }),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    keyword: text("keyword").notNull(),
+    targetUrl: text("target_url").notNull(),
+    nationalRank: integer("national_rank"),
+    nationalUrl: text("national_url"),
+    geoRank: integer("geo_rank"),
+    geoUrl: text("geo_url"),
+    geoCity: text("geo_city"),
+    geoLocationCode: integer("geo_location_code"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    trackedCheckedIdx: index("serp_rankings_tracked_checked_idx").on(
+      t.trackedKeywordId,
+      t.checkedAt,
+    ),
+    clientCheckedIdx: index("serp_rankings_client_checked_idx").on(t.clientId, t.checkedAt),
+  }),
+);
+
+export const serpScanJobs = pgTable("serp_scan_jobs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status").notNull(),
+  clientIds: uuid("client_ids").array(),
+  totalKeywords: integer("total_keywords").notNull().default(0),
+  completedKeywords: integer("completed_keywords").notNull().default(0),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  errorMessage: text("error_message"),
+  triggeredBy: text("triggered_by").notNull().default("scheduled"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Client = typeof clients.$inferSelect;
 export type Location = typeof locations.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
@@ -245,3 +313,6 @@ export type Review = typeof reviews.$inferSelect;
 export type LocationDailyMetric = typeof locationDailyMetrics.$inferSelect;
 export type LocationPerformanceDaily = typeof locationPerformanceDaily.$inferSelect;
 export type OauthCredential = typeof oauthCredentials.$inferSelect;
+export type TrackedKeyword = typeof trackedKeywords.$inferSelect;
+export type SerpRanking = typeof serpRankings.$inferSelect;
+export type SerpScanJob = typeof serpScanJobs.$inferSelect;

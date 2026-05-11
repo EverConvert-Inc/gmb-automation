@@ -19,11 +19,13 @@ import {
   getPerformanceInsights,
   getRecentScanComparisons,
   getReviewInsights,
+  getSerpRankingsForClient,
   listGridConfigsForLocation,
   listKeywordsForLocation,
   listLocationsForClient,
   listRecentScansForLocation,
 } from "@/lib/queries";
+import { SerpRankingsCard } from "@/components/serp-rankings-card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { formatRelativeDate, formatRelativeTime } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Map, MessageSquare, Plus } from "lucide-react";
@@ -118,6 +120,7 @@ export default async function ClientDashboardPage({
     reviewInsights,
     scanComparisons,
     performanceInsights,
+    serpRankings,
   ] = await Promise.all([
     listRecentScansForLocation(selectedId),
     listKeywordsForLocation(selectedId),
@@ -126,6 +129,7 @@ export default async function ClientDashboardPage({
     getReviewInsights(selectedId),
     getRecentScanComparisons(selectedId, 6),
     getPerformanceInsights(selectedId),
+    getSerpRankingsForClient(client.id),
   ]);
 
   const heatMapPoints = points.map((p) => ({
@@ -276,6 +280,8 @@ export default async function ClientDashboardPage({
       {hasGbpConnected && (
         <PerformanceCard data={performanceInsights} locationId={location.id} />
       )}
+
+      <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
 
       <Card>
         <CardHeader>

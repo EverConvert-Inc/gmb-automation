@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/daily-metrics",
       "schedule": "5 6 * * *"
+    },
+    {
+      "path": "/api/cron/serp-scan",
+      "schedule": "0 9 * * 4"
     }
   ]
 }
