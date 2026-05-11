@@ -339,6 +339,195 @@ export async function listLocationsDueForPolling(now = new Date()) {
   });
 }
 
+export type LocationSnapshot = {
+  id: string;
+  clientId: string;
+  name: string;
+  address: string;
+  isGbpConnected: boolean;
+  rating: number | null;
+  reviewCount: number;
+  lastReviewAt: Date | null;
+  daysSinceLastReview: number | null;
+  last30: number;
+  prior30: number;
+  last90: number;
+  prior90: number;
+  latestScan: {
+    id: string;
+    completedAt: Date | null;
+    arp: number | null;
+    solv: number;
+    coverage: number;
+    totalPoints: number;
+    rankedPoints: number;
+    arpDelta: number | null;
+    solvDelta: number | null;
+    coverageDelta: number | null;
+  } | null;
+};
+
+// Bulk-fetches the data needed to render a "quick view" of every location
+// under the given clients on /clients: review aggregates with windowed
+// counts, and the latest two completed scans (for ARP/SoLV/Coverage with a
+// delta vs the previous scan). Returns a map keyed by clientId.
+//
+// At small scale this is fine (4 queries regardless of N). If we ever scale
+// to thousands of locations we'll want to push the windowing into SQL.
+export async function listLocationSnapshots(
+  clientIds: string[],
+): Promise<Map<string, LocationSnapshot[]>> {
+  if (clientIds.length === 0) return new Map();
+
+  const locs = await db.query.locations.findMany({
+    where: inArray(locations.clientId, clientIds),
+    orderBy: (cols, ops) => [ops.asc(cols.name)],
+  });
+  if (locs.length === 0) return new Map();
+
+  const locationIds = locs.map((l) => l.id);
+  const now = Date.now();
+  const d30 = new Date(now - 30 * 86_400_000);
+  const d60 = new Date(now - 60 * 86_400_000);
+  const d90 = new Date(now - 90 * 86_400_000);
+  const d180 = new Date(now - 180 * 86_400_000);
+
+  const reviewAgg = await db
+    .select({
+      locationId: reviews.locationId,
+      count: sql<number>`count(${reviews.id})::int`.as("rev_count"),
+      avgRating: sql<number | null>`avg(${reviews.rating})`,
+      lastAt: sql<Date | null>`max(${reviews.createdAt})`,
+      last30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d30.toISOString()})::int`,
+      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()} and ${reviews.createdAt} < ${d30.toISOString()})::int`,
+      last90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d90.toISOString()})::int`,
+      prior90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d180.toISOString()} and ${reviews.createdAt} < ${d90.toISOString()})::int`,
+    })
+    .from(reviews)
+    .where(inArray(reviews.locationId, locationIds))
+    .groupBy(reviews.locationId);
+
+  const reviewMap = new Map(reviewAgg.map((r) => [r.locationId, r]));
+
+  const completedScans = await db
+    .select({
+      id: scans.id,
+      locationId: scans.locationId,
+      completedAt: scans.completedAt,
+      totalPoints: scans.totalPoints,
+    })
+    .from(scans)
+    .where(
+      and(
+        inArray(scans.locationId, locationIds),
+        eq(scans.status, "completed"),
+      ),
+    )
+    .orderBy(desc(scans.completedAt));
+
+  // Take the two most recent completed scans per location.
+  const scansByLoc = new Map<
+    string,
+    Array<{ id: string; completedAt: Date | null; totalPoints: number }>
+  >();
+  for (const s of completedScans) {
+    const list = scansByLoc.get(s.locationId);
+    if (list) {
+      if (list.length < 2) list.push(s);
+    } else {
+      scansByLoc.set(s.locationId, [s]);
+    }
+  }
+
+  const targetScanIds = Array.from(scansByLoc.values()).flatMap((ss) =>
+    ss.map((s) => s.id),
+  );
+  const pointsByScan = new Map<string, Array<{ rank: number | null }>>();
+  if (targetScanIds.length > 0) {
+    const allPoints = await db
+      .select({ scanId: scanPoints.scanId, rank: scanPoints.rank })
+      .from(scanPoints)
+      .where(inArray(scanPoints.scanId, targetScanIds));
+    for (const p of allPoints) {
+      const list = pointsByScan.get(p.scanId);
+      if (list) list.push({ rank: p.rank });
+      else pointsByScan.set(p.scanId, [{ rank: p.rank }]);
+    }
+  }
+
+  function metricsForScan(scanId: string) {
+    const points = pointsByScan.get(scanId) ?? [];
+    const total = points.length;
+    const ranked = points.filter((p) => p.rank !== null && p.rank > 0);
+    const top3 = ranked.filter((p) => (p.rank as number) <= 3).length;
+    const arp = ranked.length
+      ? ranked.reduce((acc, p) => acc + (p.rank as number), 0) / ranked.length
+      : null;
+    return {
+      arp,
+      solv: total > 0 ? (top3 / total) * 100 : 0,
+      coverage: total > 0 ? (ranked.length / total) * 100 : 0,
+      totalPoints: total,
+      rankedPoints: ranked.length,
+    };
+  }
+
+  const out = new Map<string, LocationSnapshot[]>();
+  for (const l of locs) {
+    const r = reviewMap.get(l.id);
+    const lastAt = r?.lastAt ?? null;
+    const daysSinceLast = lastAt
+      ? Math.floor((now - new Date(lastAt).getTime()) / 86_400_000)
+      : null;
+
+    const myScans = scansByLoc.get(l.id) ?? [];
+    let latestScan: LocationSnapshot["latestScan"] = null;
+    if (myScans.length > 0) {
+      const newest = myScans[0];
+      const prior = myScans[1] ?? null;
+      const nm = metricsForScan(newest.id);
+      const pm = prior ? metricsForScan(prior.id) : null;
+      latestScan = {
+        id: newest.id,
+        completedAt: newest.completedAt,
+        arp: nm.arp,
+        solv: nm.solv,
+        coverage: nm.coverage,
+        totalPoints: nm.totalPoints,
+        rankedPoints: nm.rankedPoints,
+        arpDelta:
+          nm.arp !== null && pm && pm.arp !== null ? nm.arp - pm.arp : null,
+        solvDelta: pm ? nm.solv - pm.solv : null,
+        coverageDelta: pm ? nm.coverage - pm.coverage : null,
+      };
+    }
+
+    const snap: LocationSnapshot = {
+      id: l.id,
+      clientId: l.clientId,
+      name: l.name,
+      address: l.address,
+      isGbpConnected: l.gbpOauthTokenId !== null,
+      rating:
+        r?.avgRating !== null && r?.avgRating !== undefined
+          ? Number(r.avgRating)
+          : null,
+      reviewCount: r?.count ?? 0,
+      lastReviewAt: lastAt,
+      daysSinceLastReview: daysSinceLast,
+      last30: r?.last30 ?? 0,
+      prior30: r?.prior30 ?? 0,
+      last90: r?.last90 ?? 0,
+      prior90: r?.prior90 ?? 0,
+      latestScan,
+    };
+    const arr = out.get(l.clientId);
+    if (arr) arr.push(snap);
+    else out.set(l.clientId, [snap]);
+  }
+  return out;
+}
+
 export async function locationDailyMetricsRange(locationId: string, days: number) {
   const cutoff = new Date(Date.now() - days * 86_400_000);
   return db.query.locationDailyMetrics.findMany({

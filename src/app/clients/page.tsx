@@ -1,11 +1,14 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { listClientsWithRollup } from "@/lib/queries";
-import { formatRelativeDate } from "@/lib/utils";
-import { ArrowRight, Plus } from "lucide-react";
+import { ClientsTable } from "@/components/clients-table";
+import {
+  listClientsWithRollup,
+  listLocationSnapshots,
+  type LocationSnapshot,
+} from "@/lib/queries";
+import { Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +35,11 @@ export default async function ClientListPage() {
       </Card>
     );
   }
+
+  const snapshotMap = await listLocationSnapshots(rows.map((r) => r.id));
+  const snapshots: Record<string, LocationSnapshot[]> = {};
+  for (const [clientId, locs] of snapshotMap) snapshots[clientId] = locs;
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between">
@@ -59,60 +67,14 @@ export default async function ClientListPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="overflow-hidden rounded-lg border">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/40 text-left">
-              <tr>
-                <th className="px-4 py-3 font-medium">Client</th>
-                <th className="px-4 py-3 font-medium">Locations</th>
-                <th className="px-4 py-3 font-medium">Rating</th>
-                <th className="px-4 py-3 font-medium">Reviews</th>
-                <th className="px-4 py-3 font-medium">Last scan</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="w-px px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium">{c.name}</td>
-                  <td className="px-4 py-3">{c.locationCount}</td>
-                  <td className="px-4 py-3">
-                    {c.weightedRating !== null ? c.weightedRating.toFixed(1) : "—"}
-                  </td>
-                  <td className="px-4 py-3">{c.totalReviews}</td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {c.lastScanAt ? (
-                      <>
-                        {formatRelativeDate(c.lastScanAt)}
-                        {c.locationCount > 1 && c.lastScanLocationName && (
-                          <span className="ml-1 text-xs">
-                            ({c.lastScanLocationName})
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={c.status === "active" ? "success" : "secondary"}>
-                      {c.status}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link href={`/clients/${c.slug}`}>
-                      <Button size="sm" variant="outline" className="whitespace-nowrap">
-                        View client
-                        <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-                      </Button>
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <p className="text-xs text-muted-foreground">
+            Click a row to peek at each location&rsquo;s reviews and most recent
+            scan. Use <span className="font-medium text-foreground">View client</span> for
+            the full dashboard.
+          </p>
+          <ClientsTable rows={rows} snapshots={snapshots} />
+        </>
       )}
     </div>
   );
