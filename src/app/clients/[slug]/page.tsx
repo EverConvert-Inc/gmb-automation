@@ -8,6 +8,7 @@ import { HeatMapClient } from "@/components/heat-map-client";
 import { LocationSwitcher } from "@/components/location-switcher";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
 import { StarBar } from "@/components/star-bar";
+import { SyncReviewsButton } from "@/components/sync-reviews-button";
 import {
   getActiveScanForLocation,
   getClientBySlug,
@@ -37,10 +38,16 @@ export default async function ClientDashboardPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ location?: string; just_added?: string }>;
+  searchParams: Promise<{
+    location?: string;
+    just_added?: string;
+    gbp_link?: "linked" | "no_match" | "failed" | string;
+  }>;
 }) {
-  const [{ slug }, { location: locationParam, just_added: justAdded }] =
-    await Promise.all([params, searchParams]);
+  const [
+    { slug },
+    { location: locationParam, just_added: justAdded, gbp_link: gbpLink },
+  ] = await Promise.all([params, searchParams]);
   const client = await getClientBySlug(slug);
   if (!client) notFound();
 
@@ -157,6 +164,38 @@ export default async function ClientDashboardPage({
         </div>
       )}
 
+      {gbpLink === "linked" && (
+        <div className="flex items-start gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
+          <div className="flex-1">
+            <div className="font-medium">Google Business Profile connected.</div>
+            <div className="mt-0.5 text-green-800">
+              Started the first review sync. Reviews will appear below within a
+              few seconds — refresh if you don&rsquo;t see them yet.
+            </div>
+          </div>
+        </div>
+      )}
+      {gbpLink === "no_match" && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-medium">Google Business Profile connected, but no matching listing found.</div>
+          <div className="mt-1 text-amber-800">
+            The Google account you connected doesn&rsquo;t manage a business
+            with this Place ID. Sign in with the account that owns this listing,
+            or use &ldquo;Sync reviews&rdquo; below once you&rsquo;ve granted access.
+          </div>
+        </div>
+      )}
+      {gbpLink === "failed" && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-medium">Connected, but couldn&rsquo;t auto-link this listing.</div>
+          <div className="mt-1 text-amber-800">
+            We saved the token but the GBP discovery call failed. Click
+            &ldquo;Sync reviews&rdquo; below to retry, or check the server logs.
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold">{location.name}</h2>
@@ -175,7 +214,10 @@ export default async function ClientDashboardPage({
         </div>
         <div className="flex items-center gap-2">
           {hasGbpConnected ? (
-            <Badge variant="success">GBP connected</Badge>
+            <>
+              <Badge variant="success">GBP connected</Badge>
+              <SyncReviewsButton locationId={location.id} />
+            </>
           ) : (
             <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
               <Button variant="outline">Connect Google Business Profile</Button>
@@ -252,10 +294,13 @@ export default async function ClientDashboardPage({
                 </Link>
               )}
               {hasGbpConnected && hasNoReviews && (
-                <p className="text-xs">
-                  Reviews sync automatically every day. The first batch will
-                  appear here once Google returns it.
-                </p>
+                <div className="flex flex-col items-center gap-2">
+                  <p className="text-xs">
+                    Reviews sync automatically every day. Use the button below
+                    to pull them now.
+                  </p>
+                  <SyncReviewsButton locationId={location.id} />
+                </div>
               )}
             </div>
           ) : (

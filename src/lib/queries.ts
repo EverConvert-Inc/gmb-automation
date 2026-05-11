@@ -23,61 +23,84 @@ export type ClientRow = {
 };
 
 export async function listClientsWithRollup(): Promise<ClientRow[]> {
-  // Use correlated subqueries so reviews and scans don't multiply each other
-  // via a Cartesian join (which inflated `totalReviews` by the per-location
-  // scan count when both were joined-and-grouped together).
-  const rows = await db
-    .select({
-      id: clients.id,
-      name: clients.name,
-      slug: clients.slug,
-      status: clients.status,
-      locationCount: sql<number>`(
-        SELECT COUNT(*)::int
-        FROM ${locations} l
-        WHERE l.client_id = ${clients.id}
-      )`.as("loc_count"),
-      ratingSum: sql<number>`(
-        SELECT COALESCE(SUM(r.rating), 0)::int
-        FROM ${reviews} r
-        JOIN ${locations} l ON l.id = r.location_id
-        WHERE l.client_id = ${clients.id}
-      )`.as("rating_sum"),
-      totalReviews: sql<number>`(
-        SELECT COUNT(*)::int
-        FROM ${reviews} r
-        JOIN ${locations} l ON l.id = r.location_id
-        WHERE l.client_id = ${clients.id}
-      )`.as("total_reviews"),
-      lastScanAt: sql<Date | null>`(
-        SELECT MAX(s.completed_at)
-        FROM ${scans} s
-        JOIN ${locations} l ON l.id = s.location_id
-        WHERE l.client_id = ${clients.id}
-      )`.as("last_scan_at"),
-      lastScanLocationName: sql<string | null>`(
-        SELECT l.name
-        FROM ${scans} s
-        JOIN ${locations} l ON l.id = s.location_id
-        WHERE l.client_id = ${clients.id} AND s.completed_at IS NOT NULL
-        ORDER BY s.completed_at DESC
-        LIMIT 1
-      )`.as("last_scan_location_name"),
-    })
-    .from(clients)
-    .orderBy(clients.name);
+  // Run three small aggregates instead of one big multi-join: a multi-join
+  // with reviews AND scans was creating a Cartesian product that inflated
+  // totalReviews (e.g. 880 instead of 440), and a single-pass correlated-
+  // subquery rewrite tripped Postgres' "column reference id is ambiguous"
+  // check inside the nested SELECTs. The 3-query merge is safe and cheap.
+  const clientList = await db.query.clients.findMany({
+    orderBy: (cols, ops) => ops.asc(cols.name),
+  });
+  if (clientList.length === 0) return [];
+  const clientIds = clientList.map((c) => c.id);
 
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    slug: r.slug,
-    status: r.status,
-    locationCount: r.locationCount ?? 0,
-    weightedRating: r.totalReviews > 0 ? r.ratingSum / r.totalReviews : null,
-    totalReviews: r.totalReviews ?? 0,
-    lastScanAt: r.lastScanAt ?? null,
-    lastScanLocationName: r.lastScanLocationName ?? null,
-  }));
+  const locationAgg = await db
+    .select({
+      clientId: locations.clientId,
+      locationCount: sql<number>`count(*)::int`.as("location_count"),
+    })
+    .from(locations)
+    .where(inArray(locations.clientId, clientIds))
+    .groupBy(locations.clientId);
+
+  const reviewAgg = await db
+    .select({
+      clientId: locations.clientId,
+      ratingSum: sql<number>`coalesce(sum(${reviews.rating}), 0)::int`.as("rating_sum"),
+      reviewCount: sql<number>`count(${reviews.id})::int`.as("review_count"),
+    })
+    .from(reviews)
+    .innerJoin(locations, eq(locations.id, reviews.locationId))
+    .where(inArray(locations.clientId, clientIds))
+    .groupBy(locations.clientId);
+
+  const scanAgg = await db
+    .select({
+      clientId: locations.clientId,
+      locationName: locations.name,
+      completedAt: scans.completedAt,
+    })
+    .from(scans)
+    .innerJoin(locations, eq(locations.id, scans.locationId))
+    .where(
+      and(
+        inArray(locations.clientId, clientIds),
+        sql`${scans.completedAt} IS NOT NULL`,
+      ),
+    )
+    .orderBy(desc(scans.completedAt));
+
+  const locMap = new Map(locationAgg.map((r) => [r.clientId, r.locationCount]));
+  const revMap = new Map(
+    reviewAgg.map((r) => [r.clientId, { ratingSum: r.ratingSum, reviewCount: r.reviewCount }]),
+  );
+  const lastScanMap = new Map<string, { completedAt: Date; locationName: string }>();
+  for (const s of scanAgg) {
+    if (!s.completedAt) continue;
+    if (!lastScanMap.has(s.clientId)) {
+      lastScanMap.set(s.clientId, {
+        completedAt: s.completedAt,
+        locationName: s.locationName,
+      });
+    }
+  }
+
+  return clientList.map((c) => {
+    const r = revMap.get(c.id);
+    const reviewCount = r?.reviewCount ?? 0;
+    const lastScan = lastScanMap.get(c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      status: c.status,
+      locationCount: locMap.get(c.id) ?? 0,
+      weightedRating: reviewCount > 0 && r ? r.ratingSum / reviewCount : null,
+      totalReviews: reviewCount,
+      lastScanAt: lastScan?.completedAt ?? null,
+      lastScanLocationName: lastScan?.locationName ?? null,
+    };
+  });
 }
 
 export type LocationCardRow = {

@@ -1,5 +1,66 @@
 import { decryptString } from "./crypto";
 
+export type GbpLocationMatch = {
+  accountId: string;
+  locationId: string;
+};
+
+// Lists GBP accounts the OAuth user has access to, then scans each account's
+// locations for one whose placeId matches `placeId`. Returns the first match
+// or null. Failures bubble up so the caller can decide how to surface them.
+export async function findGbpLocationByPlaceId({
+  refreshTokenEncrypted,
+  placeId,
+}: {
+  refreshTokenEncrypted: string;
+  placeId: string;
+}): Promise<GbpLocationMatch | null> {
+  const token = await bearerFromCredential(refreshTokenEncrypted);
+  const accountsRes = await fetch(
+    "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!accountsRes.ok) {
+    throw new Error(`GBP accounts fetch failed: ${accountsRes.status} ${await accountsRes.text()}`);
+  }
+  const accountsJson = (await accountsRes.json()) as {
+    accounts?: Array<{ name: string }>;
+  };
+
+  for (const acct of accountsJson.accounts ?? []) {
+    const accountId = acct.name.replace(/^accounts\//, "");
+    let pageToken: string | undefined;
+    do {
+      const url = new URL(
+        `https://mybusinessbusinessinformation.googleapis.com/v1/accounts/${accountId}/locations`,
+      );
+      url.searchParams.set("readMask", "name,metadata");
+      url.searchParams.set("pageSize", "100");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error(`GBP locations fetch failed: ${res.status} ${await res.text()}`);
+      }
+      const json = (await res.json()) as {
+        locations?: Array<{ name: string; metadata?: { placeId?: string } }>;
+        nextPageToken?: string;
+      };
+      for (const loc of json.locations ?? []) {
+        if (loc.metadata?.placeId === placeId) {
+          return {
+            accountId,
+            locationId: loc.name.replace(/^locations\//, ""),
+          };
+        }
+      }
+      pageToken = json.nextPageToken;
+    } while (pageToken);
+  }
+  return null;
+}
+
 export type GbpReview = {
   reviewId: string;
   rating: number;
