@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { clients, locations, oauthCredentials } from "@/lib/db/schema";
 import { encryptString, hmacVerify } from "@/lib/crypto";
 import { listAccounts, listLocations } from "@/lib/gbp";
+import { pullPerformanceForLocation } from "@/lib/performance";
 import { pollReviewsForLocation } from "@/lib/reviews";
 
 export const runtime = "nodejs";
@@ -36,15 +37,16 @@ function verifyState(state: string): StatePayload | null {
   return payload;
 }
 
+// Redirects back to the dashboard with the new location tab selected and a
+// gbp_link outcome param that the dashboard renders as a banner.
 function redirectWith(
   origin: URL,
   slug: string | null,
   locationId: string | null,
   params: Record<string, string>,
 ) {
-  const path =
-    slug && locationId ? `/clients/${slug}/locations/${locationId}` : "/clients";
-  const dest = new URL(path, origin);
+  const dest = new URL(slug ? `/clients/${slug}` : "/clients", origin);
+  if (slug && locationId) dest.searchParams.set("location", locationId);
   for (const [k, v] of Object.entries(params)) dest.searchParams.set(k, v);
   return NextResponse.redirect(dest);
 }
@@ -56,7 +58,10 @@ export async function GET(req: Request) {
   const errorParam = url.searchParams.get("error");
 
   if (errorParam) {
-    return redirectWith(url, null, null, { gbp: "error", reason: errorParam });
+    return redirectWith(url, null, null, {
+      gbp_link: "failed",
+      reason: errorParam,
+    });
   }
   if (!code || !state) {
     return NextResponse.json({ error: "missing code or state" }, { status: 400 });
@@ -80,10 +85,10 @@ export async function GET(req: Request) {
   if (!location) {
     return NextResponse.json({ error: "location not found" }, { status: 404 });
   }
-  const client = await db.query.clients.findFirst({
+  const clientRow = await db.query.clients.findFirst({
     where: eq(clients.id, location.clientId),
   });
-  const slug = client?.slug ?? null;
+  const slug = clientRow?.slug ?? null;
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -100,7 +105,7 @@ export async function GET(req: Request) {
     const detail = await tokenRes.text();
     console.error("OAuth token exchange failed", { status: tokenRes.status, detail });
     return redirectWith(url, slug, locationId, {
-      gbp: "error",
+      gbp_link: "failed",
       reason: "token_exchange_failed",
     });
   }
@@ -111,7 +116,7 @@ export async function GET(req: Request) {
   };
   if (!tokens.refresh_token) {
     return redirectWith(url, slug, locationId, {
-      gbp: "error",
+      gbp_link: "failed",
       reason: "no_refresh_token",
     });
   }
@@ -127,6 +132,8 @@ export async function GET(req: Request) {
   const accessTokenEncrypted = encryptString(tokens.access_token);
   const refreshTokenEncrypted = encryptString(tokens.refresh_token);
 
+  // Dedup on (provider, account_email) so a user reconnecting the same Google
+  // account doesn't accumulate dead oauth_credentials rows.
   const existingCred = await db.query.oauthCredentials.findFirst({
     where: and(
       eq(oauthCredentials.provider, "google_business_profile"),
@@ -164,6 +171,8 @@ export async function GET(req: Request) {
     .set({ gbpOauthTokenId: credId })
     .where(eq(locations.id, locationId));
 
+  // Discover the matching GBP account+location for this placeId using the
+  // fresh access_token (saves a refresh round-trip).
   let gbpAccountId: string | null = null;
   let gbpLocationId: string | null = null;
   let discoveryError: string | null = null;
@@ -181,7 +190,7 @@ export async function GET(req: Request) {
       }
     }
     if (!gbpAccountId || !gbpLocationId) {
-      discoveryError = "no_gbp_match";
+      discoveryError = "no_match";
     }
   } catch (e) {
     console.error("GBP discovery failed", { locationId, error: e });
@@ -197,19 +206,25 @@ export async function GET(req: Request) {
 
   if (discoveryError) {
     return redirectWith(url, slug, locationId, {
-      gbp: "incomplete",
+      gbp_link: discoveryError === "no_match" ? "no_match" : "failed",
       reason: discoveryError,
     });
   }
 
+  // Token is linked. Kick off an immediate review poll + 90d performance
+  // backfill so the dashboard tiles have data on day one. Both are best-
+  // effort: a poll failure still surfaces as "linked" because the
+  // connection itself succeeded; the user can hit Sync reviews manually.
   try {
     await pollReviewsForLocation(locationId);
   } catch (e) {
-    console.error("GBP backfill failed", { locationId, error: e });
-    return redirectWith(url, slug, locationId, {
-      gbp: "connected_no_backfill",
-    });
+    console.error("[oauth callback] initial review poll failed:", e);
+  }
+  try {
+    await pullPerformanceForLocation(locationId, 90);
+  } catch (e) {
+    console.error("[oauth callback] performance backfill failed:", e);
   }
 
-  return redirectWith(url, slug, locationId, { gbp: "connected" });
+  return redirectWith(url, slug, locationId, { gbp_link: "linked" });
 }

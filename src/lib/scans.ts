@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "./db/client";
 import { gridConfigs, keywords, locations, scanPoints, scans } from "./db/schema";
 import { generateGrid } from "./grid";
@@ -9,36 +9,163 @@ import {
   type DataForSeoTask,
 } from "./dataforseo";
 
+export const ALLOWED_GRID_SIZES = [3, 5, 7, 9, 11, 13] as const;
+export type AllowedGridSize = (typeof ALLOWED_GRID_SIZES)[number];
+
+export class ScanAlreadyRunningError extends Error {
+  constructor(locationId: string) {
+    super(`A scan is already running for location ${locationId}`);
+    this.name = "ScanAlreadyRunningError";
+  }
+}
+
+export class InvalidScanInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidScanInputError";
+  }
+}
+
 export type CreateScanInput = {
   locationId: string;
   gridConfigId?: string;
+  newGridConfig?: { size: AllowedGridSize; radiusMiles: number; name?: string };
+  keywordIds?: string[];
+  newKeywords?: string[];
   triggeredBy: "scheduled" | "manual" | "api";
 };
+
+function normalizeKeyword(raw: string): string {
+  return raw.trim().toLowerCase();
+}
 
 export async function createAndDispatchScan({
   locationId,
   gridConfigId,
+  newGridConfig,
+  keywordIds,
+  newKeywords,
   triggeredBy,
 }: CreateScanInput): Promise<{ scanId: string; totalPoints: number }> {
+  if (gridConfigId && newGridConfig) {
+    throw new InvalidScanInputError(
+      "Provide either gridConfigId or newGridConfig, not both",
+    );
+  }
+
   const location = await db.query.locations.findFirst({
     where: eq(locations.id, locationId),
   });
   if (!location) throw new Error(`Location ${locationId} not found`);
   if (!location.placeId) throw new Error(`Location ${locationId} missing placeId`);
 
-  const config = gridConfigId
-    ? await db.query.gridConfigs.findFirst({ where: eq(gridConfigs.id, gridConfigId) })
-    : await db.query.gridConfigs.findFirst({
-        where: (cols, ops) =>
-          ops.and(ops.eq(cols.locationId, locationId), ops.eq(cols.isDefault, true)),
-      });
+  const active = await db.query.scans.findFirst({
+    where: and(
+      eq(scans.locationId, locationId),
+      inArray(scans.status, ["queued", "running"]),
+    ),
+    columns: { id: true },
+  });
+  if (active) throw new ScanAlreadyRunningError(locationId);
+
+  let config;
+  if (newGridConfig) {
+    const [inserted] = await db
+      .insert(gridConfigs)
+      .values({
+        locationId,
+        name:
+          newGridConfig.name?.trim() ||
+          `Custom ${newGridConfig.size}x${newGridConfig.size} · ${newGridConfig.radiusMiles}mi`,
+        size: newGridConfig.size,
+        radiusMiles: newGridConfig.radiusMiles.toFixed(2),
+        isDefault: false,
+      })
+      .returning();
+    config = inserted;
+  } else if (gridConfigId) {
+    config = await db.query.gridConfigs.findFirst({
+      where: and(eq(gridConfigs.id, gridConfigId), eq(gridConfigs.locationId, locationId)),
+    });
+    if (!config) {
+      throw new InvalidScanInputError(
+        `Grid config ${gridConfigId} not found for location ${locationId}`,
+      );
+    }
+  } else {
+    config = await db.query.gridConfigs.findFirst({
+      where: and(eq(gridConfigs.locationId, locationId), eq(gridConfigs.isDefault, true)),
+    });
+  }
   if (!config) throw new Error(`No grid config available for location ${locationId}`);
 
-  const locationKeywords = await db.query.keywords.findMany({
-    where: eq(keywords.locationId, locationId),
-  });
+  const resolvedNewKeywords = (newKeywords ?? [])
+    .map(normalizeKeyword)
+    .filter((kw) => kw.length > 0);
+  const uniqueNewKeywords = Array.from(new Set(resolvedNewKeywords));
+
+  if (uniqueNewKeywords.length > 0) {
+    await db
+      .insert(keywords)
+      .values(
+        uniqueNewKeywords.map((kw) => ({
+          locationId,
+          keyword: kw,
+          isPrimary: false,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [keywords.locationId, keywords.keyword],
+      });
+  }
+
+  let locationKeywords;
+  if ((keywordIds && keywordIds.length > 0) || uniqueNewKeywords.length > 0) {
+    const explicitIds = keywordIds ?? [];
+    if (explicitIds.length > 0) {
+      const owned = await db.query.keywords.findMany({
+        where: and(
+          eq(keywords.locationId, locationId),
+          inArray(keywords.id, explicitIds),
+        ),
+        columns: { id: true },
+      });
+      if (owned.length !== explicitIds.length) {
+        throw new InvalidScanInputError(
+          "One or more keywordIds do not belong to this location",
+        );
+      }
+    }
+
+    const newlyResolved =
+      uniqueNewKeywords.length > 0
+        ? await db.query.keywords.findMany({
+            where: and(
+              eq(keywords.locationId, locationId),
+              inArray(keywords.keyword, uniqueNewKeywords),
+            ),
+          })
+        : [];
+
+    const wantedIds = new Set<string>(explicitIds);
+    for (const kw of newlyResolved) wantedIds.add(kw.id);
+
+    locationKeywords = await db.query.keywords.findMany({
+      where: and(
+        eq(keywords.locationId, locationId),
+        inArray(keywords.id, Array.from(wantedIds)),
+      ),
+    });
+  } else {
+    locationKeywords = await db.query.keywords.findMany({
+      where: eq(keywords.locationId, locationId),
+    });
+  }
+
   if (locationKeywords.length === 0) {
-    throw new Error(`Location ${locationId} has no keywords`);
+    throw new InvalidScanInputError(
+      `Location ${locationId} has no keywords selected for this scan`,
+    );
   }
 
   const gridPoints = generateGrid({

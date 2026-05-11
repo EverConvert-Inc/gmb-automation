@@ -1,10 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { listRecentScansAcrossClients } from "@/lib/queries-scans";
-import { formatRelativeDate } from "@/lib/utils";
+import { formatRelativeTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Recent scans" };
 
 export default async function ScansPage() {
   const rows = await listRecentScansAcrossClients(50);
@@ -17,7 +20,7 @@ export default async function ScansPage() {
       {rows.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            No scans yet. Run one from a location's accordion row.
+            No scans yet. Open a client and run one from the scan management panel.
           </CardContent>
         </Card>
       ) : (
@@ -34,38 +37,51 @@ export default async function ScansPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((s) => (
-                <tr key={s.id} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3">{formatRelativeDate(s.startedAt)}</td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/clients/${s.clientSlug}/locations/${s.locationId}`}
-                      className="hover:underline"
+              {rows.map((s) => {
+                const startedAt = new Date(s.startedAt);
+                const sameAsClient = s.locationName === s.clientName;
+                return (
+                  <tr key={s.id} className="border-b last:border-0 hover:bg-muted/30">
+                    <td
+                      className="px-4 py-3 text-muted-foreground"
+                      title={startedAt.toLocaleString()}
                     >
-                      <span className="font-medium">{s.clientName}</span>
-                      <span className="ml-1 text-muted-foreground">/ {s.locationName}</span>
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant={
-                        s.status === "completed"
-                          ? "success"
-                          : s.status === "errored"
-                            ? "destructive"
-                            : "secondary"
-                      }
-                    >
-                      {s.status}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{s.triggeredBy}</td>
-                  <td className="px-4 py-3">{s.totalPoints}</td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {s.costEstimate ? `$${Number(s.costEstimate).toFixed(2)}` : "—"}
-                  </td>
-                </tr>
-              ))}
+                      {formatRelativeTime(startedAt)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/clients/${s.clientSlug}?location=${s.locationId}`}
+                        className="hover:underline"
+                      >
+                        <span className="font-medium">{s.clientName}</span>
+                        {!sameAsClient && (
+                          <span className="ml-1 text-muted-foreground">
+                            / {s.locationName}
+                          </span>
+                        )}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        variant={
+                          s.status === "completed"
+                            ? "success"
+                            : s.status === "errored"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                      >
+                        {s.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{s.triggeredBy}</td>
+                    <td className="px-4 py-3">{s.totalPoints}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {s.costEstimate ? `$${Number(s.costEstimate).toFixed(2)}` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -73,3 +89,4 @@ export default async function ScansPage() {
     </div>
   );
 }
+

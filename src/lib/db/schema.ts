@@ -56,6 +56,10 @@ export const locations = pgTable(
     gbpOauthTokenId: uuid("gbp_oauth_token_id").references(() => oauthCredentials.id),
     pollFrequency: text("poll_frequency").notNull().default("daily"),
     lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+    nextPollAfter: timestamp("next_poll_after", { withTimezone: true }),
+    lastPollError: text("last_poll_error"),
+    lastPollErrorAt: timestamp("last_poll_error_at", { withTimezone: true }),
+    consecutivePollFailures: integer("consecutive_poll_failures").notNull().default(0),
     status: text("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -182,6 +186,32 @@ export const reviews = pgTable(
   }),
 );
 
+export const locationPerformanceDaily = pgTable(
+  "location_performance_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    locationId: uuid("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    metricDate: date("metric_date").notNull(),
+    metric: text("metric").notNull(),
+    value: integer("value").notNull().default(0),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("location_performance_daily_unique").on(
+      t.locationId,
+      t.metricDate,
+      t.metric,
+    ),
+    locDateIdx: index("location_performance_daily_loc_date_idx").on(
+      t.locationId,
+      t.metricDate,
+    ),
+    metricIdx: index("location_performance_daily_metric_idx").on(t.metric),
+  }),
+);
+
 export const locationDailyMetrics = pgTable(
   "location_daily_metrics",
   {
@@ -213,4 +243,5 @@ export type Scan = typeof scans.$inferSelect;
 export type ScanPoint = typeof scanPoints.$inferSelect;
 export type Review = typeof reviews.$inferSelect;
 export type LocationDailyMetric = typeof locationDailyMetrics.$inferSelect;
+export type LocationPerformanceDaily = typeof locationPerformanceDaily.$inferSelect;
 export type OauthCredential = typeof oauthCredentials.$inferSelect;

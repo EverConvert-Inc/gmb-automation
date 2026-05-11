@@ -1,22 +1,35 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { RowActions } from "@/components/row-actions";
 import { Sparkline, VelocityDelta } from "@/components/sparkline";
+import { StarBar } from "@/components/star-bar";
 import {
   getClientBySlug,
   getLocationReviewStats,
   getLocationWeeklyReviews,
   getLocationWithLatestScan,
+  listKeywordsForLocation,
   listRecentScansForLocation,
 } from "@/lib/queries";
 import { computeScanMetrics } from "@/lib/metrics";
 import { formatRelativeDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string; locationId: string }>;
+}): Promise<Metadata> {
+  const { locationId } = await params;
+  const data = await getLocationWithLatestScan(locationId);
+  return { title: data?.location.name ?? "Location" };
+}
 
 export default async function LocationDetailPage({
   params,
@@ -30,11 +43,20 @@ export default async function LocationDetailPage({
   const data = await getLocationWithLatestScan(locationId);
   if (!data || data.location.clientId !== client.id) notFound();
 
-  const { location, latestScan, points, completedPoints, recentReviews } = data;
-  const [recentScans, reviewStats, weekly] = await Promise.all([
+  const {
+    location,
+    latestScan,
+    points,
+    completedPoints,
+    recentReviews,
+    rating,
+    reviewCount,
+  } = data;
+  const [recentScans, reviewStats, weekly, allKeywords] = await Promise.all([
     listRecentScansForLocation(locationId),
     getLocationReviewStats(locationId),
     getLocationWeeklyReviews(locationId, 12),
+    listKeywordsForLocation(locationId),
   ]);
 
   const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
@@ -45,15 +67,19 @@ export default async function LocationDetailPage({
     lng: Number(p.lng),
     rank: p.rank ?? null,
     status: p.status,
-    competitors: (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ?? [],
+    keywordId: p.keywordId,
+    competitors:
+      (p.competitorsJson as Array<{ placeId: string; name: string; rank: number }>) ?? [],
   }));
+  const latestScanKeywordIds = Array.from(new Set(points.map((p) => p.keywordId)));
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="space-y-1">
           <h1 className="text-2xl font-semibold">{location.name}</h1>
           <p className="text-sm text-muted-foreground">{location.address}</p>
+          <StarBar rating={rating} reviewCount={reviewCount} />
         </div>
         <div className="flex items-center gap-2">
           {location.gbpOauthTokenId ? (
@@ -135,6 +161,13 @@ export default async function LocationDetailPage({
             initialPoints={heatMapPoints}
             initialStatus={latestScan?.status ?? null}
             initialCompletedPoints={completedPoints}
+            keywords={allKeywords.map((k) => ({
+              id: k.id,
+              keyword: k.keyword,
+              isPrimary: k.isPrimary,
+            }))}
+            latestScanKeywordIds={latestScanKeywordIds}
+            latestScanCompletedAt={latestScan?.completedAt ?? null}
           />
         </CardContent>
       </Card>

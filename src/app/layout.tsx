@@ -1,11 +1,28 @@
 import type { Metadata } from "next";
+import { Inter, Oxygen } from "next/font/google";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
-import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+
+const sans = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const display = Oxygen({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Local Visibility Platform",
-  description: "Internal GBP rank tracking and review dashboard",
+  title: {
+    default: "Local Visibility Platform",
+    template: "%s · Local Visibility Platform",
+  },
+  description: "EverConvert local visibility platform — rank tracking, reviews, and GBP performance.",
 };
 
 export default function RootLayout({
@@ -14,21 +31,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${sans.variable} ${display.variable}`}>
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <header className="border-b">
-          <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
-            <Link href="/clients" className="text-sm font-semibold">
-              Local Visibility Platform
-            </Link>
-            <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-              <Link href="/clients" className="hover:text-foreground">Clients</Link>
-              <Link href="/scans" className="hover:text-foreground">Scans</Link>
-              <Link href="/settings" className="hover:text-foreground">Settings</Link>
-            </nav>
-          </div>
-        </header>
-        <main className="mx-auto max-w-7xl px-4 py-8">{children}</main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

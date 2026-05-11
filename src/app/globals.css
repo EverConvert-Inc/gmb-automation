@@ -4,24 +4,37 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    /* Surface */
+    --background: 240 6% 97%;          /* page bg: very light neutral */
+    --foreground: 0 0% 13%;            /* body text: #212121 */
+    --card: 0 0% 100%;                 /* white surfaces */
+    --card-foreground: 0 0% 13%;
+    --muted: 240 6% 95%;
+    --muted-foreground: 0 0% 40%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --accent: 240 6% 95%;
+    --accent-foreground: 0 0% 13%;
+    --secondary: 240 6% 95%;
+    --secondary-foreground: 0 0% 13%;
+
+    /* Brand — EverConvert */
+    --brand: 98 46% 49%;               /* #6fb744 — primary green */
+    --brand-foreground: 0 0% 8%;       /* black text on green */
+    --brand-dark: 0 0% 8%;             /* #141414 — sidebar/nav */
+    --brand-dark-foreground: 0 0% 100%;
+    --brand-muted: 98 40% 95%;         /* tint for hover states */
+
+    /* Primary maps to brand so existing Button/Badge semantics pick it up */
+    --primary: 98 46% 49%;
+    --primary-foreground: 0 0% 8%;
+
+    /* Functional (kept distinct from brand green so meaning stays clear) */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --ring: 98 46% 49%;
+
+    --radius: 0.625rem;
   }
 }
 
@@ -30,6 +43,10 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1, h2 {
+    font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+    letter-spacing: -0.01em;
   }
 }
