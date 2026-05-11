@@ -6,13 +6,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { LocationSwitcher } from "@/components/location-switcher";
+import { ReviewInsightsCard } from "@/components/review-insights-card";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
+import { ScanTrendCard } from "@/components/scan-trend-card";
 import { StarBar } from "@/components/star-bar";
 import { SyncReviewsButton } from "@/components/sync-reviews-button";
 import {
   getActiveScanForLocation,
   getClientBySlug,
   getLocationWithLatestScan,
+  getRecentScanComparisons,
+  getReviewInsights,
   listGridConfigsForLocation,
   listKeywordsForLocation,
   listLocationsForClient,
@@ -103,11 +107,20 @@ export default async function ClientDashboardPage({
     rating,
     reviewCount,
   } = data;
-  const [recentScans, allKeywords, gridConfigList, activeScan] = await Promise.all([
+  const [
+    recentScans,
+    allKeywords,
+    gridConfigList,
+    activeScan,
+    reviewInsights,
+    scanComparisons,
+  ] = await Promise.all([
     listRecentScansForLocation(selectedId),
     listKeywordsForLocation(selectedId),
     listGridConfigsForLocation(selectedId),
     getActiveScanForLocation(selectedId),
+    getReviewInsights(selectedId),
+    getRecentScanComparisons(selectedId, 6),
   ]);
 
   const heatMapPoints = points.map((p) => ({
@@ -226,6 +239,8 @@ export default async function ClientDashboardPage({
         </div>
       </div>
 
+      <ReviewInsightsCard data={reviewInsights} />
+
       <Card>
         <CardHeader>
           <CardTitle>Heat Map</CardTitle>
@@ -249,6 +264,8 @@ export default async function ClientDashboardPage({
           />
         </CardContent>
       </Card>
+
+      <ScanTrendCard scans={scanComparisons} />
 
       <ScanManagementPanel
         key={location.id}

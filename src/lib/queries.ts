@@ -349,3 +349,152 @@ export async function locationDailyMetricsRange(locationId: string, days: number
     orderBy: (cols, ops) => ops.asc(cols.metricDate),
   });
 }
+
+export type ReviewInsights = {
+  totalReviews: number;
+  averageRating: number | null;
+  lastReviewAt: Date | null;
+  daysSinceLastReview: number | null;
+  last30: number;
+  prior30: number;
+  last60: number;
+  prior60: number;
+  last90: number;
+  prior90: number;
+  monthlyBuckets: Array<{ monthStart: string; count: number }>;
+};
+
+export async function getReviewInsights(locationId: string): Promise<ReviewInsights> {
+  const now = Date.now();
+  const d30 = new Date(now - 30 * 86_400_000);
+  const d60 = new Date(now - 60 * 86_400_000);
+  const d90 = new Date(now - 90 * 86_400_000);
+  const d180 = new Date(now - 180 * 86_400_000);
+  const d365 = new Date(now - 365 * 86_400_000);
+
+  // Single pass: aggregate + windowed counts. Postgres FILTER is the clean
+  // way to do conditional counts.
+  const aggRows = await db
+    .select({
+      total: sql<number>`count(${reviews.id})::int`,
+      avgRating: sql<number | null>`avg(${reviews.rating})`,
+      lastAt: sql<Date | null>`max(${reviews.createdAt})`,
+      last30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d30.toISOString()})::int`,
+      prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()} and ${reviews.createdAt} < ${d30.toISOString()})::int`,
+      last60: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()})::int`,
+      prior60: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${new Date(now - 120 * 86_400_000).toISOString()} and ${reviews.createdAt} < ${d60.toISOString()})::int`,
+      last90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d90.toISOString()})::int`,
+      prior90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${new Date(now - 180 * 86_400_000).toISOString()} and ${reviews.createdAt} < ${d90.toISOString()})::int`,
+    })
+    .from(reviews)
+    .where(eq(reviews.locationId, locationId));
+
+  const agg = aggRows[0];
+  const monthly = await db
+    .select({
+      monthStart: sql<string>`to_char(date_trunc('month', ${reviews.createdAt}), 'YYYY-MM-DD')`.as("month_start"),
+      count: sql<number>`count(*)::int`.as("review_count"),
+    })
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.locationId, locationId),
+        gte(reviews.createdAt, d365),
+      ),
+    )
+    .groupBy(sql`date_trunc('month', ${reviews.createdAt})`)
+    .orderBy(sql`date_trunc('month', ${reviews.createdAt})`);
+
+  // Backfill missing months with zero so the bar chart spans 12 months.
+  const monthlyBuckets: Array<{ monthStart: string; count: number }> = [];
+  const cursor = new Date(d365);
+  cursor.setDate(1);
+  cursor.setHours(0, 0, 0, 0);
+  const today = new Date();
+  const byMonth = new Map(monthly.map((m) => [m.monthStart, m.count]));
+  while (cursor <= today) {
+    const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-01`;
+    monthlyBuckets.push({ monthStart: key, count: byMonth.get(key) ?? 0 });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const lastReviewAt = agg?.lastAt ?? null;
+  return {
+    totalReviews: agg?.total ?? 0,
+    averageRating: agg?.avgRating !== null && agg?.avgRating !== undefined ? Number(agg.avgRating) : null,
+    lastReviewAt,
+    daysSinceLastReview: lastReviewAt
+      ? Math.floor((now - new Date(lastReviewAt).getTime()) / 86_400_000)
+      : null,
+    last30: agg?.last30 ?? 0,
+    prior30: agg?.prior30 ?? 0,
+    last60: agg?.last60 ?? 0,
+    prior60: agg?.prior60 ?? 0,
+    last90: agg?.last90 ?? 0,
+    prior90: agg?.prior90 ?? 0,
+    monthlyBuckets,
+  };
+}
+
+export type ScanComparison = {
+  id: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  triggeredBy: string;
+  totalPoints: number;
+  rankedPoints: number;
+  arp: number | null;
+  solv: number;
+  coverage: number;
+};
+
+export async function getRecentScanComparisons(
+  locationId: string,
+  limit = 6,
+): Promise<ScanComparison[]> {
+  const completed = await db.query.scans.findMany({
+    where: and(eq(scans.locationId, locationId), eq(scans.status, "completed")),
+    orderBy: (cols, ops) => ops.desc(cols.completedAt),
+    limit,
+  });
+  if (completed.length === 0) return [];
+
+  const scanIds = completed.map((s) => s.id);
+  const allPoints = await db
+    .select({
+      scanId: scanPoints.scanId,
+      rank: scanPoints.rank,
+    })
+    .from(scanPoints)
+    .where(inArray(scanPoints.scanId, scanIds));
+
+  const grouped = new Map<string, Array<{ rank: number | null }>>();
+  for (const p of allPoints) {
+    const list = grouped.get(p.scanId);
+    if (list) list.push({ rank: p.rank });
+    else grouped.set(p.scanId, [{ rank: p.rank }]);
+  }
+
+  // Reuse the same arithmetic as computeScanMetrics ("ignore_null" strategy)
+  // without importing it here to keep this file framework-agnostic.
+  return completed.map((s) => {
+    const points = grouped.get(s.id) ?? [];
+    const total = points.length;
+    const ranked = points.filter((p) => p.rank !== null && p.rank > 0);
+    const top3 = ranked.filter((p) => (p.rank as number) <= 3).length;
+    const arp = ranked.length
+      ? ranked.reduce((acc, p) => acc + (p.rank as number), 0) / ranked.length
+      : null;
+    return {
+      id: s.id,
+      startedAt: s.startedAt,
+      completedAt: s.completedAt,
+      triggeredBy: s.triggeredBy,
+      totalPoints: total,
+      rankedPoints: ranked.length,
+      arp,
+      solv: total > 0 ? (top3 / total) * 100 : 0,
+      coverage: total > 0 ? (ranked.length / total) * 100 : 0,
+    };
+  });
+}
