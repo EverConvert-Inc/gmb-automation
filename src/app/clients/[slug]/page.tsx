@@ -22,8 +22,9 @@ import {
   listLocationsForClient,
   listRecentScansForLocation,
 } from "@/lib/queries";
-import { formatRelativeDate } from "@/lib/utils";
-import { CheckCircle2, Plus } from "lucide-react";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { formatRelativeDate, formatRelativeTime } from "@/lib/utils";
+import { AlertTriangle, CheckCircle2, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -225,16 +226,43 @@ export default async function ClientDashboardPage({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {hasGbpConnected ? (
-            <>
-              <Badge variant="success">GBP connected</Badge>
-              <SyncReviewsButton locationId={location.id} />
-            </>
-          ) : (
-            <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
-              <Button variant="outline">Connect Google Business Profile</Button>
-            </Link>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            {hasGbpConnected ? (
+              <>
+                <Badge variant="success">GBP connected</Badge>
+                <SyncReviewsButton locationId={location.id} />
+              </>
+            ) : (
+              <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
+                <Button variant="outline">Connect Google Business Profile</Button>
+              </Link>
+            )}
+          </div>
+          {hasGbpConnected && (
+            <div className="text-right text-xs">
+              {location.lastPollError ? (
+                <span className="inline-flex items-center gap-1 text-red-700">
+                  <AlertTriangle className="h-3 w-3" />
+                  Last sync failed
+                  {location.lastPollErrorAt &&
+                    ` ${formatRelativeTime(location.lastPollErrorAt)}`}
+                  {location.consecutivePollFailures > 1 &&
+                    ` · ${location.consecutivePollFailures} attempts`}
+                  <InfoTooltip aria-label="Error details">
+                    {location.lastPollError}
+                  </InfoTooltip>
+                </span>
+              ) : location.lastPolledAt ? (
+                <span className="text-muted-foreground">
+                  Last sync {formatRelativeTime(location.lastPolledAt)}
+                  {location.nextPollAfter &&
+                    ` · next ${formatRelativeTime(location.nextPollAfter)}`}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Awaiting first sync</span>
+              )}
+            </div>
           )}
         </div>
       </div>

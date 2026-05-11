@@ -330,11 +330,19 @@ export async function listGridConfigsForLocation(locationId: string) {
 }
 
 export async function listLocationsDueForPolling(now = new Date()) {
-  const dailyCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  // A location is due when:
+  //   - it's an active row
+  //   - its pollFrequency isn't "manual" (those are sync-only)
+  //   - its nextPollAfter is either unset (never polled) or has elapsed
+  // nextPollAfter is written by pollReviewsForLocation on both success
+  // (now + frequency interval) and failure (now + exponential backoff),
+  // so this gate handles both "wait until next scheduled sync" and
+  // "back off after errors" without separate logic here.
   return db.query.locations.findMany({
     where: and(
       eq(locations.status, "active"),
-      sql`(${locations.lastPolledAt} IS NULL OR ${locations.lastPolledAt} < ${dailyCutoff.toISOString()})`,
+      sql`${locations.pollFrequency} <> 'manual'`,
+      sql`(${locations.nextPollAfter} IS NULL OR ${locations.nextPollAfter} <= ${now.toISOString()})`,
     ),
   });
 }
