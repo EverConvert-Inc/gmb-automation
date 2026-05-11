@@ -662,7 +662,6 @@ export async function getReviewInsights(locationId: string): Promise<ReviewInsig
   const d30 = new Date(now - 30 * 86_400_000);
   const d60 = new Date(now - 60 * 86_400_000);
   const d90 = new Date(now - 90 * 86_400_000);
-  const d180 = new Date(now - 180 * 86_400_000);
   const d365 = new Date(now - 365 * 86_400_000);
 
   // Single pass: aggregate + windowed counts. Postgres FILTER is the clean
