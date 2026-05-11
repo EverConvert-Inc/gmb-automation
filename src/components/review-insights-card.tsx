@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { DeltaPill, MiniBars } from "@/components/charts";
+import { METRIC_DESCRIPTIONS } from "@/lib/metric-descriptions";
 import type { ReviewInsights } from "@/lib/queries";
 
 function formatMonthLabel(monthStart: string): string {
@@ -32,6 +34,7 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi
             label="Days since last review"
+            info={METRIC_DESCRIPTIONS.daysSinceLastReview}
             value={
               data.daysSinceLastReview === null
                 ? "—"
@@ -48,16 +51,19 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
           />
           <Kpi
             label="Last 30 days"
+            info={METRIC_DESCRIPTIONS.reviewsLast30}
             value={String(data.last30)}
             delta={<DeltaPill current={data.last30} prior={data.prior30} />}
           />
           <Kpi
             label="Last 60 days"
+            info={METRIC_DESCRIPTIONS.reviewsLast60}
             value={String(data.last60)}
             delta={<DeltaPill current={data.last60} prior={data.prior60} />}
           />
           <Kpi
             label="Last 90 days"
+            info={METRIC_DESCRIPTIONS.reviewsLast90}
             value={String(data.last90)}
             delta={<DeltaPill current={data.last90} prior={data.prior90} />}
           />
@@ -97,18 +103,21 @@ function Kpi({
   value,
   sub,
   delta,
+  info,
   valueClassName,
 }: {
   label: string;
   value: string;
   sub?: string;
   delta?: React.ReactNode;
+  info?: string;
   valueClassName?: string;
 }) {
   return (
     <div className="rounded-md border bg-muted/10 p-3">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        {label}
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <span>{label}</span>
+        {info && <InfoTooltip>{info}</InfoTooltip>}
       </div>
       <div className={`mt-1 text-2xl font-semibold ${valueClassName ?? ""}`}>
         {value}

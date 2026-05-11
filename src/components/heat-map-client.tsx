@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Card, CardContent } from "@/components/ui/card";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { HeatMapKeywordTabs, type KeywordTab } from "./heat-map-keyword-tabs";
 import { computeScanMetrics } from "@/lib/metrics";
+import { METRIC_DESCRIPTIONS } from "@/lib/metric-descriptions";
 import { formatRelativeDate } from "@/lib/utils";
 import type { HeatMapPoint } from "./heat-map";
 
@@ -111,17 +113,24 @@ export function HeatMapClient({
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-4">
-        <Stat label="ARP" value={metrics.arp !== null ? metrics.arp.toFixed(1) : "—"} />
+        <Stat
+          label="ARP"
+          info={METRIC_DESCRIPTIONS.arp}
+          value={metrics.arp !== null ? metrics.arp.toFixed(1) : "—"}
+        />
         <Stat
           label="SoLV"
+          info={METRIC_DESCRIPTIONS.solv}
           value={metrics.totalPoints ? `${metrics.solv.toFixed(0)}%` : "—"}
         />
         <Stat
           label="Coverage"
+          info={METRIC_DESCRIPTIONS.coverage}
           value={metrics.totalPoints ? `${metrics.coverage.toFixed(0)}%` : "—"}
         />
         <Stat
           label="Last scan"
+          info={METRIC_DESCRIPTIONS.lastScan}
           value={completedAt ? formatRelativeDate(completedAt) : "—"}
         />
       </div>
@@ -158,11 +167,22 @@ export function HeatMapClient({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  info,
+}: {
+  label: string;
+  value: string;
+  info?: string;
+}) {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="text-xs uppercase text-muted-foreground">{label}</div>
+        <div className="flex items-center gap-1.5 text-xs uppercase text-muted-foreground">
+          <span>{label}</span>
+          {info && <InfoTooltip>{info}</InfoTooltip>}
+        </div>
         <div className="mt-1 text-2xl font-semibold">{value}</div>
       </CardContent>
     </Card>

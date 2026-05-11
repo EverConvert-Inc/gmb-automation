@@ -5,7 +5,9 @@ import Link from "next/link";
 import { ArrowRight, ChevronRight, ExternalLink, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { DeltaPill, NumericDeltaPill } from "@/components/charts";
+import { METRIC_DESCRIPTIONS } from "@/lib/metric-descriptions";
 import { formatRelativeDate, cn } from "@/lib/utils";
 import type { ClientRow, LocationSnapshot } from "@/lib/queries";
 
@@ -212,21 +214,25 @@ function LocationSnapshotCard({
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat
           label="Rating"
+          info={METRIC_DESCRIPTIONS.rating}
           value={loc.rating !== null ? loc.rating.toFixed(1) : "—"}
           sub={`${loc.reviewCount} review${loc.reviewCount === 1 ? "" : "s"}`}
         />
         <Stat
           label="Last review"
+          info={METRIC_DESCRIPTIONS.daysSinceLastReview}
           value={lastReviewLabel}
           valueClassName={freshnessTone(loc.daysSinceLastReview)}
         />
         <Stat
           label="Last 30d"
+          info={METRIC_DESCRIPTIONS.reviewsLast30}
           value={String(loc.last30)}
           delta={<DeltaPill current={loc.last30} prior={loc.prior30} />}
         />
         <Stat
           label="Last 90d"
+          info={METRIC_DESCRIPTIONS.reviewsLast90}
           value={String(loc.last90)}
           delta={<DeltaPill current={loc.last90} prior={loc.prior90} />}
         />
@@ -246,6 +252,7 @@ function LocationSnapshotCard({
           <div className="grid grid-cols-3 gap-2">
             <ScanStat
               label="ARP"
+              info={METRIC_DESCRIPTIONS.arp}
               value={
                 loc.latestScan.arp !== null ? loc.latestScan.arp.toFixed(1) : "—"
               }
@@ -264,6 +271,7 @@ function LocationSnapshotCard({
             />
             <ScanStat
               label="SoLV"
+              info={METRIC_DESCRIPTIONS.solv}
               value={`${loc.latestScan.solv.toFixed(0)}%`}
               delta={
                 <NumericDeltaPill
@@ -279,6 +287,7 @@ function LocationSnapshotCard({
             />
             <ScanStat
               label="Coverage"
+              info={METRIC_DESCRIPTIONS.coverage}
               value={`${loc.latestScan.coverage.toFixed(0)}%`}
               delta={
                 <NumericDeltaPill
@@ -315,18 +324,21 @@ function Stat({
   value,
   sub,
   delta,
+  info,
   valueClassName,
 }: {
   label: string;
   value: string;
   sub?: string;
   delta?: React.ReactNode;
+  info?: string;
   valueClassName?: string;
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        {label}
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+        <span>{label}</span>
+        {info && <InfoTooltip>{info}</InfoTooltip>}
       </div>
       <div className={cn("text-base font-semibold tabular-nums", valueClassName)}>
         {value}
@@ -340,16 +352,19 @@ function ScanStat({
   label,
   value,
   delta,
+  info,
 }: {
   label: string;
   value: string;
   delta: React.ReactNode;
+  info?: string;
 }) {
   return (
     <div className="rounded bg-background p-2">
       <div className="flex items-baseline justify-between gap-1">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {label}
+        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span>{label}</span>
+          {info && <InfoTooltip>{info}</InfoTooltip>}
         </span>
         {delta}
       </div>

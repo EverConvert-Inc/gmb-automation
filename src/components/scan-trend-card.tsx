@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { NumericDeltaPill, SparkLine } from "@/components/charts";
+import { METRIC_DESCRIPTIONS } from "@/lib/metric-descriptions";
 import { formatRelativeDate } from "@/lib/utils";
 import type { ScanComparison } from "@/lib/queries";
 
@@ -44,6 +46,7 @@ export function ScanTrendCard({ scans }: { scans: ScanComparison[] }) {
         <div className="grid gap-3 sm:grid-cols-3">
           <TrendKpi
             label="ARP"
+            info={METRIC_DESCRIPTIONS.arp}
             value={newest.arp !== null ? newest.arp.toFixed(1) : "—"}
             delta={
               <NumericDeltaPill
@@ -57,6 +60,7 @@ export function ScanTrendCard({ scans }: { scans: ScanComparison[] }) {
           />
           <TrendKpi
             label="SoLV"
+            info={METRIC_DESCRIPTIONS.solv}
             value={`${newest.solv.toFixed(0)}%`}
             delta={
               <NumericDeltaPill
@@ -69,6 +73,7 @@ export function ScanTrendCard({ scans }: { scans: ScanComparison[] }) {
           />
           <TrendKpi
             label="Coverage"
+            info={METRIC_DESCRIPTIONS.coverage}
             value={`${newest.coverage.toFixed(0)}%`}
             delta={
               <NumericDeltaPill
@@ -87,9 +92,24 @@ export function ScanTrendCard({ scans }: { scans: ScanComparison[] }) {
               <tr>
                 <th className="px-3 py-2 font-medium">When</th>
                 <th className="px-3 py-2 font-medium">Triggered</th>
-                <th className="px-3 py-2 font-medium text-right">ARP</th>
-                <th className="px-3 py-2 font-medium text-right">SoLV</th>
-                <th className="px-3 py-2 font-medium text-right">Coverage</th>
+                <th className="px-3 py-2 font-medium text-right">
+                  <span className="inline-flex items-center gap-1.5">
+                    ARP
+                    <InfoTooltip>{METRIC_DESCRIPTIONS.arp}</InfoTooltip>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium text-right">
+                  <span className="inline-flex items-center gap-1.5">
+                    SoLV
+                    <InfoTooltip>{METRIC_DESCRIPTIONS.solv}</InfoTooltip>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium text-right">
+                  <span className="inline-flex items-center gap-1.5">
+                    Coverage
+                    <InfoTooltip>{METRIC_DESCRIPTIONS.coverage}</InfoTooltip>
+                  </span>
+                </th>
                 <th className="px-3 py-2 font-medium text-right">Points</th>
               </tr>
             </thead>
@@ -160,17 +180,20 @@ function TrendKpi({
   value,
   delta,
   spark,
+  info,
 }: {
   label: string;
   value: string;
   delta: React.ReactNode;
   spark: React.ReactNode;
+  info?: string;
 }) {
   return (
     <div className="rounded-md border bg-muted/10 p-3">
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          {label}
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <span>{label}</span>
+          {info && <InfoTooltip>{info}</InfoTooltip>}
         </span>
         {delta}
       </div>
