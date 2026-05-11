@@ -1007,3 +1007,111 @@ export async function getSerpRankingsForClient(
     };
   });
 }
+
+export type RankAnnotation =
+  | { kind: "nr" }
+  | { kind: "nr_lost"; priorRank: number }
+  | { kind: "rank"; rank: number; delta: number | null; isNew: boolean; isWrongPage: boolean; actualUrl: string | null };
+
+export type RankingsOverviewRow = {
+  trackedKeywordId: string;
+  clientId: string;
+  clientName: string;
+  clientSlug: string;
+  keyword: string;
+  targetUrl: string;
+  geoCity: string | null;
+  isActive: boolean;
+  lastCheckedAt: Date | null;
+  national: RankAnnotation;
+  geo: RankAnnotation | null;
+};
+
+function buildAnnotation(
+  currentRank: number | null,
+  currentUrl: string | null,
+  priorRank: number | null,
+  targetUrl: string,
+): RankAnnotation {
+  if (currentRank == null) {
+    if (priorRank != null) return { kind: "nr_lost", priorRank };
+    return { kind: "nr" };
+  }
+  const isWrongPage =
+    currentUrl != null &&
+    stripTrailingSlash(currentUrl) !== stripTrailingSlash(targetUrl);
+  const isNew = priorRank == null;
+  // delta convention matches the spreadsheet: positive = improved (rank
+  // moved closer to #1). e.g., went from #18 to #13 → delta=+5.
+  const delta = priorRank != null ? priorRank - currentRank : null;
+  return { kind: "rank", rank: currentRank, delta, isNew, isWrongPage, actualUrl: currentUrl };
+}
+
+export async function getRankingsOverview(): Promise<RankingsOverviewRow[]> {
+  const keywords = await db
+    .select({
+      kwId: trackedKeywords.id,
+      clientId: trackedKeywords.clientId,
+      clientName: clients.name,
+      clientSlug: clients.slug,
+      keyword: trackedKeywords.keyword,
+      targetUrl: trackedKeywords.targetUrl,
+      geoCity: trackedKeywords.geoCity,
+      isActive: trackedKeywords.isActive,
+    })
+    .from(trackedKeywords)
+    .innerJoin(clients, eq(trackedKeywords.clientId, clients.id))
+    .where(eq(trackedKeywords.isActive, true))
+    .orderBy(clients.name, desc(trackedKeywords.createdAt));
+
+  if (keywords.length === 0) return [];
+
+  const cutoff = new Date(Date.now() - 90 * 86_400_000);
+  const recent = await db.query.serpRankings.findMany({
+    where: gte(serpRankings.checkedAt, cutoff),
+    orderBy: [desc(serpRankings.checkedAt)],
+  });
+
+  const byKeyword = new Map<string, typeof recent>();
+  for (const r of recent) {
+    const list = byKeyword.get(r.trackedKeywordId);
+    if (list) list.push(r);
+    else byKeyword.set(r.trackedKeywordId, [r]);
+  }
+
+  return keywords.map((kw) => {
+    const rows = byKeyword.get(kw.kwId) ?? [];
+    const latest = rows[0] ?? null;
+    const prior = rows[1] ?? null;
+
+    const national = buildAnnotation(
+      latest?.nationalRank ?? null,
+      latest?.nationalUrl ?? null,
+      prior?.nationalRank ?? null,
+      kw.targetUrl,
+    );
+
+    const geo = kw.geoCity
+      ? buildAnnotation(
+          latest?.geoRank ?? null,
+          latest?.geoUrl ?? null,
+          prior?.geoRank ?? null,
+          kw.targetUrl,
+        )
+      : null;
+
+    return {
+      trackedKeywordId: kw.kwId,
+      clientId: kw.clientId,
+      clientName: kw.clientName,
+      clientSlug: kw.clientSlug,
+      keyword: kw.keyword,
+      targetUrl: kw.targetUrl,
+      geoCity: kw.geoCity,
+      isActive: kw.isActive,
+      lastCheckedAt: latest?.checkedAt ?? null,
+      national,
+      geo,
+    };
+  });
+}
