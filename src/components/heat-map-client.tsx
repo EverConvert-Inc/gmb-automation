@@ -143,6 +143,22 @@ export function HeatMapClient({
         />
       )}
 
+      {selectedKeywordId && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="uppercase tracking-wide">Showing rankings for</span>
+          <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 font-medium text-foreground">
+            &ldquo;
+            {keywords.find((k) => k.id === selectedKeywordId)?.keyword ?? "—"}
+            &rdquo;
+          </span>
+          {scannedKeywords.length === 1 && (
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+              (only keyword scanned)
+            </span>
+          )}
+        </div>
+      )}
+
       {isRunning && (
         <div className="text-xs text-muted-foreground">
           Scan in progress · {completedPoints}/{points.length} points complete · live

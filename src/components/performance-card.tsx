@@ -1,5 +1,7 @@
+import { LineChart } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { SyncReviewsButton } from "@/components/sync-reviews-button";
 import { DeltaPill, SparkLine } from "@/components/charts";
 import type { PerformanceMetric } from "@/lib/gbp";
 import type { PerformanceInsights, PerformanceTile } from "@/lib/queries";
@@ -45,24 +47,47 @@ const SECONDARY_METRICS: PerformanceMetric[] = [
   "BUSINESS_FOOD_MENU_CLICKS",
 ];
 
-export function PerformanceCard({ data }: { data: PerformanceInsights }) {
+export function PerformanceCard({
+  data,
+  locationId,
+}: {
+  data: PerformanceInsights;
+  locationId: string;
+}) {
   const tilesByMetric = new Map(data.tiles.map((t) => [t.metric, t]));
 
   const anyData = data.tiles.some((t) => t.last30 > 0 || t.prior30 > 0);
   if (!anyData) {
     return (
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        <CardHeader className="border-b border-border/60 pb-4">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <LineChart className="h-4 w-4 text-brand" />
             Performance
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            No Google Business Profile performance data yet. New listings can
-            take a few days for metrics to appear, and Google publishes daily
-            data with a 2&ndash;3 day lag.
-          </p>
+        <CardContent className="pt-6">
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <div className="rounded-full bg-brand/10 p-4">
+              <LineChart className="h-7 w-7 text-brand" />
+            </div>
+            <div className="max-w-md space-y-1.5">
+              <p className="text-sm font-medium">
+                No Google Business Profile performance data yet
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Google publishes daily metrics with a 2&ndash;3 day lag, and
+                new listings can take a few days to begin reporting. If this
+                stays empty, sync now to pull a 90-day backfill — or reconnect
+                GBP if the wrong Google account is linked.
+              </p>
+            </div>
+            <SyncReviewsButton
+              locationId={locationId}
+              variant="compact"
+              label="Sync GBP data"
+            />
+          </div>
         </CardContent>
       </Card>
     );
@@ -106,9 +131,10 @@ export function PerformanceCard({ data }: { data: PerformanceInsights }) {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="border-b border-border/60 pb-4">
         <CardTitle className="flex items-center justify-between gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-2">
+            <LineChart className="h-4 w-4 text-brand" />
             Performance
             <InfoTooltip>
               Counts come straight from Google Business Profile. Google
@@ -124,7 +150,7 @@ export function PerformanceCard({ data }: { data: PerformanceInsights }) {
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 pt-6">
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {PRIMARY_METRICS.map((m) => {
             const tile = tilesByMetric.get(m);
@@ -212,7 +238,7 @@ function PerfTile({
           values={sparkValues}
           width={180}
           height={28}
-          className="mt-1 text-foreground"
+          className="mt-1 text-brand"
         />
       )}
     </div>

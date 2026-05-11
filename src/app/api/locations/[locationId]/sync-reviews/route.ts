@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { locations, oauthCredentials } from "@/lib/db/schema";
 import { findGbpLocationByPlaceId } from "@/lib/gbp";
+import { pullPerformanceForLocation } from "@/lib/performance";
 import { pollReviewsForLocation } from "@/lib/reviews";
 
 export const runtime = "nodejs";
@@ -27,8 +28,8 @@ export async function POST(
   }
 
   // If the placeId-to-GBP match wasn't completed at OAuth time, retry it now
-  // before polling. This covers the case where the user freshly connected
-  // before the discovery step was wired up.
+  // before polling. Covers locations that connected before the discovery
+  // step was wired up.
   if (!location.gbpAccountId || !location.gbpLocationId) {
     const cred = await db.query.oauthCredentials.findFirst({
       where: eq(oauthCredentials.id, location.gbpOauthTokenId),
@@ -65,13 +66,35 @@ export async function POST(
     }
   }
 
+  let ingested = 0;
+  let performanceRows = 0;
+  let performanceError: string | null = null;
+
   try {
-    const result = await pollReviewsForLocation(locationId);
-    return NextResponse.json({ ingested: result.ingested });
+    const reviewResult = await pollReviewsForLocation(locationId);
+    ingested = reviewResult.ingested;
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
       { status: 502 },
     );
   }
+
+  // Performance pull is best-effort: if Google hasn't published metrics yet
+  // for this listing (common in the first few days) we still want the review
+  // sync to succeed. Use a 90d window so the dashboard's MoM comparison has
+  // a prior window to compare against if available.
+  try {
+    const perfResult = await pullPerformanceForLocation(locationId, 90);
+    performanceRows = perfResult.rowsWritten;
+  } catch (err) {
+    console.error("[sync-reviews] performance pull failed:", err);
+    performanceError = (err as Error).message;
+  }
+
+  return NextResponse.json({
+    ingested,
+    performanceRows,
+    performanceError,
+  });
 }

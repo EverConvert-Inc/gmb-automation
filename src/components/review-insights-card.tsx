@@ -1,3 +1,4 @@
+import { Star } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { DeltaPill, MiniBars } from "@/components/charts";
@@ -25,12 +26,13 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      <CardHeader className="border-b border-border/60 pb-4">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <Star className="h-4 w-4 text-brand" />
           Review insights
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi
             label="Days since last review"
@@ -84,7 +86,7 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
               labels={labels}
               width={260}
               height={42}
-              className="text-foreground"
+              className="text-brand"
             />
             <div className="mt-1 grid grid-flow-col text-[10px] uppercase tracking-wide text-muted-foreground" style={{ gridTemplateColumns: `repeat(${labels.length}, 1fr)`, width: 260 }}>
               {labels.map((l, i) => (

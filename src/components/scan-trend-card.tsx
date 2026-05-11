@@ -1,3 +1,4 @@
+import { Activity } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { NumericDeltaPill, SparkLine } from "@/components/charts";
@@ -33,9 +34,12 @@ export function ScanTrendCard({ scans }: { scans: ScanComparison[] }) {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="border-b border-border/60 pb-4">
         <CardTitle className="flex items-center justify-between text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <span>Scan trend</span>
+          <span className="inline-flex items-center gap-2">
+            <Activity className="h-4 w-4 text-brand" />
+            Scan trend
+          </span>
           <span className="text-[11px] font-normal normal-case text-muted-foreground">
             Most recent {scans.length} scan{scans.length === 1 ? "" : "s"} · lower
             ARP and higher SoLV/Coverage are better
@@ -69,7 +73,7 @@ export function ScanTrendCard({ scans }: { scans: ScanComparison[] }) {
                 precision={1}
               />
             }
-            spark={<SparkLine values={solvSeries} width={220} height={36} className="text-green-700" />}
+            spark={<SparkLine values={solvSeries} width={220} height={36} className="text-brand" />}
           />
           <TrendKpi
             label="Coverage"

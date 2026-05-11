@@ -26,7 +26,7 @@ import {
 } from "@/lib/queries";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { formatRelativeDate, formatRelativeTime } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, Plus } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Map, MessageSquare, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -273,11 +273,16 @@ export default async function ClientDashboardPage({
 
       <ReviewInsightsCard data={reviewInsights} />
 
-      {hasGbpConnected && <PerformanceCard data={performanceInsights} />}
+      {hasGbpConnected && (
+        <PerformanceCard data={performanceInsights} locationId={location.id} />
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Heat Map</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Map className="h-4 w-4 text-brand" />
+            Heat map
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <HeatMapClient
@@ -331,7 +336,10 @@ export default async function ClientDashboardPage({
 
       <Card id="reviews">
         <CardHeader>
-          <CardTitle>Recent reviews</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-brand" />
+            Recent reviews
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {recentReviews.length === 0 ? (
