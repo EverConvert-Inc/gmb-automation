@@ -723,19 +723,42 @@ export async function getPerformanceInsights(
   const d30Str = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
   const d60Str = new Date(now.getTime() - 60 * 86_400_000).toISOString().slice(0, 10);
 
-  const rows = await db
-    .select({
-      metric: locationPerformanceDaily.metric,
-      date: locationPerformanceDaily.metricDate,
-      value: locationPerformanceDaily.value,
-    })
-    .from(locationPerformanceDaily)
-    .where(
-      and(
-        eq(locationPerformanceDaily.locationId, locationId),
-        gte(locationPerformanceDaily.metricDate, d60Str),
-      ),
+  // Defensive: if the location_performance_daily table or its columns don't
+  // exist yet (typically because the 0002 migration hasn't been run on this
+  // environment) we return an empty result instead of crashing the dashboard
+  // render. The PerformanceCard already renders an "awaiting data" empty
+  // state for that shape.
+  let rows: Array<{ metric: string; date: string; value: number }> = [];
+  try {
+    rows = await db
+      .select({
+        metric: locationPerformanceDaily.metric,
+        date: locationPerformanceDaily.metricDate,
+        value: locationPerformanceDaily.value,
+      })
+      .from(locationPerformanceDaily)
+      .where(
+        and(
+          eq(locationPerformanceDaily.locationId, locationId),
+          gte(locationPerformanceDaily.metricDate, d60Str),
+        ),
+      );
+  } catch (err) {
+    console.error(
+      "[getPerformanceInsights] failed; treating as no data. Did you run pending DB migrations?",
+      err,
     );
+    return {
+      tiles: PERFORMANCE_METRICS.map((metric) => ({
+        metric,
+        last30: 0,
+        prior30: 0,
+        daily: [],
+      })),
+      lastDataDate: null,
+      earliestDataDate: null,
+    };
+  }
 
   const byMetric = new Map<string, Array<{ date: string; value: number }>>();
   let lastDataDate: string | null = null;
@@ -746,15 +769,18 @@ export async function getPerformanceInsights(
     if (lastDataDate === null || r.date > lastDataDate) lastDataDate = r.date;
   }
 
-  // Earliest data date (across any metric) tells us if 30d-prior comparison
-  // is meaningful yet. Cheap separate query, returns 1 row.
-  const earliestRow = await db
-    .select({
-      min: sql<string | null>`min(${locationPerformanceDaily.metricDate})`,
-    })
-    .from(locationPerformanceDaily)
-    .where(eq(locationPerformanceDaily.locationId, locationId));
-  const earliestDataDate = earliestRow[0]?.min ?? null;
+  let earliestDataDate: string | null = null;
+  try {
+    const earliestRow = await db
+      .select({
+        min: sql<string | null>`min(${locationPerformanceDaily.metricDate})`,
+      })
+      .from(locationPerformanceDaily)
+      .where(eq(locationPerformanceDaily.locationId, locationId));
+    earliestDataDate = earliestRow[0]?.min ?? null;
+  } catch {
+    // already logged above; keep null
+  }
 
   const tiles: PerformanceTile[] = PERFORMANCE_METRICS.map((metric) => {
     const series = (byMetric.get(metric) ?? []).sort((a, b) =>
