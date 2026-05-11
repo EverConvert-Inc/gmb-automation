@@ -4,11 +4,13 @@ import {
   clients,
   gridConfigs,
   locationDailyMetrics,
+  locationPerformanceDaily,
   locations,
   reviews,
   scanPoints,
   scans,
 } from "./db/schema";
+import { PERFORMANCE_METRICS, type PerformanceMetric } from "./gbp";
 
 export type ClientRow = {
   id: string;
@@ -694,4 +696,78 @@ export async function getRecentScanComparisons(
       coverage: total > 0 ? (ranked.length / total) * 100 : 0,
     };
   });
+}
+
+export type PerformanceTile = {
+  metric: PerformanceMetric;
+  last30: number;
+  prior30: number;
+  daily: Array<{ date: string; value: number }>;
+};
+
+export type PerformanceInsights = {
+  tiles: PerformanceTile[];
+  lastDataDate: string | null;
+  earliestDataDate: string | null;
+};
+
+// Returns per-metric counts for the rolling last-30-day window vs the prior
+// 30 days, plus the raw daily series for the last 60 days (so the card can
+// render sparklines without an extra query). Sums in JS so a single SELECT
+// returns everything needed.
+export async function getPerformanceInsights(
+  locationId: string,
+): Promise<PerformanceInsights> {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const d30Str = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const d60Str = new Date(now.getTime() - 60 * 86_400_000).toISOString().slice(0, 10);
+
+  const rows = await db
+    .select({
+      metric: locationPerformanceDaily.metric,
+      date: locationPerformanceDaily.metricDate,
+      value: locationPerformanceDaily.value,
+    })
+    .from(locationPerformanceDaily)
+    .where(
+      and(
+        eq(locationPerformanceDaily.locationId, locationId),
+        gte(locationPerformanceDaily.metricDate, d60Str),
+      ),
+    );
+
+  const byMetric = new Map<string, Array<{ date: string; value: number }>>();
+  let lastDataDate: string | null = null;
+  for (const r of rows) {
+    const list = byMetric.get(r.metric);
+    if (list) list.push({ date: r.date, value: r.value });
+    else byMetric.set(r.metric, [{ date: r.date, value: r.value }]);
+    if (lastDataDate === null || r.date > lastDataDate) lastDataDate = r.date;
+  }
+
+  // Earliest data date (across any metric) tells us if 30d-prior comparison
+  // is meaningful yet. Cheap separate query, returns 1 row.
+  const earliestRow = await db
+    .select({
+      min: sql<string | null>`min(${locationPerformanceDaily.metricDate})`,
+    })
+    .from(locationPerformanceDaily)
+    .where(eq(locationPerformanceDaily.locationId, locationId));
+  const earliestDataDate = earliestRow[0]?.min ?? null;
+
+  const tiles: PerformanceTile[] = PERFORMANCE_METRICS.map((metric) => {
+    const series = (byMetric.get(metric) ?? []).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
+    let last30 = 0;
+    let prior30 = 0;
+    for (const d of series) {
+      if (d.date >= d30Str && d.date <= todayStr) last30 += d.value;
+      else if (d.date < d30Str) prior30 += d.value;
+    }
+    return { metric, last30, prior30, daily: series };
+  });
+
+  return { tiles, lastDataDate, earliestDataDate };
 }

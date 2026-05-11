@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { locations, oauthCredentials } from "@/lib/db/schema";
 import { encryptString } from "@/lib/crypto";
 import { findGbpLocationByPlaceId } from "@/lib/gbp";
+import { pullPerformanceForLocation } from "@/lib/performance";
 import { pollReviewsForLocation } from "@/lib/reviews";
 
 export const runtime = "nodejs";
@@ -114,6 +115,13 @@ export async function GET(req: Request) {
       } catch (err) {
         console.error("[oauth callback] initial review poll failed:", err);
         outcome = "linked";
+      }
+      // Best-effort 90d performance backfill so the dashboard's MoM tiles
+      // have meaningful prior-window data on day one.
+      try {
+        await pullPerformanceForLocation(locationId, 90);
+      } catch (err) {
+        console.error("[oauth callback] performance backfill failed:", err);
       }
     }
   } catch (err) {

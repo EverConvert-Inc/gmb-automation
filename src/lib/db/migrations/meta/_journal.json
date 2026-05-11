@@ -15,6 +15,13 @@
       "when": 1778522125793,
       "tag": "0001_needy_la_nuit",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778522498623,
+      "tag": "0002_military_newton_destine",
+      "breakpoints": true
     }
   ]
 }

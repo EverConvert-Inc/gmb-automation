@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { LocationSwitcher } from "@/components/location-switcher";
+import { PerformanceCard } from "@/components/performance-card";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
 import { ScanTrendCard } from "@/components/scan-trend-card";
@@ -15,6 +16,7 @@ import {
   getActiveScanForLocation,
   getClientBySlug,
   getLocationWithLatestScan,
+  getPerformanceInsights,
   getRecentScanComparisons,
   getReviewInsights,
   listGridConfigsForLocation,
@@ -115,6 +117,7 @@ export default async function ClientDashboardPage({
     activeScan,
     reviewInsights,
     scanComparisons,
+    performanceInsights,
   ] = await Promise.all([
     listRecentScansForLocation(selectedId),
     listKeywordsForLocation(selectedId),
@@ -122,6 +125,7 @@ export default async function ClientDashboardPage({
     getActiveScanForLocation(selectedId),
     getReviewInsights(selectedId),
     getRecentScanComparisons(selectedId, 6),
+    getPerformanceInsights(selectedId),
   ]);
 
   const heatMapPoints = points.map((p) => ({
@@ -268,6 +272,8 @@ export default async function ClientDashboardPage({
       </div>
 
       <ReviewInsightsCard data={reviewInsights} />
+
+      {hasGbpConnected && <PerformanceCard data={performanceInsights} />}
 
       <Card>
         <CardHeader>

@@ -61,6 +61,94 @@ export async function findGbpLocationByPlaceId({
   return null;
 }
 
+// The full set of daily metrics exposed by Google Business Profile
+// Performance API. We pull all of them so the dashboard can present any
+// vertical's "useful" set; rendering decides which to show.
+export const PERFORMANCE_METRICS = [
+  "CALL_CLICKS",
+  "WEBSITE_CLICKS",
+  "BUSINESS_DIRECTION_REQUESTS",
+  "BUSINESS_CONVERSATIONS",
+  "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
+  "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+  "BUSINESS_IMPRESSIONS_MOBILE_MAPS",
+  "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
+  "BUSINESS_BOOKINGS",
+  "BUSINESS_FOOD_ORDERS",
+  "BUSINESS_FOOD_MENU_CLICKS",
+] as const;
+
+export type PerformanceMetric = (typeof PERFORMANCE_METRICS)[number];
+
+export type DailyMetricValue = { date: string; value: number };
+export type PerformanceTimeSeries = {
+  metric: PerformanceMetric;
+  values: DailyMetricValue[];
+};
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+export async function fetchPerformanceMetrics({
+  locationId,
+  refreshTokenEncrypted,
+  startDate,
+  endDate,
+}: {
+  locationId: string;
+  refreshTokenEncrypted: string;
+  startDate: Date;
+  endDate: Date;
+}): Promise<PerformanceTimeSeries[]> {
+  const token = await bearerFromCredential(refreshTokenEncrypted);
+  const url = new URL(
+    `https://businessprofileperformance.googleapis.com/v1/locations/${locationId}:fetchMultiDailyMetricsTimeSeries`,
+  );
+  for (const m of PERFORMANCE_METRICS) url.searchParams.append("dailyMetrics", m);
+  url.searchParams.set("dailyRange.start_date.year", String(startDate.getUTCFullYear()));
+  url.searchParams.set("dailyRange.start_date.month", String(startDate.getUTCMonth() + 1));
+  url.searchParams.set("dailyRange.start_date.day", String(startDate.getUTCDate()));
+  url.searchParams.set("dailyRange.end_date.year", String(endDate.getUTCFullYear()));
+  url.searchParams.set("dailyRange.end_date.month", String(endDate.getUTCMonth() + 1));
+  url.searchParams.set("dailyRange.end_date.day", String(endDate.getUTCDate()));
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    throw new Error(`GBP performance fetch failed: ${res.status} ${await res.text()}`);
+  }
+  const json = (await res.json()) as {
+    multiDailyMetricTimeSeries?: Array<{
+      dailyMetricTimeSeries?: Array<{
+        dailyMetric: string;
+        timeSeries?: {
+          datedValues?: Array<{
+            date: { year: number; month: number; day: number };
+            value?: string;
+          }>;
+        };
+      }>;
+    }>;
+  };
+
+  const out: PerformanceTimeSeries[] = [];
+  for (const wrap of json.multiDailyMetricTimeSeries ?? []) {
+    for (const series of wrap.dailyMetricTimeSeries ?? []) {
+      out.push({
+        metric: series.dailyMetric as PerformanceMetric,
+        values:
+          series.timeSeries?.datedValues?.map((dv) => ({
+            date: `${dv.date.year}-${pad2(dv.date.month)}-${pad2(dv.date.day)}`,
+            value: Number(dv.value ?? 0),
+          })) ?? [],
+      });
+    }
+  }
+  return out;
+}
+
 export type GbpReview = {
   reviewId: string;
   rating: number;
