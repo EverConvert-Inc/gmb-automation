@@ -12,6 +12,7 @@ import { ScanManagementPanel } from "@/components/scan-management-panel";
 import { ScanTrendCard } from "@/components/scan-trend-card";
 import { StarBar } from "@/components/star-bar";
 import { SyncReviewsButton } from "@/components/sync-reviews-button";
+import { SyncAllLocationsButton } from "@/components/sync-all-locations-button";
 import {
   getActiveScanForLocation,
   getClientBySlug,
@@ -160,11 +161,14 @@ export default async function ClientDashboardPage({
             </span>
           </div>
         </div>
-        <Link href={`/clients/${client.slug}/locations/new`}>
-          <Button variant="outline">
-            <Plus className="mr-2 h-4 w-4" /> Add location
-          </Button>
-        </Link>
+        <div className="flex items-start gap-3">
+          <SyncAllLocationsButton clientId={client.id} />
+          <Link href={`/clients/${client.slug}/locations/new`}>
+            <Button variant="outline">
+              <Plus className="mr-2 h-4 w-4" /> Add location
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <LocationSwitcher
@@ -237,10 +241,7 @@ export default async function ClientDashboardPage({
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-2">
             {hasGbpConnected ? (
-              <>
-                <Badge variant="success">GBP connected</Badge>
-                <SyncReviewsButton locationId={location.id} />
-              </>
+              <Badge variant="success">GBP connected</Badge>
             ) : (
               <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
                 <Button variant="outline">Connect Google Business Profile</Button>
