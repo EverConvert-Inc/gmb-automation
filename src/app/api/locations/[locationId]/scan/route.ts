@@ -1,20 +1,29 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { scanPoints, scans } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ locationId: string }> },
 ) {
   const { locationId } = await params;
+  const url = new URL(req.url);
+  const scanIdParam = url.searchParams.get("scanId");
 
-  const scan = await db.query.scans.findFirst({
-    where: eq(scans.locationId, locationId),
-    orderBy: (cols, ops) => ops.desc(cols.startedAt),
-  });
+  const scan = scanIdParam
+    ? await db.query.scans.findFirst({
+        where: and(
+          eq(scans.id, scanIdParam),
+          eq(scans.locationId, locationId),
+        ),
+      })
+    : await db.query.scans.findFirst({
+        where: eq(scans.locationId, locationId),
+        orderBy: (cols, ops) => ops.desc(cols.startedAt),
+      });
 
   if (!scan) {
     return NextResponse.json({ scan: null, points: [], completedPoints: 0 });

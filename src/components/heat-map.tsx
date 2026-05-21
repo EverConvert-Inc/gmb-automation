@@ -94,21 +94,48 @@ export function HeatMap({
                         ? `Rank: ${p.rank}`
                         : "Not in top results"}
                 </div>
-                <div className="text-muted-foreground">
-                  Cell ({p.gridX}, {p.gridY})
-                </div>
-                {p.competitors && p.competitors.length > 0 && (
-                  <div>
-                    <div className="font-medium">Top competitors</div>
-                    <ol className="ml-4 list-decimal">
-                      {p.competitors.slice(0, 3).map((c) => (
-                        <li key={c.placeId}>
-                          {c.name} (#{c.rank})
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
+                {(() => {
+                  // Build a single top-of-SERP list from stored competitors
+                  // plus the user themselves (when they're ranked here), then
+                  // sort by rank. This gives the *actual* top 3 at this grid
+                  // point rather than the 3 closest competitors behind us.
+                  const merged: Array<{
+                    placeId: string;
+                    name: string;
+                    rank: number;
+                    isSelf?: boolean;
+                  }> = [...(p.competitors ?? [])];
+                  if (p.rank !== null) {
+                    merged.push({
+                      placeId: "__self__",
+                      name: "Your business",
+                      rank: p.rank,
+                      isSelf: true,
+                    });
+                  }
+                  merged.sort((a, b) => a.rank - b.rank);
+                  const top3 = merged.slice(0, 3);
+                  if (top3.length === 0) return null;
+                  return (
+                    <div>
+                      <div className="font-medium">Top 3 here</div>
+                      <ol className="ml-4 list-decimal">
+                        {top3.map((c) => (
+                          <li
+                            key={c.placeId}
+                            className={
+                              c.isSelf
+                                ? "font-semibold text-green-700"
+                                : undefined
+                            }
+                          >
+                            {c.name} (#{c.rank})
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  );
+                })()}
               </div>
             </Popup>
           </Marker>

@@ -168,6 +168,15 @@ export default async function LocationDetailPage({
             }))}
             latestScanKeywordIds={latestScanKeywordIds}
             latestScanCompletedAt={latestScan?.completedAt ?? null}
+            latestScanId={latestScan?.id ?? null}
+            recentScans={recentScans
+              .filter((s) => s.status === "completed")
+              .slice(0, 8)
+              .map((s) => ({
+                id: s.id,
+                completedAt: s.completedAt,
+                startedAt: s.startedAt,
+              }))}
           />
         </CardContent>
       </Card>

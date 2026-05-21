@@ -9,7 +9,6 @@ import { LocationSwitcher } from "@/components/location-switcher";
 import { PerformanceCard } from "@/components/performance-card";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
-import { ScanTrendCard } from "@/components/scan-trend-card";
 import { StarBar } from "@/components/star-bar";
 import { SyncReviewsButton } from "@/components/sync-reviews-button";
 import { SyncAllLocationsButton } from "@/components/sync-all-locations-button";
@@ -18,7 +17,6 @@ import {
   getClientBySlug,
   getLocationWithLatestScan,
   getPerformanceInsights,
-  getRecentScanComparisons,
   getReviewInsights,
   getRankingsOverview,
   listGridConfigsForLocation,
@@ -119,7 +117,6 @@ export default async function ClientDashboardPage({
     gridConfigList,
     activeScan,
     reviewInsights,
-    scanComparisons,
     performanceInsights,
     serpRankings,
   ] = await Promise.all([
@@ -128,7 +125,6 @@ export default async function ClientDashboardPage({
     listGridConfigsForLocation(selectedId),
     getActiveScanForLocation(selectedId),
     getReviewInsights(selectedId),
-    getRecentScanComparisons(selectedId, 6),
     getPerformanceInsights(selectedId),
     getRankingsOverview(client.id),
   ]);
@@ -307,11 +303,18 @@ export default async function ClientDashboardPage({
             }))}
             latestScanKeywordIds={latestScanKeywordIds}
             latestScanCompletedAt={latestScan?.completedAt ?? null}
+            latestScanId={latestScan?.id ?? null}
+            recentScans={recentScans
+              .filter((s) => s.status === "completed")
+              .slice(0, 8)
+              .map((s) => ({
+                id: s.id,
+                completedAt: s.completedAt,
+                startedAt: s.startedAt,
+              }))}
           />
         </CardContent>
       </Card>
-
-      <ScanTrendCard scans={scanComparisons} />
 
       <ScanManagementPanel
         key={location.id}

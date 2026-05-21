@@ -726,69 +726,6 @@ export async function getReviewInsights(locationId: string): Promise<ReviewInsig
   };
 }
 
-export type ScanComparison = {
-  id: string;
-  startedAt: Date;
-  completedAt: Date | null;
-  triggeredBy: string;
-  totalPoints: number;
-  rankedPoints: number;
-  arp: number | null;
-  solv: number;
-  coverage: number;
-};
-
-export async function getRecentScanComparisons(
-  locationId: string,
-  limit = 6,
-): Promise<ScanComparison[]> {
-  const completed = await db.query.scans.findMany({
-    where: and(eq(scans.locationId, locationId), eq(scans.status, "completed")),
-    orderBy: (cols, ops) => ops.desc(cols.completedAt),
-    limit,
-  });
-  if (completed.length === 0) return [];
-
-  const scanIds = completed.map((s) => s.id);
-  const allPoints = await db
-    .select({
-      scanId: scanPoints.scanId,
-      rank: scanPoints.rank,
-    })
-    .from(scanPoints)
-    .where(inArray(scanPoints.scanId, scanIds));
-
-  const grouped = new Map<string, Array<{ rank: number | null }>>();
-  for (const p of allPoints) {
-    const list = grouped.get(p.scanId);
-    if (list) list.push({ rank: p.rank });
-    else grouped.set(p.scanId, [{ rank: p.rank }]);
-  }
-
-  // Reuse the same arithmetic as computeScanMetrics ("ignore_null" strategy)
-  // without importing it here to keep this file framework-agnostic.
-  return completed.map((s) => {
-    const points = grouped.get(s.id) ?? [];
-    const total = points.length;
-    const ranked = points.filter((p) => p.rank !== null && p.rank > 0);
-    const top3 = ranked.filter((p) => (p.rank as number) <= 3).length;
-    const arp = ranked.length
-      ? ranked.reduce((acc, p) => acc + (p.rank as number), 0) / ranked.length
-      : null;
-    return {
-      id: s.id,
-      startedAt: s.startedAt,
-      completedAt: s.completedAt,
-      triggeredBy: s.triggeredBy,
-      totalPoints: total,
-      rankedPoints: ranked.length,
-      arp,
-      solv: total > 0 ? (top3 / total) * 100 : 0,
-      coverage: total > 0 ? (ranked.length / total) * 100 : 0,
-    };
-  });
-}
-
 export type PerformanceTile = {
   metric: PerformanceMetric;
   last30: number;

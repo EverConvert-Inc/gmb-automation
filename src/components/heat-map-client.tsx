@@ -19,6 +19,12 @@ const HeatMap = dynamic(() => import("./heat-map").then((m) => m.HeatMap), {
   ),
 });
 
+type ScanOption = {
+  id: string;
+  completedAt: Date | string | null;
+  startedAt: Date | string;
+};
+
 type Props = {
   locationId: string;
   centerLat: number;
@@ -29,6 +35,8 @@ type Props = {
   keywords: KeywordTab[];
   latestScanKeywordIds: string[];
   latestScanCompletedAt: Date | string | null;
+  latestScanId: string | null;
+  recentScans: ScanOption[];
   zoom?: number;
 };
 
@@ -42,17 +50,24 @@ export function HeatMapClient({
   keywords,
   latestScanKeywordIds,
   latestScanCompletedAt,
+  latestScanId,
+  recentScans,
   zoom,
 }: Props) {
   const [points, setPoints] = useState(initialPoints);
   const [status, setStatus] = useState(initialStatus);
   const [completedAt, setCompletedAt] = useState(latestScanCompletedAt);
   const [completedPoints, setCompletedPoints] = useState(initialCompletedPoints);
+  const [viewingScanId, setViewingScanId] = useState<string | null>(latestScanId);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanKeywordIds, setScanKeywordIds] = useState<string[]>(latestScanKeywordIds);
+
+  const isViewingLatest = viewingScanId === latestScanId;
 
   const scannedKeywords = useMemo(() => {
-    const inScan = new Set(latestScanKeywordIds);
+    const inScan = new Set(scanKeywordIds);
     return keywords.filter((k) => inScan.has(k.id));
-  }, [keywords, latestScanKeywordIds]);
+  }, [keywords, scanKeywordIds]);
 
   const fallbackKeywordId = scannedKeywords[0]?.id ?? keywords[0]?.id ?? null;
   const primaryInScan = scannedKeywords.find((k) => k.isPrimary)?.id ?? null;
@@ -62,6 +77,9 @@ export function HeatMapClient({
   );
 
   useEffect(() => {
+    // Only poll while the latest scan is in progress. Stop polling when the
+    // user is browsing an older scan — that view is static.
+    if (!isViewingLatest) return;
     if (status !== "running" && status !== "queued") return;
 
     let cancelled = false;
@@ -90,7 +108,43 @@ export function HeatMapClient({
       cancelled = true;
       clearInterval(id);
     };
-  }, [locationId, status]);
+  }, [locationId, status, isViewingLatest]);
+
+  async function loadScan(scanId: string) {
+    if (scanId === viewingScanId) return;
+    setScanLoading(true);
+    try {
+      if (scanId === latestScanId) {
+        // Restore the latest scan view from the props snapshot.
+        setPoints(initialPoints);
+        setCompletedAt(latestScanCompletedAt);
+        setCompletedPoints(initialCompletedPoints);
+        setStatus(initialStatus);
+        setScanKeywordIds(latestScanKeywordIds);
+        setViewingScanId(scanId);
+        return;
+      }
+      const res = await fetch(
+        `/api/locations/${locationId}/scan?scanId=${encodeURIComponent(scanId)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        scan: { status: string; completedAt: string | null } | null;
+        points: HeatMapPoint[];
+        completedPoints: number;
+      };
+      if (!data.scan) return;
+      setPoints(data.points);
+      setCompletedAt(data.scan.completedAt);
+      setCompletedPoints(data.completedPoints);
+      setStatus(data.scan.status);
+      setScanKeywordIds(Array.from(new Set(data.points.map((p) => p.keywordId ?? ""))));
+      setViewingScanId(scanId);
+    } finally {
+      setScanLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!selectedKeywordId && (primaryInScan || fallbackKeywordId)) {
@@ -134,6 +188,16 @@ export function HeatMapClient({
           value={completedAt ? formatRelativeDate(completedAt) : "—"}
         />
       </div>
+
+      {recentScans.length > 1 && (
+        <ScanPicker
+          scans={recentScans}
+          latestScanId={latestScanId}
+          selectedId={viewingScanId}
+          loading={scanLoading}
+          onSelect={loadScan}
+        />
+      )}
 
       {scannedKeywords.length > 1 && (
         <HeatMapKeywordTabs
@@ -202,5 +266,52 @@ function Stat({
         <div className="mt-1 text-2xl font-semibold">{value}</div>
       </CardContent>
     </Card>
+  );
+}
+
+function ScanPicker({
+  scans,
+  latestScanId,
+  selectedId,
+  loading,
+  onSelect,
+}: {
+  scans: ScanOption[];
+  latestScanId: string | null;
+  selectedId: string | null;
+  loading: boolean;
+  onSelect: (scanId: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="uppercase tracking-wide text-muted-foreground">
+        Viewing scan
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {scans.map((s) => {
+          const isSelected = s.id === selectedId;
+          const isLatest = s.id === latestScanId;
+          const when = s.completedAt ?? s.startedAt;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onSelect(s.id)}
+              disabled={loading}
+              className={
+                isSelected
+                  ? "rounded-full border border-brand bg-brand/10 px-2.5 py-0.5 font-medium text-foreground"
+                  : "rounded-full border border-border bg-background px-2.5 py-0.5 text-muted-foreground hover:border-foreground/40 hover:text-foreground disabled:opacity-50"
+              }
+            >
+              {isLatest ? "Latest" : formatRelativeDate(when)}
+            </button>
+          );
+        })}
+      </div>
+      {loading && (
+        <span className="text-muted-foreground">Loading…</span>
+      )}
+    </div>
   );
 }
