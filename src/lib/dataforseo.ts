@@ -61,6 +61,10 @@ export async function postTasks(tasks: DataForSeoTask[]): Promise<void> {
     keyword: t.keyword,
     language_code: "en",
     location_coordinate: `${t.lat},${t.lng},${t.zoom ?? 13}`,
+    // The heat map labels any rank > 20 as "20+", so there's no point
+    // pulling positions 21-100 from DataForSEO. Cap depth at 20 to keep
+    // response payloads small and (on metered plans) trim API cost.
+    depth: 20,
     tag: encodeTag(t.tag),
     postback_url: t.postbackUrl,
     postback_data: "advanced",
