@@ -456,10 +456,10 @@ export type LocationSnapshot = {
   reviewCount: number;
   lastReviewAt: Date | null;
   daysSinceLastReview: number | null;
+  last7: number;
+  prior7: number;
   last30: number;
   prior30: number;
-  last90: number;
-  prior90: number;
   latestScan: {
     id: string;
     completedAt: Date | null;
@@ -494,10 +494,10 @@ export async function listLocationSnapshots(
 
   const locationIds = locs.map((l) => l.id);
   const now = Date.now();
+  const d7 = new Date(now - 7 * 86_400_000);
+  const d14 = new Date(now - 14 * 86_400_000);
   const d30 = new Date(now - 30 * 86_400_000);
   const d60 = new Date(now - 60 * 86_400_000);
-  const d90 = new Date(now - 90 * 86_400_000);
-  const d180 = new Date(now - 180 * 86_400_000);
 
   const reviewAgg = await db
     .select({
@@ -505,10 +505,10 @@ export async function listLocationSnapshots(
       count: sql<number>`count(${reviews.id})::int`.as("rev_count"),
       avgRating: sql<number | null>`avg(${reviews.rating})`,
       lastAt: sql<Date | null>`max(${reviews.createdAt})`,
+      last7: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d7.toISOString()})::int`,
+      prior7: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d14.toISOString()} and ${reviews.createdAt} < ${d7.toISOString()})::int`,
       last30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d30.toISOString()})::int`,
       prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()} and ${reviews.createdAt} < ${d30.toISOString()})::int`,
-      last90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d90.toISOString()})::int`,
-      prior90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d180.toISOString()} and ${reviews.createdAt} < ${d90.toISOString()})::int`,
     })
     .from(reviews)
     .where(inArray(reviews.locationId, locationIds))
@@ -622,10 +622,10 @@ export async function listLocationSnapshots(
       reviewCount: r?.count ?? 0,
       lastReviewAt: lastAt,
       daysSinceLastReview: daysSinceLast,
+      last7: r?.last7 ?? 0,
+      prior7: r?.prior7 ?? 0,
       last30: r?.last30 ?? 0,
       prior30: r?.prior30 ?? 0,
-      last90: r?.last90 ?? 0,
-      prior90: r?.prior90 ?? 0,
       latestScan,
     };
     const arr = out.get(l.clientId);
@@ -651,20 +651,19 @@ export type ReviewInsights = {
   averageRating: number | null;
   lastReviewAt: Date | null;
   daysSinceLastReview: number | null;
+  last7: number;
+  prior7: number;
   last30: number;
   prior30: number;
-  last60: number;
-  prior60: number;
-  last90: number;
-  prior90: number;
   monthlyBuckets: Array<{ monthStart: string; count: number }>;
 };
 
 export async function getReviewInsights(locationId: string): Promise<ReviewInsights> {
   const now = Date.now();
+  const d7 = new Date(now - 7 * 86_400_000);
+  const d14 = new Date(now - 14 * 86_400_000);
   const d30 = new Date(now - 30 * 86_400_000);
   const d60 = new Date(now - 60 * 86_400_000);
-  const d90 = new Date(now - 90 * 86_400_000);
   const d365 = new Date(now - 365 * 86_400_000);
 
   // Single pass: aggregate + windowed counts. Postgres FILTER is the clean
@@ -674,12 +673,10 @@ export async function getReviewInsights(locationId: string): Promise<ReviewInsig
       total: sql<number>`count(${reviews.id})::int`,
       avgRating: sql<number | null>`avg(${reviews.rating})`,
       lastAt: sql<Date | null>`max(${reviews.createdAt})`,
+      last7: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d7.toISOString()})::int`,
+      prior7: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d14.toISOString()} and ${reviews.createdAt} < ${d7.toISOString()})::int`,
       last30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d30.toISOString()})::int`,
       prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()} and ${reviews.createdAt} < ${d30.toISOString()})::int`,
-      last60: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()})::int`,
-      prior60: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${new Date(now - 120 * 86_400_000).toISOString()} and ${reviews.createdAt} < ${d60.toISOString()})::int`,
-      last90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d90.toISOString()})::int`,
-      prior90: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${new Date(now - 180 * 86_400_000).toISOString()} and ${reviews.createdAt} < ${d90.toISOString()})::int`,
     })
     .from(reviews)
     .where(eq(reviews.locationId, locationId));
@@ -721,12 +718,10 @@ export async function getReviewInsights(locationId: string): Promise<ReviewInsig
     daysSinceLastReview: lastReviewAt
       ? Math.floor((now - new Date(lastReviewAt).getTime()) / 86_400_000)
       : null,
+    last7: agg?.last7 ?? 0,
+    prior7: agg?.prior7 ?? 0,
     last30: agg?.last30 ?? 0,
     prior30: agg?.prior30 ?? 0,
-    last60: agg?.last60 ?? 0,
-    prior60: agg?.prior60 ?? 0,
-    last90: agg?.last90 ?? 0,
-    prior90: agg?.prior90 ?? 0,
     monthlyBuckets,
   };
 }

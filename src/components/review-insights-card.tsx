@@ -33,7 +33,7 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-6">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Kpi
             label="Days since last review"
             info={METRIC_DESCRIPTIONS.daysSinceLastReview}
@@ -52,22 +52,16 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
             }
           />
           <Kpi
+            label="Last 7 days"
+            info={METRIC_DESCRIPTIONS.reviewsLast7}
+            value={String(data.last7)}
+            delta={<DeltaPill current={data.last7} prior={data.prior7} />}
+          />
+          <Kpi
             label="Last 30 days"
             info={METRIC_DESCRIPTIONS.reviewsLast30}
             value={String(data.last30)}
             delta={<DeltaPill current={data.last30} prior={data.prior30} />}
-          />
-          <Kpi
-            label="Last 60 days"
-            info={METRIC_DESCRIPTIONS.reviewsLast60}
-            value={String(data.last60)}
-            delta={<DeltaPill current={data.last60} prior={data.prior60} />}
-          />
-          <Kpi
-            label="Last 90 days"
-            info={METRIC_DESCRIPTIONS.reviewsLast90}
-            value={String(data.last90)}
-            delta={<DeltaPill current={data.last90} prior={data.prior90} />}
           />
         </div>
 

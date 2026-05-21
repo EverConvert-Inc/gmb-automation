@@ -238,16 +238,16 @@ function LocationSnapshotCard({
           valueClassName={freshnessTone(loc.daysSinceLastReview)}
         />
         <Stat
+          label="Last 7d"
+          info={METRIC_DESCRIPTIONS.reviewsLast7}
+          value={String(loc.last7)}
+          delta={<DeltaPill current={loc.last7} prior={loc.prior7} />}
+        />
+        <Stat
           label="Last 30d"
           info={METRIC_DESCRIPTIONS.reviewsLast30}
           value={String(loc.last30)}
           delta={<DeltaPill current={loc.last30} prior={loc.prior30} />}
-        />
-        <Stat
-          label="Last 90d"
-          info={METRIC_DESCRIPTIONS.reviewsLast90}
-          value={String(loc.last90)}
-          delta={<DeltaPill current={loc.last90} prior={loc.prior90} />}
         />
       </div>
 
