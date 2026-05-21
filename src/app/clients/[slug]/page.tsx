@@ -280,12 +280,6 @@ export default async function ClientDashboardPage({
 
       <ReviewInsightsCard data={reviewInsights} />
 
-      {hasGbpConnected && (
-        <PerformanceCard data={performanceInsights} locationId={location.id} />
-      )}
-
-      <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -293,7 +287,7 @@ export default async function ClientDashboardPage({
             Heat map
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-5">
           <HeatMapClient
             key={location.id}
             locationId={location.id}
@@ -317,36 +311,36 @@ export default async function ClientDashboardPage({
               keywordIds: scanKeywordMap.get(s.id) ?? [],
             }))}
           />
+          <ScanManagementPanel
+            key={location.id}
+            variant="embedded"
+            locationId={location.id}
+            allKeywords={allKeywords.map((k) => ({
+              id: k.id,
+              keyword: k.keyword,
+              isPrimary: k.isPrimary,
+            }))}
+            gridConfigs={gridConfigList.map((g) => ({
+              id: g.id,
+              name: g.name,
+              size: g.size,
+              radiusMiles: Number(g.radiusMiles),
+              isDefault: g.isDefault,
+            }))}
+            recentScans={recentScans.map((s) => ({
+              id: s.id,
+              startedAt: s.startedAt,
+              completedAt: s.completedAt,
+              status: s.status,
+              triggeredBy: s.triggeredBy,
+              totalKeywords: s.totalKeywords,
+              totalPoints: s.totalPoints,
+              gridConfigId: s.gridConfigId,
+            }))}
+            initialActiveScan={activeScan}
+          />
         </CardContent>
       </Card>
-
-      <ScanManagementPanel
-        key={location.id}
-        locationId={location.id}
-        allKeywords={allKeywords.map((k) => ({
-          id: k.id,
-          keyword: k.keyword,
-          isPrimary: k.isPrimary,
-        }))}
-        gridConfigs={gridConfigList.map((g) => ({
-          id: g.id,
-          name: g.name,
-          size: g.size,
-          radiusMiles: Number(g.radiusMiles),
-          isDefault: g.isDefault,
-        }))}
-        recentScans={recentScans.map((s) => ({
-          id: s.id,
-          startedAt: s.startedAt,
-          completedAt: s.completedAt,
-          status: s.status,
-          triggeredBy: s.triggeredBy,
-          totalKeywords: s.totalKeywords,
-          totalPoints: s.totalPoints,
-          gridConfigId: s.gridConfigId,
-        }))}
-        initialActiveScan={activeScan}
-      />
 
       <Card id="reviews">
         <CardHeader>
@@ -395,6 +389,12 @@ export default async function ClientDashboardPage({
           )}
         </CardContent>
       </Card>
+
+      {hasGbpConnected && (
+        <PerformanceCard data={performanceInsights} locationId={location.id} />
+      )}
+
+      <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
     </div>
   );
 }

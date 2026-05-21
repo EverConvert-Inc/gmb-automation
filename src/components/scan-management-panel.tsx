@@ -44,6 +44,7 @@ type Props = {
   gridConfigs: GridConfigOption[];
   recentScans: ScanRow[];
   initialActiveScan: ActiveScan | null;
+  variant?: "card" | "embedded";
 };
 
 type GridMode = "default" | "existing" | "custom";
@@ -54,6 +55,7 @@ export function ScanManagementPanel({
   gridConfigs,
   recentScans,
   initialActiveScan,
+  variant = "card",
 }: Props) {
   const router = useRouter();
 
@@ -249,12 +251,8 @@ export function ScanManagementPanel({
     });
   }
 
-  return (
-    <Card id="scan">
-      <CardHeader>
-        <CardTitle>Scan management</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6">
+  const inner = (
+    <div className="space-y-6">
         {isActive && activeScan && (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
             Scan in progress · {activeScan.completedPoints}/{activeScan.totalPoints}{" "}
@@ -545,7 +543,26 @@ export function ScanManagementPanel({
             </div>
           )}
         </section>
-      </CardContent>
+    </div>
+  );
+
+  if (variant === "embedded") {
+    return (
+      <div id="scan" className="space-y-4 border-t pt-5">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Scan management
+        </div>
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <Card id="scan">
+      <CardHeader>
+        <CardTitle>Scan management</CardTitle>
+      </CardHeader>
+      <CardContent>{inner}</CardContent>
     </Card>
   );
 }
