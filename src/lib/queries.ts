@@ -343,6 +343,29 @@ export async function listRecentScansForLocation(locationId: string, limit = 30)
   });
 }
 
+// For each given scan id, returns the set of keywordIds that scan covered.
+// Used by the heat map's scan picker so we only let users flip to scans
+// that actually have data for the currently-selected keyword.
+export async function listScanKeywordIds(
+  scanIds: string[],
+): Promise<Map<string, string[]>> {
+  if (scanIds.length === 0) return new Map();
+  const rows = await db
+    .selectDistinct({
+      scanId: scanPoints.scanId,
+      keywordId: scanPoints.keywordId,
+    })
+    .from(scanPoints)
+    .where(inArray(scanPoints.scanId, scanIds));
+  const result = new Map<string, string[]>();
+  for (const r of rows) {
+    const list = result.get(r.scanId);
+    if (list) list.push(r.keywordId);
+    else result.set(r.scanId, [r.keywordId]);
+  }
+  return result;
+}
+
 export type ActiveScanInfo = {
   id: string;
   status: string;

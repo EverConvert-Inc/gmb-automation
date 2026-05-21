@@ -23,6 +23,7 @@ type ScanOption = {
   id: string;
   completedAt: Date | string | null;
   startedAt: Date | string;
+  keywordIds: string[];
 };
 
 type Props = {
@@ -60,6 +61,7 @@ export function HeatMapClient({
   const [completedPoints, setCompletedPoints] = useState(initialCompletedPoints);
   const [viewingScanId, setViewingScanId] = useState<string | null>(latestScanId);
   const [scanLoading, setScanLoading] = useState(false);
+  const [scanLoadError, setScanLoadError] = useState<string | null>(null);
   const [scanKeywordIds, setScanKeywordIds] = useState<string[]>(latestScanKeywordIds);
 
   const isViewingLatest = viewingScanId === latestScanId;
@@ -113,6 +115,9 @@ export function HeatMapClient({
   async function loadScan(scanId: string) {
     if (scanId === viewingScanId) return;
     setScanLoading(true);
+    setScanLoadError(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       if (scanId === latestScanId) {
         // Restore the latest scan view from the props snapshot.
@@ -126,22 +131,35 @@ export function HeatMapClient({
       }
       const res = await fetch(
         `/api/locations/${locationId}/scan?scanId=${encodeURIComponent(scanId)}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       );
-      if (!res.ok) return;
+      if (!res.ok) {
+        setScanLoadError(`Couldn't load that scan (HTTP ${res.status})`);
+        return;
+      }
       const data = (await res.json()) as {
         scan: { status: string; completedAt: string | null } | null;
         points: HeatMapPoint[];
         completedPoints: number;
       };
-      if (!data.scan) return;
+      if (!data.scan) {
+        setScanLoadError("Scan not found");
+        return;
+      }
       setPoints(data.points);
       setCompletedAt(data.scan.completedAt);
       setCompletedPoints(data.completedPoints);
       setStatus(data.scan.status);
       setScanKeywordIds(Array.from(new Set(data.points.map((p) => p.keywordId ?? ""))));
       setViewingScanId(scanId);
+    } catch (err) {
+      const isAbort =
+        err instanceof DOMException && err.name === "AbortError";
+      setScanLoadError(
+        isAbort ? "Request timed out" : (err as Error).message ?? "Load failed",
+      );
     } finally {
+      clearTimeout(timeoutId);
       setScanLoading(false);
     }
   }
@@ -151,6 +169,20 @@ export function HeatMapClient({
       setSelectedKeywordId(primaryInScan ?? fallbackKeywordId);
     }
   }, [selectedKeywordId, primaryInScan, fallbackKeywordId]);
+
+  // If the user is viewing a historical scan and switches to a keyword that
+  // scan didn't include, fall back to the latest scan automatically — the
+  // historical view has nothing useful to show for the new keyword.
+  useEffect(() => {
+    if (!selectedKeywordId || !viewingScanId || viewingScanId === latestScanId) {
+      return;
+    }
+    const current = recentScans.find((s) => s.id === viewingScanId);
+    if (current && !current.keywordIds.includes(selectedKeywordId) && latestScanId) {
+      void loadScan(latestScanId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKeywordId]);
 
   const isRunning = status === "running" || status === "queued";
 
@@ -189,15 +221,27 @@ export function HeatMapClient({
         />
       </div>
 
-      {recentScans.length > 1 && (
-        <ScanPicker
-          scans={recentScans}
-          latestScanId={latestScanId}
-          selectedId={viewingScanId}
-          loading={scanLoading}
-          onSelect={loadScan}
-        />
-      )}
+      {(() => {
+        // Only show the picker if more than one of the recent scans actually
+        // covered the currently-selected keyword. Pills for scans that don't
+        // include this keyword would just dump you into an empty map.
+        if (!selectedKeywordId) return null;
+        const visible = recentScans.filter(
+          (s) =>
+            s.id === latestScanId || s.keywordIds.includes(selectedKeywordId),
+        );
+        if (visible.length <= 1) return null;
+        return (
+          <ScanPicker
+            scans={visible}
+            latestScanId={latestScanId}
+            selectedId={viewingScanId}
+            loading={scanLoading}
+            error={scanLoadError}
+            onSelect={loadScan}
+          />
+        );
+      })()}
 
       {scannedKeywords.length > 1 && (
         <HeatMapKeywordTabs
@@ -205,22 +249,6 @@ export function HeatMapClient({
           selectedId={selectedKeywordId}
           onSelect={setSelectedKeywordId}
         />
-      )}
-
-      {selectedKeywordId && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="uppercase tracking-wide">Showing rankings for</span>
-          <span className="rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 font-medium text-foreground">
-            &ldquo;
-            {keywords.find((k) => k.id === selectedKeywordId)?.keyword ?? "—"}
-            &rdquo;
-          </span>
-          {scannedKeywords.length === 1 && (
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
-              (only keyword scanned)
-            </span>
-          )}
-        </div>
       )}
 
       {isRunning && (
@@ -274,12 +302,14 @@ function ScanPicker({
   latestScanId,
   selectedId,
   loading,
+  error,
   onSelect,
 }: {
   scans: ScanOption[];
   latestScanId: string | null;
   selectedId: string | null;
   loading: boolean;
+  error: string | null;
   onSelect: (scanId: string) => void;
 }) {
   return (
@@ -309,9 +339,8 @@ function ScanPicker({
           );
         })}
       </div>
-      {loading && (
-        <span className="text-muted-foreground">Loading…</span>
-      )}
+      {loading && <span className="text-muted-foreground">Loading…</span>}
+      {error && !loading && <span className="text-red-600">{error}</span>}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
   listKeywordsForLocation,
   listLocationsForClient,
   listRecentScansForLocation,
+  listScanKeywordIds,
 } from "@/lib/queries";
 import { SerpRankingsCard } from "@/components/serp-rankings-card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
@@ -128,6 +129,11 @@ export default async function ClientDashboardPage({
     getPerformanceInsights(selectedId),
     getRankingsOverview(client.id),
   ]);
+
+  const completedRecent = recentScans
+    .filter((s) => s.status === "completed")
+    .slice(0, 8);
+  const scanKeywordMap = await listScanKeywordIds(completedRecent.map((s) => s.id));
 
   const heatMapPoints = points.map((p) => ({
     gridX: p.gridX,
@@ -304,14 +310,12 @@ export default async function ClientDashboardPage({
             latestScanKeywordIds={latestScanKeywordIds}
             latestScanCompletedAt={latestScan?.completedAt ?? null}
             latestScanId={latestScan?.id ?? null}
-            recentScans={recentScans
-              .filter((s) => s.status === "completed")
-              .slice(0, 8)
-              .map((s) => ({
-                id: s.id,
-                completedAt: s.completedAt,
-                startedAt: s.startedAt,
-              }))}
+            recentScans={completedRecent.map((s) => ({
+              id: s.id,
+              completedAt: s.completedAt,
+              startedAt: s.startedAt,
+              keywordIds: scanKeywordMap.get(s.id) ?? [],
+            }))}
           />
         </CardContent>
       </Card>

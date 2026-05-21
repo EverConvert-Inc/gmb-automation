@@ -15,6 +15,7 @@ import {
   getLocationWithLatestScan,
   listKeywordsForLocation,
   listRecentScansForLocation,
+  listScanKeywordIds,
 } from "@/lib/queries";
 import { computeScanMetrics } from "@/lib/metrics";
 import { formatRelativeDate } from "@/lib/utils";
@@ -58,6 +59,13 @@ export default async function LocationDetailPage({
     getLocationWeeklyReviews(locationId, 12),
     listKeywordsForLocation(locationId),
   ]);
+
+  const completedRecent = recentScans
+    .filter((s) => s.status === "completed")
+    .slice(0, 8);
+  const scanKeywordMap = await listScanKeywordIds(
+    completedRecent.map((s) => s.id),
+  );
 
   const metrics = computeScanMetrics(points.map((p) => ({ rank: p.rank ?? null })));
   const heatMapPoints = points.map((p) => ({
@@ -169,14 +177,12 @@ export default async function LocationDetailPage({
             latestScanKeywordIds={latestScanKeywordIds}
             latestScanCompletedAt={latestScan?.completedAt ?? null}
             latestScanId={latestScan?.id ?? null}
-            recentScans={recentScans
-              .filter((s) => s.status === "completed")
-              .slice(0, 8)
-              .map((s) => ({
-                id: s.id,
-                completedAt: s.completedAt,
-                startedAt: s.startedAt,
-              }))}
+            recentScans={completedRecent.map((s) => ({
+              id: s.id,
+              completedAt: s.completedAt,
+              startedAt: s.startedAt,
+              keywordIds: scanKeywordMap.get(s.id) ?? [],
+            }))}
           />
         </CardContent>
       </Card>
