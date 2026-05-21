@@ -19,7 +19,7 @@ type Props = {
 export function HeatMapKeywordTabs({ keywords, selectedId, onSelect }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  if (keywords.length <= 1) return null;
+  if (keywords.length === 0) return null;
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, idx: number) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;

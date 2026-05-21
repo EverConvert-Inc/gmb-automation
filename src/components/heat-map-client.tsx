@@ -243,7 +243,7 @@ export function HeatMapClient({
         );
       })()}
 
-      {scannedKeywords.length > 1 && (
+      {scannedKeywords.length >= 1 && (
         <HeatMapKeywordTabs
           keywords={scannedKeywords}
           selectedId={selectedKeywordId}
