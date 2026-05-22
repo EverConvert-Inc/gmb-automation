@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,16 +17,15 @@ export function LocationSwitcher({
   locations: LocationSwitcherItem[];
   currentLocationId: string | null;
 }) {
-  const router = useRouter();
-
   function go(locId: string) {
     if (locId === currentLocationId) return;
-    // router.push() alone — no refresh, no transition. The page is
-    // force-dynamic so push fetches a fresh RSC payload anyway. Calling
-    // refresh on top of push was triggering a second concurrent render
-    // that kept the previous location's HeatMap mounted alongside the new
-    // one (Leaflet maps don't like overlapping React reconciliation).
-    router.push(`/clients/${clientSlug}?location=${locId}`, { scroll: false });
+    // Hard navigation. router.push + key-based remount under React 19 +
+    // dynamic()-imported leaflet was producing one of two failure modes:
+    //   - two heat maps stacked (when react-leaflet didn't unmount)
+    //   - "Map container is being reused" crash (when we forced cleanup)
+    // A full reload sidesteps both by giving leaflet a brand-new
+    // document. Slight page flash on switch, but guaranteed-correct.
+    window.location.assign(`/clients/${clientSlug}?location=${locId}`);
   }
 
   return (
