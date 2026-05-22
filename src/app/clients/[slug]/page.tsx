@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { LocationSwitcher } from "@/components/location-switcher";
-import { PerformanceCard } from "@/components/performance-card";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
 import { StarBar } from "@/components/star-bar";
@@ -16,7 +15,6 @@ import {
   getActiveScanForLocation,
   getClientBySlug,
   getLocationWithLatestScan,
-  getPerformanceInsights,
   getReviewInsights,
   getRankingsOverview,
   listGridConfigsForLocation,
@@ -118,7 +116,6 @@ export default async function ClientDashboardPage({
     gridConfigList,
     activeScan,
     reviewInsights,
-    performanceInsights,
     serpRankings,
   ] = await Promise.all([
     listRecentScansForLocation(selectedId),
@@ -126,7 +123,6 @@ export default async function ClientDashboardPage({
     listGridConfigsForLocation(selectedId),
     getActiveScanForLocation(selectedId),
     getReviewInsights(selectedId),
-    getPerformanceInsights(selectedId),
     getRankingsOverview(client.id),
   ]);
 
@@ -387,10 +383,6 @@ export default async function ClientDashboardPage({
           )}
         </CardContent>
       </Card>
-
-      {hasGbpConnected && (
-        <PerformanceCard data={performanceInsights} locationId={location.id} />
-      )}
 
       <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
     </div>
