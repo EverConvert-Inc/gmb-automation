@@ -6,6 +6,15 @@ export type PlaceCandidate = {
   lng: number;
 };
 
+export type PlaceMetadata = {
+  websiteUri: string | null;
+  rating: number | null;
+  userRatingCount: number | null;
+  googleMapsUri: string | null;
+};
+
+export type PlaceDetails = PlaceCandidate & PlaceMetadata;
+
 const PLACES_TEXT_SEARCH = "https://places.googleapis.com/v1/places:searchText";
 const PLACE_DETAILS = "https://places.googleapis.com/v1/places";
 
@@ -48,12 +57,13 @@ export async function searchPlaces(query: string): Promise<PlaceCandidate[]> {
     }));
 }
 
-export async function getPlaceDetails(placeId: string): Promise<PlaceCandidate | null> {
+export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
   const res = await fetch(`${PLACE_DETAILS}/${encodeURIComponent(placeId)}`, {
     method: "GET",
     headers: {
       "X-Goog-Api-Key": apiKey(),
-      "X-Goog-FieldMask": "id,displayName,formattedAddress,location",
+      "X-Goog-FieldMask":
+        "id,displayName,formattedAddress,location,websiteUri,rating,userRatingCount,googleMapsUri",
     },
   });
   if (res.status === 404) return null;
@@ -65,6 +75,10 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceCandidate |
     displayName?: { text?: string };
     formattedAddress?: string;
     location?: { latitude: number; longitude: number };
+    websiteUri?: string;
+    rating?: number;
+    userRatingCount?: number;
+    googleMapsUri?: string;
   };
   if (!p.location) return null;
   return {
@@ -73,5 +87,9 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceCandidate |
     formattedAddress: p.formattedAddress ?? "",
     lat: p.location.latitude,
     lng: p.location.longitude,
+    websiteUri: p.websiteUri ?? null,
+    rating: p.rating ?? null,
+    userRatingCount: p.userRatingCount ?? null,
+    googleMapsUri: p.googleMapsUri ?? null,
   };
 }

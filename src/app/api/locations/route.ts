@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { gridConfigs, keywords, locations } from "@/lib/db/schema";
+import { getPlaceDetails } from "@/lib/places";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,35 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (err as Error).message }, { status: 400 });
   }
 
+  // Pull public Place metadata at creation time so the dashboard has
+  // something to show before GBP OAuth completes (website, rating,
+  // review count, Maps link). Best-effort — falls back to nulls if the
+  // Places call fails.
+  let placeMeta: {
+    websiteUri: string | null;
+    rating: number | null;
+    userRatingCount: number | null;
+    googleMapsUri: string | null;
+  } = {
+    websiteUri: null,
+    rating: null,
+    userRatingCount: null,
+    googleMapsUri: null,
+  };
+  try {
+    const details = await getPlaceDetails(parsed.placeId);
+    if (details) {
+      placeMeta = {
+        websiteUri: details.websiteUri,
+        rating: details.rating,
+        userRatingCount: details.userRatingCount,
+        googleMapsUri: details.googleMapsUri,
+      };
+    }
+  } catch (err) {
+    console.warn(`[locations] place details fetch failed:`, (err as Error).message);
+  }
+
   try {
     const [location] = await db
       .insert(locations)
@@ -37,6 +67,12 @@ export async function POST(req: Request) {
         lng: parsed.lng.toFixed(7),
         status: "active",
         pollFrequency: "daily",
+        placeWebsiteUri: placeMeta.websiteUri,
+        placeRating:
+          placeMeta.rating != null ? String(placeMeta.rating) : null,
+        placeReviewCount: placeMeta.userRatingCount,
+        placeGoogleMapsUri: placeMeta.googleMapsUri,
+        placeRefreshedAt: new Date(),
       })
       .returning();
 

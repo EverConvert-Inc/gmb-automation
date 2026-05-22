@@ -137,6 +137,10 @@ export type LocationCardRow = {
   daysSinceLastReview: number | null;
   velocity: Velocity;
   gbpConnected: boolean;
+  placeWebsiteUri: string | null;
+  placeRating: number | null;
+  placeReviewCount: number | null;
+  placeGoogleMapsUri: string | null;
   latestScan: { id: string; completedAt: Date | null; arp: number | null; solv: number | null } | null;
 };
 
@@ -208,6 +212,10 @@ export async function listLocationsForClient(clientId: string): Promise<Location
           prior30: reviewAgg[0]?.prior30 ?? 0,
         },
         gbpConnected: l.gbpOauthTokenId !== null,
+        placeWebsiteUri: l.placeWebsiteUri,
+        placeRating: l.placeRating != null ? Number(l.placeRating) : null,
+        placeReviewCount: l.placeReviewCount,
+        placeGoogleMapsUri: l.placeGoogleMapsUri,
         latestScan: latestScan
           ? {
               id: latestScan.id,

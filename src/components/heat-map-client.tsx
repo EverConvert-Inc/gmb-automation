@@ -258,12 +258,15 @@ export function HeatMapClient({
       )}
 
       {filteredPoints.length > 0 ? (
-        <HeatMap
-          centerLat={centerLat}
-          centerLng={centerLng}
-          points={filteredPoints}
-          zoom={zoom}
-        />
+        <>
+          <HeatMap
+            centerLat={centerLat}
+            centerLng={centerLng}
+            points={filteredPoints}
+            zoom={zoom}
+          />
+          <HeatMapLegend />
+        </>
       ) : (
         <div className="flex h-[600px] items-center justify-center text-sm text-muted-foreground">
           {points.length === 0
@@ -271,6 +274,34 @@ export function HeatMapClient({
             : "No data for the selected keyword on this scan."}
         </div>
       )}
+    </div>
+  );
+}
+
+function HeatMapLegend() {
+  const items: Array<{ color: string; label: string }> = [
+    { color: "#22c55e", label: "1–3" },
+    { color: "#facc15", label: "4–10" },
+    { color: "#fb923c", label: "11–20" },
+    { color: "#ef4444", label: "20+" },
+    { color: "#9ca3af", label: "pending" },
+    { color: "#4b5563", label: "error" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <span className="font-medium uppercase tracking-wide text-foreground">
+        Rank legend
+      </span>
+      {items.map((i) => (
+        <span key={i.label} className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-block h-3 w-3 rounded-full border border-border"
+            style={{ backgroundColor: i.color }}
+          />
+          {i.label}
+        </span>
+      ))}
     </div>
   );
 }

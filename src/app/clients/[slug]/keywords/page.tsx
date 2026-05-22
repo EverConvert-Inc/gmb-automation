@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { buttonClasses } from "@/components/ui/button";
 import { KeywordManagementCard } from "@/components/keyword-management-card";
-import { getClientBySlug } from "@/lib/queries";
+import { getClientBySlug, listLocationsForClient } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +26,13 @@ export default async function KeywordsPage({
   const { slug } = await params;
   const client = await getClientBySlug(slug);
   if (!client) notFound();
+
+  // Pre-fill the new-keyword form's target URL with the first location's
+  // website (from Google Places). Saves the user from typing — they can
+  // override per-keyword. No website on any location → no suggestion.
+  const locs = await listLocationsForClient(client.id);
+  const suggestedUrl =
+    locs.find((l) => l.placeWebsiteUri)?.placeWebsiteUri ?? null;
 
   return (
     <div className="space-y-6">
@@ -55,6 +62,7 @@ export default async function KeywordsPage({
       <KeywordManagementCard
         clientId={client.id}
         clientSlug={client.slug}
+        suggestedTargetUrl={suggestedUrl}
       />
     </div>
   );

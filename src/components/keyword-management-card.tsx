@@ -29,15 +29,17 @@ type Banner = {
 export function KeywordManagementCard({
   clientId,
   clientSlug,
+  suggestedTargetUrl,
 }: {
   clientId: string;
   clientSlug: string;
+  suggestedTargetUrl?: string | null;
 }) {
   const router = useRouter();
   const [rows, setRows] = useState<TrackedKeywordRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [keyword, setKeyword] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
+  const [targetUrl, setTargetUrl] = useState(suggestedTargetUrl ?? "");
   const [geoCity, setGeoCity] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -48,6 +50,14 @@ export function KeywordManagementCard({
   const [editTargetUrl, setEditTargetUrl] = useState("");
   const [editGeoCity, setEditGeoCity] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{
+    total: number;
+    done: number;
+    errors: Array<{ line: string; err: string }>;
+  } | null>(null);
   const [, startRefresh] = useTransition();
 
   async function refreshList(includeInactive: boolean) {
@@ -115,7 +125,8 @@ export function KeywordManagementCard({
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       setKeyword("");
-      setTargetUrl("");
+      // Re-prefill so the next keyword inherits the same suggested URL.
+      setTargetUrl(suggestedTargetUrl ?? "");
       setGeoCity("");
       setBanner({
         kind: "success",
@@ -128,6 +139,101 @@ export function KeywordManagementCard({
       setBanner({ kind: "error", message: (err as Error).message });
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function bulkAdd() {
+    // Parse: one keyword per line. Each line: keyword, target_url, city
+    // Separator can be tab or comma (tab wins so URLs with commas survive
+    // a spreadsheet paste). Empty lines + lines starting with `#` skipped.
+    const lines = bulkText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+    if (lines.length === 0) {
+      setBanner({ kind: "error", message: "No keywords to add." });
+      return;
+    }
+
+    type Row = { keyword: string; targetUrl: string; geoCity: string; raw: string };
+    const parsed: Row[] = [];
+    const parseErrors: Array<{ line: string; err: string }> = [];
+    for (const raw of lines) {
+      const sep = raw.includes("\t") ? "\t" : ",";
+      const parts = raw.split(sep).map((s) => s.trim());
+      if (parts.length < 3) {
+        parseErrors.push({
+          line: raw,
+          err: `expected "keyword${sep === "\t" ? "<TAB>" : ","}target_url${sep === "\t" ? "<TAB>" : ","}city", got ${parts.length} field${parts.length === 1 ? "" : "s"}`,
+        });
+        continue;
+      }
+      const [keywordRaw, targetUrl, ...cityParts] = parts;
+      const geoCity = cityParts.join(sep);
+      if (!keywordRaw || !targetUrl || !geoCity) {
+        parseErrors.push({ line: raw, err: "missing keyword / url / city" });
+        continue;
+      }
+      // Normalize curly apostrophes to straight — keeps dedupe consistent.
+      const keywordVal = keywordRaw.replace(/[‘’]/g, "'");
+      parsed.push({ keyword: keywordVal, targetUrl, geoCity, raw });
+    }
+
+    setBulkSubmitting(true);
+    setBulkProgress({
+      total: parsed.length,
+      done: 0,
+      errors: [...parseErrors],
+    });
+    setBanner(null);
+
+    let okCount = 0;
+    const errs: Array<{ line: string; err: string }> = [...parseErrors];
+    for (let i = 0; i < parsed.length; i++) {
+      const row = parsed[i];
+      try {
+        const geoRes = await fetch(
+          `/api/places/search?q=${encodeURIComponent(row.geoCity)}`,
+        );
+        if (!geoRes.ok) throw new Error(`geocode failed (${geoRes.status})`);
+        const geoBody = (await geoRes.json()) as {
+          results?: Array<{ formattedAddress?: string; lat: number; lng: number }>;
+        };
+        const first = geoBody.results?.[0];
+        if (!first) throw new Error(`no geocode result for "${row.geoCity}"`);
+        const res = await fetch(`/api/clients/${clientId}/keywords`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            keyword: row.keyword,
+            targetUrl: row.targetUrl,
+            geoCity: row.geoCity,
+            geoLat: first.lat,
+            geoLng: first.lng,
+            geoFormatted: first.formattedAddress ?? null,
+          }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
+        okCount++;
+      } catch (err) {
+        errs.push({ line: row.raw, err: (err as Error).message });
+      }
+      setBulkProgress({ total: parsed.length, done: i + 1, errors: errs });
+    }
+
+    setBulkSubmitting(false);
+    setBanner({
+      kind: okCount > 0 ? "success" : "error",
+      message:
+        `${okCount} of ${parsed.length} added` +
+        (errs.length > 0 ? ` · ${errs.length} failed` : ""),
+    });
+    if (okCount > 0) {
+      setBulkText("");
+      await refreshList(showInactive);
     }
   }
 
@@ -386,6 +492,76 @@ export function KeywordManagementCard({
             {adding ? "Adding…" : "Add keyword"}
           </Button>
         </form>
+
+        <div className="flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={() => setBulkOpen((v) => !v)}
+            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {bulkOpen ? "Hide bulk add" : "Bulk add from list →"}
+          </button>
+        </div>
+
+        {bulkOpen && (
+          <div className="space-y-2 rounded-md border bg-muted/10 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Label htmlFor="bulk-textarea">Paste keywords (one per line)</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Format:{" "}
+                  <code className="rounded bg-muted px-1">
+                    keyword, target_url, city
+                  </code>{" "}
+                  (or tab-separated). Lines starting with{" "}
+                  <code className="rounded bg-muted px-1">#</code> are skipped.
+                </p>
+              </div>
+            </div>
+            <textarea
+              id="bulk-textarea"
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              rows={6}
+              spellCheck={false}
+              className="w-full rounded-md border bg-background p-2 font-mono text-xs"
+              placeholder={`Atlanta Car Accident Lawyer, https://example.com/atlanta/car-accident-lawyer/, Atlanta GA
+Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/, Cumming GA`}
+              disabled={bulkSubmitting}
+            />
+            <div className="flex items-center gap-3">
+              <Button
+                type="button"
+                onClick={bulkAdd}
+                disabled={bulkSubmitting || !bulkText.trim()}
+              >
+                {bulkSubmitting
+                  ? bulkProgress
+                    ? `Adding ${bulkProgress.done}/${bulkProgress.total}…`
+                    : "Adding…"
+                  : "Add all"}
+              </Button>
+              {bulkProgress && !bulkSubmitting && (
+                <span className="text-xs text-muted-foreground">
+                  Last run: {bulkProgress.done - bulkProgress.errors.length}/
+                  {bulkProgress.total} added
+                </span>
+              )}
+            </div>
+            {bulkProgress && bulkProgress.errors.length > 0 && (
+              <ul className="space-y-0.5 text-[11px] text-amber-700">
+                {bulkProgress.errors.map((e, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="font-medium">✗</span>
+                    <span className="flex-1">
+                      <code className="break-all">{e.line}</code> — {e.err}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         <div className="overflow-hidden rounded-md border">
           <table className="w-full text-sm">

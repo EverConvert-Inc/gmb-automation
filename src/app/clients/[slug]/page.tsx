@@ -232,6 +232,18 @@ export default async function ClientDashboardPage({
           <p className="text-sm text-muted-foreground">{location.address}</p>
           {rating !== null ? (
             <StarBar rating={rating} reviewCount={reviewCount} />
+          ) : location.placeRating !== null ? (
+            // Pre-OAuth fallback: show the public Google Places rating so
+            // the user has *something* to anchor on before connecting GBP.
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <StarBar
+                rating={Number(location.placeRating)}
+                reviewCount={location.placeReviewCount ?? 0}
+              />
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                from Google Places
+              </span>
+            </div>
           ) : hasGbpConnected ? (
             <p className="text-sm text-muted-foreground">
               Awaiting first review sync from Google.
@@ -240,6 +252,30 @@ export default async function ClientDashboardPage({
             <p className="text-sm text-muted-foreground">
               No reviews yet. Connect Google Business Profile to start syncing.
             </p>
+          )}
+          {(location.placeWebsiteUri || location.placeGoogleMapsUri) && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+              {location.placeWebsiteUri && (
+                <a
+                  href={location.placeWebsiteUri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand hover:underline"
+                >
+                  {location.placeWebsiteUri.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                </a>
+              )}
+              {location.placeGoogleMapsUri && (
+                <a
+                  href={location.placeGoogleMapsUri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground hover:underline"
+                >
+                  View on Google Maps ↗
+                </a>
+              )}
+            </div>
           )}
         </div>
         <div className="flex flex-col items-end gap-1">
