@@ -158,7 +158,9 @@ export async function runSerpScan(
       completedCount++;
     } else {
       erroredCount++;
-      recordError(keywords[i].keyword, (r.reason as Error).message ?? String(r.reason));
+      const msg = (r.reason as Error).message ?? String(r.reason);
+      console.error(`[serp-scan] "${keywords[i].keyword}" failed: ${msg}`);
+      recordError(keywords[i].keyword, msg);
     }
     if ((i + 1) % 5 === 0 || i === results.length - 1) {
       await db

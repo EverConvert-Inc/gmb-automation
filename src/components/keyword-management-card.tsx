@@ -17,13 +17,19 @@ export type TrackedKeywordRow = {
   isActive: boolean;
 };
 
-type Banner = { kind: "info" | "error" | "success"; message: string };
+type Banner = {
+  kind: "info" | "error" | "success";
+  message: string;
+  link?: { href: string; label: string };
+};
 
 export function KeywordManagementCard({
   clientId,
+  clientSlug,
   cities,
 }: {
   clientId: string;
+  clientSlug: string;
   cities: string[];
 }) {
   const router = useRouter();
@@ -135,10 +141,28 @@ export function KeywordManagementCard({
         error?: string;
       };
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-      const parts: string[] = [];
-      parts.push(`${body.completed ?? 0} of ${body.totalKeywords ?? 0} keywords scanned`);
-      if (body.errored && body.errored > 0) parts.push(`${body.errored} errored`);
-      setBanner({ kind: "success", message: parts.join(" · ") });
+      const ok = body.completed ?? 0;
+      const total = body.totalKeywords ?? 0;
+      const err = body.errored ?? 0;
+      if (total === 0) {
+        setBanner({
+          kind: "info",
+          message: "No keywords to scan — add one above first.",
+        });
+      } else {
+        const parts: string[] = [
+          `Scanned ${ok} of ${total} keyword${total === 1 ? "" : "s"}`,
+        ];
+        if (err > 0) parts.push(`${err} errored`);
+        setBanner({
+          kind: ok > 0 ? "success" : "error",
+          message: parts.join(" · "),
+          link:
+            ok > 0
+              ? { href: `/clients/${clientSlug}`, label: "View rankings" }
+              : undefined,
+        });
+      }
       startRefresh(() => router.refresh());
     } catch (err) {
       setBanner({ kind: "error", message: (err as Error).message });
@@ -179,13 +203,21 @@ export function KeywordManagementCard({
           <div
             className={
               banner.kind === "error"
-                ? "rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+                ? "flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
                 : banner.kind === "success"
-                  ? "rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
-                  : "rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
+                  ? "flex items-center justify-between gap-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
+                  : "flex items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
             }
           >
-            {banner.message}
+            <span>{banner.message}</span>
+            {banner.link && (
+              <a
+                href={banner.link.href}
+                className="font-medium underline-offset-2 hover:underline"
+              >
+                {banner.link.label} →
+              </a>
+            )}
           </div>
         )}
 

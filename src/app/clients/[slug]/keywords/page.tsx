@@ -54,7 +54,11 @@ export default async function KeywordsPage({
         </Link>
       </div>
 
-      <KeywordManagementCard clientId={client.id} cities={cities} />
+      <KeywordManagementCard
+        clientId={client.id}
+        clientSlug={client.slug}
+        cities={cities}
+      />
     </div>
   );
 }
