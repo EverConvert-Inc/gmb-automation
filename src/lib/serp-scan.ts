@@ -12,7 +12,12 @@ import {
   type SerpOrganicItem,
 } from "./dataforseo";
 
-const SCAN_CONCURRENCY = 4;
+// 8 in-flight DataForSEO calls — well under their default rate limit and
+// roughly halves wall-clock time vs. the previous 4 for an 8-keyword
+// client. Combined with the 45s per-call timeout in pullOrganicSerp, a
+// pathological scan should now complete (or fail cleanly per-keyword)
+// inside the 300s Vercel maxDuration.
+const SCAN_CONCURRENCY = 8;
 const ERROR_BUFFER_LIMIT = 2000;
 
 type RunSerpScanOptions = {

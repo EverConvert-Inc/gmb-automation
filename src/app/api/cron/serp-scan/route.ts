@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { runSerpScan } from "@/lib/serp-scan";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function checkCronAuth(req: Request): boolean {
   const expected = process.env.CRON_SECRET;

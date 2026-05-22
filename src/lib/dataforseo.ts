@@ -199,6 +199,8 @@ export type GeoTarget =
   | { kind: "code"; code: number }
   | { kind: "coord"; lat: number; lng: number };
 
+const ORGANIC_CALL_TIMEOUT_MS = 45_000;
+
 export async function pullOrganicSerp(
   keyword: string,
   geo?: GeoTarget,
@@ -219,26 +221,54 @@ export async function pullOrganicSerp(
     payload.location_code = geo.code;
   }
 
-  const res = await fetch(ORGANIC_LIVE_URL, {
-    method: "POST",
-    headers: {
-      Authorization: authHeader(),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify([payload]),
-  });
-  if (!res.ok) {
-    throw new Error(
-      `DataForSEO organic SERP failed: ${res.status} ${await res.text()}`,
-    );
+  // Per-call timeout. Without this a single hung DataForSEO call can block
+  // long enough to push the route past its serverless maxDuration and
+  // surface as a 504 to the user. Failing fast lets the per-keyword error
+  // handler record the failure and the rest of the scan continues.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ORGANIC_CALL_TIMEOUT_MS);
+  const t0 = Date.now();
+  try {
+    const res = await fetch(ORGANIC_LIVE_URL, {
+      method: "POST",
+      headers: {
+        Authorization: authHeader(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify([payload]),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(
+        `DataForSEO organic SERP failed: ${res.status} ${await res.text()}`,
+      );
+    }
+    const json = (await res.json()) as OrganicLiveResponse;
+    if (json.status_code !== 20000) {
+      throw new Error(
+        `DataForSEO organic SERP returned ${json.status_code}: ${json.status_message ?? "unknown"}`,
+      );
+    }
+    const ms = Date.now() - t0;
+    if (ms > 10_000) {
+      console.log(
+        `[pullOrganicSerp] slow ${ms}ms keyword="${keyword.slice(0, 40)}" geo=${geo?.kind ?? "none"}`,
+      );
+    }
+    return json.tasks?.[0]?.result?.[0]?.items ?? null;
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === "AbortError" || err.name === "TimeoutError")
+    ) {
+      throw new Error(
+        `DataForSEO organic SERP timed out after ${ORGANIC_CALL_TIMEOUT_MS}ms`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  const json = (await res.json()) as OrganicLiveResponse;
-  if (json.status_code !== 20000) {
-    throw new Error(
-      `DataForSEO organic SERP returned ${json.status_code}: ${json.status_message ?? "unknown"}`,
-    );
-  }
-  return json.tasks?.[0]?.result?.[0]?.items ?? null;
 }
 
 export function extractHostname(url: string): string {

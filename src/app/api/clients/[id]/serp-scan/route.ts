@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { runSerpScan } from "@/lib/serp-scan";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 300s = Vercel Pro max. A 30-keyword client = ~60 DataForSEO calls; at
+// concurrency 8 with a 45s per-call timeout that's well under the cap.
+export const maxDuration = 300;
 
 export async function POST(
   _req: Request,
