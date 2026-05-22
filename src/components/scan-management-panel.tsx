@@ -485,8 +485,69 @@ export function ScanManagementPanel({
           {recentScans.length === 0 ? (
             <div className="text-sm text-muted-foreground">No scans yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <>
+              {/* Mobile: stacked card per scan. Same data as the table
+                  but no horizontal scroll. */}
+              <div className="space-y-2 sm:hidden">
+                {recentScans.map((s) => {
+                  const grid = gridById.get(s.gridConfigId);
+                  return (
+                    <div
+                      key={`m-${s.id}`}
+                      className="rounded-md border bg-background p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-medium">
+                            {formatRelativeDate(s.startedAt)}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {new Date(s.startedAt).toLocaleString()}
+                          </div>
+                        </div>
+                        <Badge
+                          variant={
+                            s.status === "completed"
+                              ? "success"
+                              : s.status === "errored"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                        >
+                          {s.status}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                        <span>
+                          {s.totalKeywords} keyword
+                          {s.totalKeywords === 1 ? "" : "s"}
+                        </span>
+                        {grid && (
+                          <span>
+                            {grid.size}×{grid.size},{" "}
+                            {Number(grid.radiusMiles)}mi
+                          </span>
+                        )}
+                        <span>{s.triggeredBy}</span>
+                      </div>
+                      <div className="mt-2 border-t pt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pendingRerunId || isActive}
+                          onClick={() => handleRerun(s.id)}
+                          className="w-full"
+                        >
+                          Rerun
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full text-sm">
                 <thead className="text-left text-muted-foreground">
                   <tr>
                     <th className="pb-2 pr-4 font-medium">Started</th>
@@ -551,7 +612,8 @@ export function ScanManagementPanel({
                   })}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </section>
     </div>

@@ -92,8 +92,73 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
     );
   }
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <table className="w-full text-sm">
+    <>
+      {/* Mobile: card-per-keyword. Same data as the table, but stacked
+          so no horizontal scroll. Ranks go in a two-column footer like
+          the per-client SerpRankingsCard. */}
+      <div className="space-y-3 sm:hidden">
+        {rows.map((r) => (
+          <div
+            key={`m-${r.trackedKeywordId}`}
+            className="rounded-md border bg-background p-3"
+          >
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <ClientBadge name={r.clientName} slug={r.clientSlug} />
+              {r.geoCity && (
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {r.geoCity}
+                </span>
+              )}
+            </div>
+            <div className="font-medium">{r.keyword}</div>
+            {r.bareKeyword && (
+              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                bare: &ldquo;{r.bareKeyword}&rdquo;
+              </div>
+            )}
+            <a
+              href={r.targetUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 block truncate text-xs text-brand hover:underline"
+              title={r.targetUrl}
+            >
+              {r.targetUrl.replace(/^https?:\/\//, "")}
+            </a>
+            <div className="mt-2 grid grid-cols-2 gap-2 border-t pt-2 text-sm">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  In-city · full
+                </div>
+                {r.geoFull ? (
+                  <RankCell ann={r.geoFull} />
+                ) : (
+                  <span className="text-xs italic text-muted-foreground">
+                    no geo set
+                  </span>
+                )}
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  In-city · bare
+                </div>
+                {r.geoBare ? (
+                  <RankCell ann={r.geoBare} />
+                ) : r.geoFull ? (
+                  <span className="text-xs italic text-muted-foreground">
+                    same as full
+                  </span>
+                ) : (
+                  <span className="text-xs italic text-muted-foreground">—</span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-md border sm:block">
+        <table className="w-full text-sm">
         <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th className="px-3 py-2 font-medium">Client</th>
@@ -165,6 +230,7 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
