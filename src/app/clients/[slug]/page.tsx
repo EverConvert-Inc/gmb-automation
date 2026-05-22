@@ -280,7 +280,7 @@ export default async function ClientDashboardPage({
 
       <ReviewInsightsCard data={reviewInsights} />
 
-      <Card>
+      <Card key={`heat-map-${location.id}`}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Map className="h-4 w-4 text-brand" />
@@ -289,7 +289,6 @@ export default async function ClientDashboardPage({
         </CardHeader>
         <CardContent className="space-y-5">
           <HeatMapClient
-            key={location.id}
             locationId={location.id}
             centerLat={Number(location.lat)}
             centerLng={Number(location.lng)}
@@ -312,7 +311,6 @@ export default async function ClientDashboardPage({
             }))}
           />
           <ScanManagementPanel
-            key={location.id}
             variant="embedded"
             locationId={location.id}
             allKeywords={allKeywords.map((k) => ({

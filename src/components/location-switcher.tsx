@@ -22,12 +22,12 @@ export function LocationSwitcher({
 
   function go(locId: string) {
     if (locId === currentLocationId) return;
-    // Not wrapped in a transition: the heat map is a dynamic() import, and
-    // React 19 keeps the old subtree mounted across a transition while the
-    // new one suspends — that paints two maps stacked during the swap.
-    // Direct push + refresh forces a synchronous unmount of the old tree.
+    // router.push() alone — no refresh, no transition. The page is
+    // force-dynamic so push fetches a fresh RSC payload anyway. Calling
+    // refresh on top of push was triggering a second concurrent render
+    // that kept the previous location's HeatMap mounted alongside the new
+    // one (Leaflet maps don't like overlapping React reconciliation).
     router.push(`/clients/${clientSlug}?location=${locId}`, { scroll: false });
-    router.refresh();
   }
 
   return (

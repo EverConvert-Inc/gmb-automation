@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import { rankCellColor, rankCellOpacity } from "@/lib/metrics";
@@ -64,6 +64,19 @@ export function HeatMap({
   zoom = 12,
   className,
 }: HeatMapProps) {
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
+
+  // Belt-and-suspenders: react-leaflet's MapContainer is supposed to call
+  // map.remove() on unmount, but under React 19 concurrent rendering it
+  // can fail to do so if the parent subtree is replaced via key change —
+  // leaving the leaflet DOM stuck on the page. Explicitly destroy the
+  // map when this component unmounts.
+  useEffect(() => {
+    return () => {
+      mapInstance?.remove();
+    };
+  }, [mapInstance]);
+
   return (
     <div className={className ?? "h-[600px] w-full overflow-hidden rounded-lg border"}>
       <MapContainer
@@ -71,6 +84,7 @@ export function HeatMap({
         zoom={zoom}
         scrollWheelZoom
         className="h-full w-full"
+        ref={setMapInstance}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
