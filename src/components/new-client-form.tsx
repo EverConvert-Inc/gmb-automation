@@ -51,6 +51,11 @@ export function NewClientForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+        You&apos;ll add locations (with addresses + Google Business Profile)
+        and tracked keywords on the next screens. This first step just
+        creates the client workspace.
+      </p>
       <div>
         <Label htmlFor="name">Client name</Label>
         <Input

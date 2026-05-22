@@ -502,7 +502,18 @@ export function ScanManagementPanel({
                     const grid = gridById.get(s.gridConfigId);
                     return (
                       <tr key={s.id} className="border-t">
-                        <td className="py-2 pr-4">{formatRelativeDate(s.startedAt)}</td>
+                        <td
+                          className="py-2 pr-4"
+                          title={new Date(s.startedAt).toLocaleString()}
+                        >
+                          <div>{formatRelativeDate(s.startedAt)}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {new Date(s.startedAt).toLocaleTimeString([], {
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </div>
+                        </td>
                         <td className="py-2 pr-4">
                           <Badge
                             variant={

@@ -50,6 +50,10 @@ export function KeywordManagementCard({
   const [editTargetUrl, setEditTargetUrl] = useState("");
   const [editGeoCity, setEditGeoCity] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortKey, setSortKey] = useState<"newest" | "keyword-asc" | "keyword-desc" | "city">(
+    "newest",
+  );
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
@@ -406,6 +410,31 @@ export function KeywordManagementCard({
   const activeRows = rows.filter((r) => r.isActive);
   const inactiveCount = rows.length - activeRows.length;
 
+  // Filter + sort the visible rows. Search matches keyword text, target URL,
+  // and city — covers the common "find all the Atlanta rows" use case.
+  const q = searchQuery.trim().toLowerCase();
+  const filteredRows = q
+    ? rows.filter((r) =>
+        [r.keyword, r.targetUrl, r.geoCity ?? ""].some((field) =>
+          field.toLowerCase().includes(q),
+        ),
+      )
+    : rows;
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    switch (sortKey) {
+      case "keyword-asc":
+        return a.keyword.localeCompare(b.keyword);
+      case "keyword-desc":
+        return b.keyword.localeCompare(a.keyword);
+      case "city":
+        return (a.geoCity ?? "").localeCompare(b.geoCity ?? "");
+      case "newest":
+      default:
+        // Rows already arrive desc-by-createdAt from the API.
+        return 0;
+    }
+  });
+
   return (
     <Card>
       <CardHeader className="border-b border-border/60 pb-4">
@@ -563,6 +592,35 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
           </div>
         )}
 
+        {rows.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search keyword, URL, or city…"
+              className="h-8 max-w-xs"
+            />
+            <select
+              value={sortKey}
+              onChange={(e) =>
+                setSortKey(e.target.value as typeof sortKey)
+              }
+              className="h-8 rounded-md border bg-background px-2 text-sm"
+            >
+              <option value="newest">Newest first</option>
+              <option value="keyword-asc">Keyword A → Z</option>
+              <option value="keyword-desc">Keyword Z → A</option>
+              <option value="city">Group by city</option>
+            </select>
+            <span className="text-muted-foreground">
+              {sortedRows.length} of {rows.length}
+              {searchQuery && sortedRows.length !== rows.length
+                ? " match"
+                : ""}
+            </span>
+          </div>
+        )}
+
         <div className="overflow-hidden rounded-md border">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -589,7 +647,7 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
                   </td>
                 </tr>
               )}
-              {rows.map((r) => {
+              {sortedRows.map((r) => {
                 if (editingId === r.id) {
                   return (
                     <tr key={r.id} className="border-b bg-muted/10 last:border-0">

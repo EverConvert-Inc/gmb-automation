@@ -62,7 +62,10 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
     }
     const keywords = keywordsText
       .split("\n")
-      .map((s) => s.trim())
+      // Normalize curly apostrophes to straight so a spreadsheet paste
+      // doesn't fork "workers' compensation lawyer" into two distinct
+      // keywords from the database's POV.
+      .map((s) => s.trim().replace(/[‘’]/g, "'"))
       .filter(Boolean);
     if (keywords.length === 0) {
       setError("Add at least one keyword.");

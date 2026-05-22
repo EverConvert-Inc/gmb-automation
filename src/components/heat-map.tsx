@@ -51,7 +51,11 @@ function FitBounds({ points }: { points: HeatMapPoint[] }) {
   useEffect(() => {
     if (fittedRef.current || points.length === 0) return;
     const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]));
-    map.fitBounds(bounds, { padding: [40, 40] });
+    // Tighter than the previous [40, 40] — the grid is the whole point of
+    // the map, surrounding counties aren't relevant. maxZoom caps the
+    // fit so a small radius (~3-5mi) doesn't zoom out to fit phantom
+    // padding.
+    map.fitBounds(bounds, { padding: [12, 12], maxZoom: 13 });
     fittedRef.current = true;
   }, [map, points]);
   return null;
