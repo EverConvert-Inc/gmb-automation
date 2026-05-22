@@ -206,7 +206,10 @@ function LocationSnapshotCard({
               </Badge>
             )}
           </div>
-          <div className="truncate text-xs text-muted-foreground">
+          <div
+            className="truncate text-xs text-muted-foreground"
+            title={loc.address}
+          >
             {loc.address}
           </div>
         </div>

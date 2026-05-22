@@ -142,7 +142,55 @@ export function SerpRankingsCard({
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {isNoGeo ? "No geo set (won't scan)" : city}
               </h3>
-              <div className="overflow-x-auto rounded-md border">
+              {/* Mobile: stacked card per keyword. Each card lays out the
+                  two ranks side-by-side so the user doesn't have to
+                  horizontally scroll a four-column table. */}
+              <div className="space-y-2 sm:hidden">
+                {rows.map((r) => (
+                  <div
+                    key={`m-${r.trackedKeywordId}`}
+                    className="rounded-md border bg-background p-3"
+                  >
+                    <div className="font-medium">{r.keyword}</div>
+                    {r.bareKeyword && (
+                      <div className="mt-0.5 text-[11px] text-muted-foreground">
+                        bare: &ldquo;{r.bareKeyword}&rdquo;
+                      </div>
+                    )}
+                    <a
+                      href={r.targetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 block truncate text-xs text-brand hover:underline"
+                      title={r.targetUrl}
+                    >
+                      {r.targetUrl.replace(/^https?:\/\//, "")}
+                    </a>
+                    <div className="mt-2 grid grid-cols-2 gap-2 border-t pt-2 text-sm">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {isNoGeo ? "Full kw" : `In ${city}: full`}
+                        </div>
+                        <RankCell ann={r.geoFull} />
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {isNoGeo ? "Bare kw" : `In ${city}: bare`}
+                        </div>
+                        {r.bareKeyword ? (
+                          <RankCell ann={r.geoBare} />
+                        ) : (
+                          <span className="text-xs italic text-muted-foreground">
+                            same as full
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden overflow-x-auto rounded-md border sm:block">
                 <table className="w-full text-sm">
                   <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <tr>

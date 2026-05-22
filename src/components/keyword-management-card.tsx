@@ -586,7 +586,147 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-md border">
+        {/* Mobile: stacked card per keyword. Same data, no horizontal
+            scroll. Edit/pause/delete actions live in a row at the bottom
+            of each card. */}
+        <div className="space-y-2 sm:hidden">
+          {sortedRows.map((r) => {
+            if (editingId === r.id) {
+              return (
+                <div
+                  key={`m-${r.id}`}
+                  className="space-y-2 rounded-md border bg-muted/10 p-3"
+                >
+                  <div>
+                    <Label htmlFor={`m-kw-${r.id}`}>Keyword</Label>
+                    <Input
+                      id={`m-kw-${r.id}`}
+                      value={editKeyword}
+                      onChange={(e) => setEditKeyword(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor={`m-url-${r.id}`}>Target URL</Label>
+                    <Input
+                      id={`m-url-${r.id}`}
+                      type="url"
+                      value={editTargetUrl}
+                      onChange={(e) => setEditTargetUrl(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor={`m-city-${r.id}`}>Search from</Label>
+                    <Input
+                      id={`m-city-${r.id}`}
+                      value={editGeoCity}
+                      onChange={(e) => setEditGeoCity(e.target.value)}
+                      placeholder="Cumming, GA"
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => saveEdit(r)}
+                      disabled={editSaving}
+                    >
+                      {editSaving ? "Saving…" : "Save"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={cancelEdit}
+                      disabled={editSaving}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div
+                key={`m-${r.id}`}
+                className="space-y-1.5 rounded-md border bg-background p-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{r.keyword}</div>
+                    <a
+                      href={r.targetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block truncate text-xs text-brand hover:underline"
+                      title={r.targetUrl}
+                    >
+                      {r.targetUrl.replace(/^https?:\/\//, "")}
+                    </a>
+                  </div>
+                  {r.isActive ? (
+                    <span className="text-[10px] uppercase tracking-wide text-green-700">
+                      active
+                    </span>
+                  ) : (
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      paused
+                    </span>
+                  )}
+                </div>
+                {r.geoCity ? (
+                  <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <MapPin className="h-3 w-3" />
+                    {r.geoCity}
+                    {r.geoLat && r.geoLng && (
+                      <span className="opacity-60">
+                        ({Number(r.geoLat).toFixed(3)},{" "}
+                        {Number(r.geoLng).toFixed(3)})
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs italic text-muted-foreground">
+                    no geo
+                  </div>
+                )}
+                <div className="flex items-center gap-1 border-t pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => startEdit(r)}
+                  >
+                    <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => toggleActive(r)}
+                  >
+                    {r.isActive ? "Pause" : "Resume"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => deleteRow(r)}
+                    aria-label="Delete"
+                    title="Delete"
+                    className="ml-auto"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="hidden overflow-x-auto rounded-md border sm:block">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
