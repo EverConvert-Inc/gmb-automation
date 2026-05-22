@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Oxygen } from "next/font/google";
+import { Toaster } from "sonner";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import { AppShell } from "@/components/app-shell";
@@ -34,6 +35,12 @@ export default function RootLayout({
     <html lang="en" className={`${sans.variable} ${display.variable}`}>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <AppShell>{children}</AppShell>
+        <Toaster
+          position="bottom-right"
+          richColors
+          closeButton
+          toastOptions={{ duration: 5000 }}
+        />
       </body>
     </html>
   );

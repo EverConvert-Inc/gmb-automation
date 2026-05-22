@@ -150,7 +150,7 @@ export default async function ClientDashboardPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">{client.name}</h1>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -161,7 +161,7 @@ export default async function ClientDashboardPage({
             </span>
           </div>
         </div>
-        <div className="flex items-start gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <SyncAllLocationsButton
             clientId={client.id}
             connectedCount={locs.filter((l) => l.gbpConnected).length}
@@ -226,7 +226,7 @@ export default async function ClientDashboardPage({
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold">{location.name}</h2>
           <p className="text-sm text-muted-foreground">{location.address}</p>
@@ -278,7 +278,7 @@ export default async function ClientDashboardPage({
             </div>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-col items-start gap-1 sm:items-end">
           <div className="flex items-center gap-2">
             {hasGbpConnected ? (
               <Badge variant="success">GBP connected</Badge>

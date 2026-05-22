@@ -92,7 +92,7 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
     );
   }
   return (
-    <div className="overflow-hidden rounded-md border">
+    <div className="overflow-x-auto rounded-md border">
       <table className="w-full text-sm">
         <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
           <tr>

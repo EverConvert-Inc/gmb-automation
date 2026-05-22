@@ -198,7 +198,7 @@ export function HeatMapClient({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
         <Stat
           label="ARP"
           info={METRIC_DESCRIPTIONS.arp}

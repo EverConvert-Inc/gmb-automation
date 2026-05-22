@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Loader2, MapPin, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/form";
@@ -18,12 +19,6 @@ export type TrackedKeywordRow = {
   geoLng: string | null;
   geoFormatted: string | null;
   isActive: boolean;
-};
-
-type Banner = {
-  kind: "info" | "error" | "success";
-  message: string;
-  link?: { href: string; label: string };
 };
 
 export function KeywordManagementCard({
@@ -44,7 +39,6 @@ export function KeywordManagementCard({
   const [showInactive, setShowInactive] = useState(false);
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [banner, setBanner] = useState<Banner | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editKeyword, setEditKeyword] = useState("");
   const [editTargetUrl, setEditTargetUrl] = useState("");
@@ -82,7 +76,6 @@ export function KeywordManagementCard({
 
   async function addKeyword(e: React.FormEvent) {
     e.preventDefault();
-    setBanner(null);
     setAdding(true);
     try {
       let geo: {
@@ -132,15 +125,14 @@ export function KeywordManagementCard({
       // Re-prefill so the next keyword inherits the same suggested URL.
       setTargetUrl(suggestedTargetUrl ?? "");
       setGeoCity("");
-      setBanner({
-        kind: "success",
-        message: geo.formatted
+      toast.success(
+        geo.formatted
           ? `Added — searches from ${geo.formatted}`
           : "Added (national-only).",
-      });
+      );
       await refreshList(showInactive);
     } catch (err) {
-      setBanner({ kind: "error", message: (err as Error).message });
+      toast.error((err as Error).message);
     } finally {
       setAdding(false);
     }
@@ -155,7 +147,7 @@ export function KeywordManagementCard({
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith("#"));
     if (lines.length === 0) {
-      setBanner({ kind: "error", message: "No keywords to add." });
+      toast.error("No keywords to add.");
       return;
     }
 
@@ -189,7 +181,6 @@ export function KeywordManagementCard({
       done: 0,
       errors: [...parseErrors],
     });
-    setBanner(null);
 
     let okCount = 0;
     const errs: Array<{ line: string; err: string }> = [...parseErrors];
@@ -229,15 +220,15 @@ export function KeywordManagementCard({
     }
 
     setBulkSubmitting(false);
-    setBanner({
-      kind: okCount > 0 ? "success" : "error",
-      message:
-        `${okCount} of ${parsed.length} added` +
-        (errs.length > 0 ? ` · ${errs.length} failed` : ""),
-    });
+    const summary =
+      `${okCount} of ${parsed.length} added` +
+      (errs.length > 0 ? ` · ${errs.length} failed` : "");
     if (okCount > 0) {
+      toast.success(summary);
       setBulkText("");
       await refreshList(showInactive);
+    } else {
+      toast.error(summary);
     }
   }
 
@@ -246,7 +237,6 @@ export function KeywordManagementCard({
     setEditKeyword(row.keyword);
     setEditTargetUrl(row.targetUrl);
     setEditGeoCity(row.geoCity ?? "");
-    setBanner(null);
   }
 
   function cancelEdit() {
@@ -258,7 +248,6 @@ export function KeywordManagementCard({
 
   async function saveEdit(row: TrackedKeywordRow) {
     setEditSaving(true);
-    setBanner(null);
     try {
       // Only re-geocode if the city actually changed — saves a Places call
       // when the user is only fixing the keyword text or target URL.
@@ -316,16 +305,15 @@ export function KeywordManagementCard({
       }
       cancelEdit();
       await refreshList(showInactive);
-      setBanner({ kind: "success", message: "Keyword updated." });
+      toast.success("Keyword updated.");
     } catch (err) {
-      setBanner({ kind: "error", message: (err as Error).message });
+      toast.error((err as Error).message);
     } finally {
       setEditSaving(false);
     }
   }
 
   async function toggleActive(row: TrackedKeywordRow) {
-    setBanner(null);
     try {
       const res = await fetch(
         `/api/clients/${clientId}/keywords/${row.id}`,
@@ -341,13 +329,12 @@ export function KeywordManagementCard({
       }
       await refreshList(showInactive);
     } catch (err) {
-      setBanner({ kind: "error", message: (err as Error).message });
+      toast.error((err as Error).message);
     }
   }
 
   async function deleteRow(row: TrackedKeywordRow) {
     if (!confirm(`Stop tracking "${row.keyword}"? History is preserved.`)) return;
-    setBanner(null);
     try {
       const res = await fetch(
         `/api/clients/${clientId}/keywords/${row.id}`,
@@ -359,12 +346,11 @@ export function KeywordManagementCard({
       }
       await refreshList(showInactive);
     } catch (err) {
-      setBanner({ kind: "error", message: (err as Error).message });
+      toast.error((err as Error).message);
     }
   }
 
   async function scanNow() {
-    setBanner(null);
     setScanning(true);
     try {
       const res = await fetch(`/api/clients/${clientId}/serp-scan`, {
@@ -381,27 +367,27 @@ export function KeywordManagementCard({
       const total = body.totalKeywords ?? 0;
       const err = body.errored ?? 0;
       if (total === 0) {
-        setBanner({
-          kind: "info",
-          message: "No keywords to scan — add one above first.",
-        });
+        toast.info("No keywords to scan — add one above first.");
       } else {
         const parts: string[] = [
           `Scanned ${ok} of ${total} keyword${total === 1 ? "" : "s"}`,
         ];
         if (err > 0) parts.push(`${err} errored`);
-        setBanner({
-          kind: ok > 0 ? "success" : "error",
-          message: parts.join(" · "),
-          link:
-            ok > 0
-              ? { href: `/clients/${clientSlug}`, label: "View rankings" }
-              : undefined,
-        });
+        const summary = parts.join(" · ");
+        if (ok > 0) {
+          toast.success(summary, {
+            action: {
+              label: "View rankings →",
+              onClick: () => router.push(`/clients/${clientSlug}`),
+            },
+          });
+        } else {
+          toast.error(summary);
+        }
       }
       startRefresh(() => router.refresh());
     } catch (err) {
-      setBanner({ kind: "error", message: (err as Error).message });
+      toast.error((err as Error).message);
     } finally {
       setScanning(false);
     }
@@ -460,27 +446,6 @@ export function KeywordManagementCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5 pt-6">
-        {banner && (
-          <div
-            className={
-              banner.kind === "error"
-                ? "flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-                : banner.kind === "success"
-                  ? "flex items-center justify-between gap-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
-                  : "flex items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
-            }
-          >
-            <span>{banner.message}</span>
-            {banner.link && (
-              <a
-                href={banner.link.href}
-                className="font-medium underline-offset-2 hover:underline"
-              >
-                {banner.link.label} →
-              </a>
-            )}
-          </div>
-        )}
 
         <form
           onSubmit={addKeyword}
@@ -621,7 +586,7 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
           </div>
         )}
 
-        <div className="overflow-hidden rounded-md border">
+        <div className="overflow-x-auto rounded-md border">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>

@@ -73,7 +73,10 @@ export function NewClientForm() {
           required
           value={slug}
           onChange={(e) => {
-            setSlug(e.target.value);
+            // Hard-validate as the user types so invalid chars can never
+            // land in the URL. Trailing dashes/dots are stripped on the
+            // fly; the visible value is always a URL-safe slug.
+            setSlug(slugify(e.target.value));
             setSlugTouched(true);
           }}
           placeholder="acme-law"

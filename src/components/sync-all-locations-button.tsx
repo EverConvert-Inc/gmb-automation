@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
 type SyncAllResponse = {
@@ -23,17 +24,9 @@ export function SyncAllLocationsButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [pendingRefresh, startRefresh] = useTransition();
-  const [okMessage, setOkMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [perLocErrors, setPerLocErrors] = useState<
-    Array<{ locationName: string; error: string }>
-  >([]);
 
   async function run() {
     setBusy(true);
-    setOkMessage(null);
-    setErrorMessage(null);
-    setPerLocErrors([]);
     try {
       const res = await fetch(`/api/clients/${clientId}/sync-all`, {
         method: "POST",
@@ -47,7 +40,7 @@ export function SyncAllLocationsButton({
       const errs = body.errors ?? [];
 
       if (locs === 0) {
-        setOkMessage("No locations have GBP connected yet");
+        toast.info("No locations have GBP connected yet.");
       } else {
         const parts: string[] = [
           `${locs} location${locs === 1 ? "" : "s"}`,
@@ -58,12 +51,23 @@ export function SyncAllLocationsButton({
         if (perfRows > 0) {
           parts.push(`${perfRows} performance row${perfRows === 1 ? "" : "s"}`);
         }
-        setOkMessage(parts.join(" · "));
+        if (errs.length === 0) {
+          toast.success(parts.join(" · "));
+        } else {
+          // Build a multi-line message: summary + per-location errors. Sonner
+          // renders \n correctly in its toast body.
+          const detail = errs
+            .map((e) => `${e.locationName}: ${e.error}`)
+            .join("\n");
+          toast.warning(`${parts.join(" · ")} · ${errs.length} errored`, {
+            description: detail,
+            duration: 10_000,
+          });
+        }
       }
-      setPerLocErrors(errs);
       startRefresh(() => router.refresh());
     } catch (err) {
-      setErrorMessage((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -72,40 +76,27 @@ export function SyncAllLocationsButton({
   const noneConnected = connectedCount === 0;
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={run}
-        disabled={busy || pendingRefresh || noneConnected}
-        title={
-          noneConnected
-            ? "No locations have Google Business Profile connected yet. Click \"Connect Google Business Profile\" on any location to enable syncing."
-            : undefined
-        }
-      >
-        {busy ? (
-          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-        )}
-        {busy
-          ? "Syncing all locations…"
-          : noneConnected
-            ? "Sync all locations · GBP not connected"
-            : "Sync all locations"}
-      </Button>
-      {okMessage && <span className="text-xs text-green-700">{okMessage}</span>}
-      {errorMessage && <span className="text-xs text-red-600">{errorMessage}</span>}
-      {perLocErrors.length > 0 && (
-        <ul className="mt-1 max-w-xs space-y-0.5 text-right text-[11px] text-amber-700">
-          {perLocErrors.map((e, i) => (
-            <li key={i}>
-              <span className="font-medium">{e.locationName}:</span> {e.error}
-            </li>
-          ))}
-        </ul>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={run}
+      disabled={busy || pendingRefresh || noneConnected}
+      title={
+        noneConnected
+          ? "No locations have Google Business Profile connected yet. Click \"Connect Google Business Profile\" on any location to enable syncing."
+          : undefined
+      }
+    >
+      {busy ? (
+        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
       )}
-    </div>
+      {busy
+        ? "Syncing all locations…"
+        : noneConnected
+          ? "Sync all locations · GBP not connected"
+          : "Sync all locations"}
+    </Button>
   );
 }
