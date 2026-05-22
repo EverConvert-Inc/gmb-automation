@@ -9,7 +9,6 @@ import {
   METRO_LOCATIONS,
   pullOrganicSerp,
   type GeoTarget,
-  type SerpOrganicItem,
 } from "./dataforseo";
 
 // 8 in-flight DataForSEO calls — well under their default rate limit and
@@ -116,29 +115,34 @@ export async function runSerpScan(
         );
       }
 
-      let geoItems: SerpOrganicItem[] | null = null;
-      try {
-        geoItems = await pullOrganicSerp(kw.keyword, geoTarget);
-      } catch (err) {
-        throw new Error(`geo: ${(err as Error).message}`);
-      }
-      const geoMatch = findOrganicRankForDomain(geoItems, hostname);
+      // Fire both DataForSEO calls in parallel. Each live/regular call is
+      // independent and DataForSEO charges per call regardless of order,
+      // so awaiting them sequentially was leaving half our wall-clock on
+      // the floor. Settled rather than all() so we can keep distinct
+      // "geo" vs "geo-bare" error messages.
+      const doBare =
+        detection.city && detection.bareKeyword !== kw.keyword;
+      const [fullSettled, bareSettled] = await Promise.allSettled([
+        pullOrganicSerp(kw.keyword, geoTarget),
+        doBare
+          ? pullOrganicSerp(detection.bareKeyword, geoTarget)
+          : Promise.resolve(null),
+      ]);
 
-      // Only do the bare search if the city was detected IN the keyword
-      // (so we have a meaningful "bare" version different from the full).
-      let geoBareMatch: { rank: number | null; url: string | null } = {
-        rank: null,
-        url: null,
-      };
-      if (detection.city && detection.bareKeyword !== kw.keyword) {
-        let bareItems: SerpOrganicItem[] | null = null;
-        try {
-          bareItems = await pullOrganicSerp(detection.bareKeyword, geoTarget);
-        } catch (err) {
-          throw new Error(`geo-bare: ${(err as Error).message}`);
-        }
-        geoBareMatch = findOrganicRankForDomain(bareItems, hostname);
+      if (fullSettled.status === "rejected") {
+        throw new Error(`geo: ${(fullSettled.reason as Error).message}`);
       }
+      if (bareSettled.status === "rejected") {
+        throw new Error(
+          `geo-bare: ${(bareSettled.reason as Error).message}`,
+        );
+      }
+
+      const geoMatch = findOrganicRankForDomain(fullSettled.value, hostname);
+      const geoBareMatch =
+        bareSettled.value !== null
+          ? findOrganicRankForDomain(bareSettled.value, hostname)
+          : { rank: null, url: null };
 
       await db.insert(serpRankings).values({
         trackedKeywordId: kw.id,
