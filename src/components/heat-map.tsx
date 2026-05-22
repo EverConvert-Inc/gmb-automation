@@ -69,7 +69,16 @@ export function HeatMap({
   className,
 }: HeatMapProps) {
   return (
-    <div className={className ?? "h-[600px] w-full overflow-hidden rounded-lg border"}>
+    <div
+      className={
+        // `isolation-isolate` forces Leaflet's internal z-indexes (which go
+        // up to ~700 for popups) into their own stacking context so they
+        // can't paint over the page's sticky mobile top bar as the user
+        // scrolls past.
+        className ??
+        "isolate h-[600px] w-full overflow-hidden rounded-lg border"
+      }
+    >
       <MapContainer
         center={[centerLat, centerLng]}
         zoom={zoom}
