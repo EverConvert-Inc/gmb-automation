@@ -328,7 +328,35 @@ function LocationSnapshotCard({
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* Mobile: compact inline summary. Same data, ~30% the vertical
+          height. The 4-stat grid below kicks in at sm+ for desktop. */}
+      <div className="space-y-1 text-sm sm:hidden">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <span className="font-semibold tabular-nums">
+            ★ {loc.rating !== null ? loc.rating.toFixed(1) : "—"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {loc.reviewCount} review{loc.reviewCount === 1 ? "" : "s"}
+          </span>
+          <span className="text-muted-foreground">·</span>
+          <span className={cn("text-xs", freshnessTone(loc.daysSinceLastReview))}>
+            Last review {lastReviewLabel}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <span>
+            <span className="tabular-nums text-foreground">{loc.last7}</span> 7d
+          </span>
+          <DeltaPill current={loc.last7} prior={loc.prior7} />
+          <span className="text-muted-foreground">·</span>
+          <span>
+            <span className="tabular-nums text-foreground">{loc.last30}</span> 30d
+          </span>
+          <DeltaPill current={loc.last30} prior={loc.prior30} />
+        </div>
+      </div>
+
+      <div className="hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-4">
         <Stat
           label="Rating"
           info={METRIC_DESCRIPTIONS.rating}
@@ -357,7 +385,7 @@ function LocationSnapshotCard({
 
       {loc.latestScan ? (
         <div className="rounded-md border bg-muted/20 p-2">
-          <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>Last scan</span>
             <span>
               {loc.latestScan.completedAt
