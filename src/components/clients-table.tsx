@@ -33,8 +33,107 @@ export function ClientsTable({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border">
-      <table className="w-full text-sm">
+    <>
+      {/* Mobile: card-per-client. The 5-column table can't fit a typical
+          firm name + numeric stats + actions on a phone without
+          horizontal scroll, so on <sm we render each client as a
+          self-contained card with the same expand/collapse behavior. */}
+      <div className="space-y-3 sm:hidden">
+        {rows.map((c) => {
+          const isExpanded = expanded.has(c.id);
+          const clientLocs = snapshots[c.id] ?? [];
+          return (
+            <div key={c.id} className="rounded-lg border bg-background">
+              <button
+                type="button"
+                onClick={() => toggle(c.id)}
+                aria-expanded={isExpanded}
+                className="flex w-full items-start gap-2 px-4 py-3 text-left"
+              >
+                <ChevronRight
+                  className={cn(
+                    "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                    isExpanded && "rotate-90 text-foreground",
+                  )}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium leading-tight">{c.name}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                    <span>
+                      {c.locationCount} location{c.locationCount === 1 ? "" : "s"}
+                    </span>
+                    {c.weightedRating !== null && (
+                      <span>★ {c.weightedRating.toFixed(1)}</span>
+                    )}
+                    <span>
+                      {c.totalReviews} review{c.totalReviews === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {c.lastScanAt && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Last scan {formatRelativeDate(c.lastScanAt)}
+                    </div>
+                  )}
+                </div>
+                <Badge
+                  variant={c.status === "active" ? "success" : "secondary"}
+                  className="shrink-0"
+                >
+                  {c.status}
+                </Badge>
+              </button>
+              <div
+                className="flex items-center gap-2 border-t px-3 py-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Link
+                  href={`/clients/${c.slug}`}
+                  className={buttonClasses(
+                    "default",
+                    "sm",
+                    "flex-1 justify-center whitespace-nowrap",
+                  )}
+                >
+                  View client
+                  <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                </Link>
+                <RowActions
+                  entity="client"
+                  id={c.id}
+                  name={c.name}
+                  cascadeDetail={`and its ${c.locationCount} location${c.locationCount === 1 ? "" : "s"} and ${c.totalReviews} review${c.totalReviews === 1 ? "" : "s"}`}
+                />
+              </div>
+              {isExpanded && (
+                <div className="space-y-3 border-t bg-muted/10 p-3">
+                  {clientLocs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No locations yet for this client.{" "}
+                      <Link
+                        href={`/clients/${c.slug}/locations/new`}
+                        className="text-foreground underline hover:no-underline"
+                      >
+                        Add the first location →
+                      </Link>
+                    </p>
+                  ) : (
+                    clientLocs.map((loc) => (
+                      <LocationSnapshotCard
+                        key={loc.id}
+                        clientSlug={c.slug}
+                        loc={loc}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-hidden rounded-lg border sm:block">
+        <table className="w-full text-sm">
         <thead className="border-b bg-muted/40 text-left">
           <tr>
             <th className="w-px px-2 py-3" />
@@ -164,7 +263,8 @@ export function ClientsTable({
           })}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
