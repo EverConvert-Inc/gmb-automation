@@ -865,7 +865,6 @@ export type RankingsOverviewRow = {
   geoCity: string | null;
   isActive: boolean;
   lastCheckedAt: Date | null;
-  national: RankAnnotation;
   geoFull: RankAnnotation | null;
   geoBare: RankAnnotation | null;
 };
@@ -943,13 +942,6 @@ export async function getRankingsOverview(
         ? detection.bareKeyword
         : null;
 
-    const national = buildAnnotation(
-      latest?.nationalRank ?? null,
-      latest?.nationalUrl ?? null,
-      prior?.nationalRank ?? null,
-      kw.targetUrl,
-    );
-
     const geoFull = effectiveCity
       ? buildAnnotation(
           latest?.geoRank ?? null,
@@ -979,7 +971,6 @@ export async function getRankingsOverview(
       geoCity: effectiveCity,
       isActive: kw.isActive,
       lastCheckedAt: latest?.checkedAt ?? null,
-      national,
       geoFull,
       geoBare,
     };

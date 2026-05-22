@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import type { RankAnnotation, RankingsOverviewRow } from "@/lib/queries";
 
-const NATIONAL_ONLY_KEY = "__national__";
+const NO_GEO_KEY = "__no_geo__";
 
 function RankCell({ ann }: { ann: RankAnnotation | null }) {
   if (ann == null) {
@@ -79,9 +79,9 @@ export function SerpRankingsCard({
             <div className="max-w-md space-y-1.5">
               <p className="text-sm font-medium">No tracked keywords yet</p>
               <p className="text-xs text-muted-foreground">
-                Add the keywords you want to rank for and the target pages on
-                your site. We&apos;ll check Google every Thursday and surface
-                national + in-city ranks here.
+                Add the keywords you want to rank for, the target page on your
+                site, and the city you want to be searched from. We&apos;ll
+                check Google every Thursday and surface in-city ranks here.
               </p>
             </div>
             <Link href={`/clients/${clientSlug}/keywords`}>
@@ -95,18 +95,19 @@ export function SerpRankingsCard({
     );
   }
 
-  // Group keywords by city (or "national only" if no city).
+  // Group keywords by city. Keywords without a geo are shown at the top
+  // under "No geo set" so they're visible (and editable) but their rank
+  // cells stay empty since we no longer run national searches.
   const byCity = new Map<string, RankingsOverviewRow[]>();
   for (const r of data) {
-    const key = r.geoCity ?? NATIONAL_ONLY_KEY;
+    const key = r.geoCity ?? NO_GEO_KEY;
     const list = byCity.get(key);
     if (list) list.push(r);
     else byCity.set(key, [r]);
   }
-  // City sections sorted alphabetically; "National only" last.
   const cityKeys = Array.from(byCity.keys()).sort((a, b) => {
-    if (a === NATIONAL_ONLY_KEY) return 1;
-    if (b === NATIONAL_ONLY_KEY) return -1;
+    if (a === NO_GEO_KEY) return -1;
+    if (b === NO_GEO_KEY) return 1;
     return a.localeCompare(b);
   });
 
@@ -118,11 +119,9 @@ export function SerpRankingsCard({
             <Search className="h-4 w-4 text-brand" />
             Search rankings
             <InfoTooltip>
-              Three ranks per keyword from DataForSEO: the keyword searched
-              nationally, the full keyword searched from within the target
-              city, and the keyword with the city stripped (e.g.
-              &ldquo;car accident lawyer&rdquo;) searched from within the
-              city. Lower number = closer to #1 = better.
+              Two ranks per keyword, both as searched from within the
+              configured city: the full keyword as listed, and the keyword
+              with the city name stripped. Lower number = closer to #1.
             </InfoTooltip>
           </span>
           <Link href={`/clients/${clientSlug}/keywords`}>
@@ -135,11 +134,11 @@ export function SerpRankingsCard({
       <CardContent className="space-y-6 pt-6">
         {cityKeys.map((city) => {
           const rows = byCity.get(city)!;
-          const isNationalOnly = city === NATIONAL_ONLY_KEY;
+          const isNoGeo = city === NO_GEO_KEY;
           return (
             <section key={city}>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {isNationalOnly ? "National only" : city}
+                {isNoGeo ? "No geo set (won't scan)" : city}
               </h3>
               <div className="overflow-hidden rounded-md border">
                 <table className="w-full text-sm">
@@ -149,39 +148,28 @@ export function SerpRankingsCard({
                       <th className="px-3 py-2 font-medium">URL</th>
                       <th className="px-3 py-2 font-medium text-right">
                         <span className="inline-flex items-center gap-1">
-                          National
+                          {isNoGeo ? "Full kw" : `In ${city}: full kw`}
                           <InfoTooltip>
-                            The exact keyword searched without a location
-                            filter — i.e. nationwide.
+                            The keyword as listed
+                            {isNoGeo
+                              ? ", searched from the configured city."
+                              : `, searched from within ${city}.`}
                           </InfoTooltip>
                         </span>
                       </th>
-                      {!isNationalOnly && (
-                        <>
-                          <th className="px-3 py-2 font-medium text-right">
-                            <span className="inline-flex items-center gap-1">
-                              In {city}: full kw
-                              <InfoTooltip>
-                                The exact keyword (including the city name)
-                                searched from within {city}.
-                              </InfoTooltip>
-                            </span>
-                          </th>
-                          <th className="px-3 py-2 font-medium text-right">
-                            <span className="inline-flex items-center gap-1">
-                              In {city}: bare kw
-                              <InfoTooltip>
-                                The keyword with the city stripped (e.g.
-                                &ldquo;car accident lawyer&rdquo; for
-                                &ldquo;{city} car accident lawyer&rdquo;)
-                                searched from within {city}. Usually the most
-                                meaningful — most local searchers don&apos;t
-                                type their city.
-                              </InfoTooltip>
-                            </span>
-                          </th>
-                        </>
-                      )}
+                      <th className="px-3 py-2 font-medium text-right">
+                        <span className="inline-flex items-center gap-1">
+                          {isNoGeo ? "Bare kw" : `In ${city}: bare kw`}
+                          <InfoTooltip>
+                            The keyword with the city name stripped (e.g.
+                            &ldquo;car accident lawyer&rdquo; for
+                            &ldquo;{isNoGeo ? "<city>" : city} car accident
+                            lawyer&rdquo;), searched from the same location.
+                            Usually the most meaningful signal — most local
+                            searchers don&apos;t type their city.
+                          </InfoTooltip>
+                        </span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -209,27 +197,20 @@ export function SerpRankingsCard({
                           </a>
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <RankCell ann={r.national} />
+                          <RankCell ann={r.geoFull} />
                         </td>
-                        {!isNationalOnly && (
-                          <>
-                            <td className="px-3 py-2 text-right">
-                              <RankCell ann={r.geoFull} />
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              {r.bareKeyword ? (
-                                <RankCell ann={r.geoBare} />
-                              ) : (
-                                <span
-                                  className="text-xs italic text-muted-foreground"
-                                  title="No city in the keyword to strip — bare = full"
-                                >
-                                  same as full
-                                </span>
-                              )}
-                            </td>
-                          </>
-                        )}
+                        <td className="px-3 py-2 text-right">
+                          {r.bareKeyword ? (
+                            <RankCell ann={r.geoBare} />
+                          ) : (
+                            <span
+                              className="text-xs italic text-muted-foreground"
+                              title="No city in the keyword to strip — bare = full"
+                            >
+                              same as full
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

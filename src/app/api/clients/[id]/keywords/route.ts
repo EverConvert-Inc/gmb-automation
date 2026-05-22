@@ -3,23 +3,16 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { trackedKeywords } from "@/lib/db/schema";
-import { METRO_LOCATIONS } from "@/lib/dataforseo";
 
 export const runtime = "nodejs";
 
 const createSchema = z.object({
   keyword: z.string().trim().min(1).max(200),
   targetUrl: z.string().trim().url(),
-  geoCity: z
-    .string()
-    .trim()
-    .min(1)
-    .max(100)
-    .optional()
-    .nullable()
-    .transform((v) => (v ? v : null)),
-  geoLat: z.number().min(-90).max(90).optional().nullable(),
-  geoLng: z.number().min(-180).max(180).optional().nullable(),
+  // Geo is now required — every keyword scans from a city, no exceptions.
+  geoCity: z.string().trim().min(1).max(100),
+  geoLat: z.number().min(-90).max(90),
+  geoLng: z.number().min(-180).max(180),
   geoFormatted: z.string().trim().max(300).optional().nullable(),
 });
 
@@ -63,11 +56,6 @@ export async function POST(
   }
   const { keyword, targetUrl, geoCity, geoLat, geoLng, geoFormatted } =
     parsed.data;
-  // With geocoded coords we don't need a hardcoded location code, but we
-  // still populate it for legacy METRO_LOCATIONS cities to keep the old
-  // fallback path working (scan logic prefers coords when present).
-  const geoLocationCode =
-    geoCity && geoCity in METRO_LOCATIONS ? METRO_LOCATIONS[geoCity] : null;
 
   try {
     const [row] = await db
@@ -77,9 +65,9 @@ export async function POST(
         keyword,
         targetUrl,
         geoCity,
-        geoLocationCode,
-        geoLat: geoLat != null ? String(geoLat) : null,
-        geoLng: geoLng != null ? String(geoLng) : null,
+        geoLocationCode: null,
+        geoLat: String(geoLat),
+        geoLng: String(geoLng),
         geoFormatted: geoFormatted ?? null,
       })
       .returning();

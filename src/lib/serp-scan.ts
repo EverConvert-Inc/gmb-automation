@@ -78,21 +78,11 @@ export async function runSerpScan(
         throw new Error(`invalid target_url: ${kw.targetUrl}`);
       }
 
-      // Three searches per keyword:
-      //  1. national: full keyword, no location
-      //  2. geo (full kw): full keyword, from within the city
-      //  3. geo (bare kw): keyword with city stripped, from within the city
-      // The city is auto-detected from the keyword text; if detection fails,
-      // we fall back to the explicit geoCity on the tracked_keyword (which
-      // covers cases where the city isn't in the keyword text).
-
-      let nationalItems: SerpOrganicItem[] | null = null;
-      try {
-        nationalItems = await pullOrganicSerp(kw.keyword);
-      } catch (err) {
-        throw new Error(`national: ${(err as Error).message}`);
-      }
-      const nationalMatch = findOrganicRankForDomain(nationalItems, hostname);
+      // Two searches per keyword, both from the configured geo location:
+      //  1. full kw: keyword as listed (e.g. "Atlanta car accident lawyer")
+      //  2. bare kw: keyword with the city stripped ("car accident lawyer")
+      // If the keyword has no city to strip (e.g. "Drug Rehab"), only #1
+      // runs — bare would be identical.
 
       const detection = detectCity(kw.keyword);
       const effectiveCity = detection.city ?? kw.geoCity ?? null;
@@ -115,39 +105,34 @@ export async function runSerpScan(
         if (code) geoTarget = { kind: "code", code };
       }
 
-      let geoMatch: { rank: number | null; url: string | null } = {
-        rank: null,
-        url: null,
-      };
+      if (!geoTarget) {
+        throw new Error(
+          "no geo location set — re-save this keyword with a city",
+        );
+      }
+
+      let geoItems: SerpOrganicItem[] | null = null;
+      try {
+        geoItems = await pullOrganicSerp(kw.keyword, geoTarget);
+      } catch (err) {
+        throw new Error(`geo: ${(err as Error).message}`);
+      }
+      const geoMatch = findOrganicRankForDomain(geoItems, hostname);
+
+      // Only do the bare search if the city was detected IN the keyword
+      // (so we have a meaningful "bare" version different from the full).
       let geoBareMatch: { rank: number | null; url: string | null } = {
         rank: null,
         url: null,
       };
-
-      if (geoTarget) {
-        let geoItems: SerpOrganicItem[] | null = null;
+      if (detection.city && detection.bareKeyword !== kw.keyword) {
+        let bareItems: SerpOrganicItem[] | null = null;
         try {
-          geoItems = await pullOrganicSerp(kw.keyword, geoTarget);
+          bareItems = await pullOrganicSerp(detection.bareKeyword, geoTarget);
         } catch (err) {
-          throw new Error(`geo: ${(err as Error).message}`);
+          throw new Error(`geo-bare: ${(err as Error).message}`);
         }
-        geoMatch = findOrganicRankForDomain(geoItems, hostname);
-
-        // Only do the bare search if the city was detected IN the keyword
-        // (so we have a meaningful "bare" version). If detection failed but
-        // the user set an explicit geoCity, the bare and full are the same.
-        if (detection.city && detection.bareKeyword !== kw.keyword) {
-          let bareItems: SerpOrganicItem[] | null = null;
-          try {
-            bareItems = await pullOrganicSerp(
-              detection.bareKeyword,
-              geoTarget,
-            );
-          } catch (err) {
-            throw new Error(`geo-bare: ${(err as Error).message}`);
-          }
-          geoBareMatch = findOrganicRankForDomain(bareItems, hostname);
-        }
+        geoBareMatch = findOrganicRankForDomain(bareItems, hostname);
       }
 
       await db.insert(serpRankings).values({
@@ -155,15 +140,15 @@ export async function runSerpScan(
         clientId: kw.clientId,
         keyword: kw.keyword,
         targetUrl: kw.targetUrl,
-        nationalRank: nationalMatch.rank,
-        nationalUrl: nationalMatch.url,
+        nationalRank: null,
+        nationalUrl: null,
         geoRank: geoMatch.rank,
         geoUrl: geoMatch.url,
         geoBareRank: geoBareMatch.rank,
         geoBareUrl: geoBareMatch.url,
         geoCity: effectiveCity,
         geoLocationCode:
-          geoTarget?.kind === "code" ? geoTarget.code : null,
+          geoTarget.kind === "code" ? geoTarget.code : null,
         checkedAt: new Date(),
       });
     },

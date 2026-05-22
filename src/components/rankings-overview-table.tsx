@@ -99,9 +99,6 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
             <th className="px-3 py-2 font-medium">Client</th>
             <th className="px-3 py-2 font-medium">H1 / Target Keyword</th>
             <th className="px-3 py-2 font-medium">URL</th>
-            <th className="px-3 py-2 font-medium text-right" title="Full keyword searched without a location filter">
-              National
-            </th>
             <th className="px-3 py-2 font-medium text-right" title="Full keyword (including city) searched from within the city">
               In-city · full
             </th>
@@ -135,9 +132,6 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
                 </a>
               </td>
               <td className="px-3 py-2 text-right">
-                <RankCell ann={r.national} />
-              </td>
-              <td className="px-3 py-2 text-right">
                 {r.geoFull ? (
                   <div className="flex flex-col items-end">
                     <RankCell ann={r.geoFull} />
@@ -149,7 +143,7 @@ export function RankingsOverviewTable({ rows }: { rows: RankingsOverviewRow[] })
                   </div>
                 ) : (
                   <span className="text-xs italic text-muted-foreground">
-                    national only
+                    no geo set
                   </span>
                 )}
               </td>

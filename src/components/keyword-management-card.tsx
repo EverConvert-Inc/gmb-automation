@@ -290,7 +290,8 @@ export function KeywordManagementCard({
               id="city"
               value={geoCity}
               onChange={(e) => setGeoCity(e.target.value)}
-              placeholder="Cumming, GA · leave blank for national"
+              placeholder="Cumming, GA"
+              required
             />
           </div>
           <Button type="submit" disabled={adding}>
