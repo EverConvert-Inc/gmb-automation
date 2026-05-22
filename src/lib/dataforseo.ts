@@ -195,9 +195,13 @@ type OrganicLiveResponse = {
   }>;
 };
 
+export type GeoTarget =
+  | { kind: "code"; code: number }
+  | { kind: "coord"; lat: number; lng: number };
+
 export async function pullOrganicSerp(
   keyword: string,
-  locationCode?: number,
+  geo?: GeoTarget,
 ): Promise<SerpOrganicItem[] | null> {
   const payload: Record<string, unknown> = {
     keyword,
@@ -205,7 +209,15 @@ export async function pullOrganicSerp(
     device: "desktop",
     depth: 100,
   };
-  if (locationCode) payload.location_code = locationCode;
+  if (geo?.kind === "coord") {
+    // DataForSEO accepts "lat,lng" — this places the simulated search at
+    // the exact GPS point, which is the closest thing to "physically in
+    // that city" they offer. More precise than the city-level
+    // location_code, which collapses all suburbs to one metro code.
+    payload.location_coordinate = `${geo.lat},${geo.lng}`;
+  } else if (geo?.kind === "code") {
+    payload.location_code = geo.code;
+  }
 
   const res = await fetch(ORGANIC_LIVE_URL, {
     method: "POST",

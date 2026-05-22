@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { KeyRound, Loader2, MapPin, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FormError, Input, Label, Select } from "@/components/ui/form";
+import { Input, Label } from "@/components/ui/form";
 
 export type TrackedKeywordRow = {
   id: string;
@@ -14,6 +14,9 @@ export type TrackedKeywordRow = {
   targetUrl: string;
   geoCity: string | null;
   geoLocationCode: number | null;
+  geoLat: string | null;
+  geoLng: string | null;
+  geoFormatted: string | null;
   isActive: boolean;
 };
 
@@ -26,11 +29,9 @@ type Banner = {
 export function KeywordManagementCard({
   clientId,
   clientSlug,
-  cities,
 }: {
   clientId: string;
   clientSlug: string;
-  cities: string[];
 }) {
   const router = useRouter();
   const [rows, setRows] = useState<TrackedKeywordRow[]>([]);
@@ -65,13 +66,45 @@ export function KeywordManagementCard({
     setBanner(null);
     setAdding(true);
     try {
+      let geo: {
+        city: string | null;
+        lat: number | null;
+        lng: number | null;
+        formatted: string | null;
+      } = { city: null, lat: null, lng: null, formatted: null };
+      const cityInput = geoCity.trim();
+      if (cityInput) {
+        const geoRes = await fetch(
+          `/api/places/search?q=${encodeURIComponent(cityInput)}`,
+        );
+        if (!geoRes.ok) {
+          throw new Error(`Couldn't geocode "${cityInput}"`);
+        }
+        const geoBody = (await geoRes.json()) as {
+          results?: Array<{ name?: string; formattedAddress?: string; lat: number; lng: number }>;
+        };
+        const first = geoBody.results?.[0];
+        if (!first) {
+          throw new Error(`No location found for "${cityInput}"`);
+        }
+        geo = {
+          city: cityInput,
+          lat: first.lat,
+          lng: first.lng,
+          formatted: first.formattedAddress ?? null,
+        };
+      }
+
       const res = await fetch(`/api/clients/${clientId}/keywords`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           keyword: keyword.trim(),
           targetUrl: targetUrl.trim(),
-          geoCity: geoCity || null,
+          geoCity: geo.city,
+          geoLat: geo.lat,
+          geoLng: geo.lng,
+          geoFormatted: geo.formatted,
         }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -79,7 +112,12 @@ export function KeywordManagementCard({
       setKeyword("");
       setTargetUrl("");
       setGeoCity("");
-      setBanner({ kind: "success", message: "Keyword added." });
+      setBanner({
+        kind: "success",
+        message: geo.formatted
+          ? `Added — searches from ${geo.formatted}`
+          : "Added (national-only).",
+      });
       await refreshList(showInactive);
     } catch (err) {
       setBanner({ kind: "error", message: (err as Error).message });
@@ -247,25 +285,18 @@ export function KeywordManagementCard({
             />
           </div>
           <div>
-            <Label htmlFor="city">Geo city</Label>
-            <Select
+            <Label htmlFor="city">Search from</Label>
+            <Input
               id="city"
               value={geoCity}
               onChange={(e) => setGeoCity(e.target.value)}
-            >
-              <option value="">National only</option>
-              {cities.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </Select>
+              placeholder="Cumming, GA · leave blank for national"
+            />
           </div>
           <Button type="submit" disabled={adding}>
             {adding ? "Adding…" : "Add keyword"}
           </Button>
         </form>
-        <FormError>{null}</FormError>
 
         <div className="overflow-hidden rounded-md border">
           <table className="w-full text-sm">
@@ -305,7 +336,34 @@ export function KeywordManagementCard({
                     </span>
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
-                    {r.geoCity ?? <span className="text-xs italic">national</span>}
+                    {r.geoCity ? (
+                      <div className="space-y-0.5">
+                        <div className="inline-flex items-center gap-1 text-foreground">
+                          <MapPin className="h-3 w-3" />
+                          {r.geoCity}
+                        </div>
+                        {r.geoFormatted && (
+                          <div
+                            className="text-[10px] leading-tight"
+                            title={
+                              r.geoLat && r.geoLng
+                                ? `Search from ${r.geoLat}, ${r.geoLng}`
+                                : undefined
+                            }
+                          >
+                            {r.geoFormatted}
+                          </div>
+                        )}
+                        {r.geoLat && r.geoLng && (
+                          <div className="text-[10px] leading-tight tabular-nums opacity-60">
+                            {Number(r.geoLat).toFixed(4)},{" "}
+                            {Number(r.geoLng).toFixed(4)}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs italic">national</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     {r.isActive ? (

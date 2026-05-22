@@ -18,6 +18,9 @@ const createSchema = z.object({
     .optional()
     .nullable()
     .transform((v) => (v ? v : null)),
+  geoLat: z.number().min(-90).max(90).optional().nullable(),
+  geoLng: z.number().min(-180).max(180).optional().nullable(),
+  geoFormatted: z.string().trim().max(300).optional().nullable(),
 });
 
 export async function GET(
@@ -58,14 +61,13 @@ export async function POST(
       { status: 400 },
     );
   }
-  const { keyword, targetUrl, geoCity } = parsed.data;
-  if (geoCity && !(geoCity in METRO_LOCATIONS)) {
-    return NextResponse.json(
-      { error: `Unknown city '${geoCity}'. Add it to METRO_LOCATIONS first.` },
-      { status: 400 },
-    );
-  }
-  const geoLocationCode = geoCity ? METRO_LOCATIONS[geoCity] : null;
+  const { keyword, targetUrl, geoCity, geoLat, geoLng, geoFormatted } =
+    parsed.data;
+  // With geocoded coords we don't need a hardcoded location code, but we
+  // still populate it for legacy METRO_LOCATIONS cities to keep the old
+  // fallback path working (scan logic prefers coords when present).
+  const geoLocationCode =
+    geoCity && geoCity in METRO_LOCATIONS ? METRO_LOCATIONS[geoCity] : null;
 
   try {
     const [row] = await db
@@ -76,6 +78,9 @@ export async function POST(
         targetUrl,
         geoCity,
         geoLocationCode,
+        geoLat: geoLat != null ? String(geoLat) : null,
+        geoLng: geoLng != null ? String(geoLng) : null,
+        geoFormatted: geoFormatted ?? null,
       })
       .returning();
     return NextResponse.json({ keyword: row }, { status: 201 });

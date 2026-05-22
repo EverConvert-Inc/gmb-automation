@@ -8,6 +8,7 @@ import {
   findOrganicRankForDomain,
   METRO_LOCATIONS,
   pullOrganicSerp,
+  type GeoTarget,
   type SerpOrganicItem,
 } from "./dataforseo";
 
@@ -95,9 +96,24 @@ export async function runSerpScan(
 
       const detection = detectCity(kw.keyword);
       const effectiveCity = detection.city ?? kw.geoCity ?? null;
-      const effectiveCode = effectiveCity
-        ? (METRO_LOCATIONS[effectiveCity] ?? kw.geoLocationCode ?? null)
-        : (kw.geoLocationCode ?? null);
+
+      // Prefer exact GPS coordinates (stored when the user picks a city
+      // via the geocoded text input). Fall back to the legacy
+      // location_code mapping for older rows that have geoLocationCode
+      // but no lat/lng yet.
+      let geoTarget: GeoTarget | null = null;
+      if (kw.geoLat != null && kw.geoLng != null) {
+        geoTarget = {
+          kind: "coord",
+          lat: Number(kw.geoLat),
+          lng: Number(kw.geoLng),
+        };
+      } else {
+        const code = effectiveCity
+          ? (METRO_LOCATIONS[effectiveCity] ?? kw.geoLocationCode ?? null)
+          : (kw.geoLocationCode ?? null);
+        if (code) geoTarget = { kind: "code", code };
+      }
 
       let geoMatch: { rank: number | null; url: string | null } = {
         rank: null,
@@ -108,10 +124,10 @@ export async function runSerpScan(
         url: null,
       };
 
-      if (effectiveCode) {
+      if (geoTarget) {
         let geoItems: SerpOrganicItem[] | null = null;
         try {
-          geoItems = await pullOrganicSerp(kw.keyword, effectiveCode);
+          geoItems = await pullOrganicSerp(kw.keyword, geoTarget);
         } catch (err) {
           throw new Error(`geo: ${(err as Error).message}`);
         }
@@ -125,7 +141,7 @@ export async function runSerpScan(
           try {
             bareItems = await pullOrganicSerp(
               detection.bareKeyword,
-              effectiveCode,
+              geoTarget,
             );
           } catch (err) {
             throw new Error(`geo-bare: ${(err as Error).message}`);
@@ -146,7 +162,8 @@ export async function runSerpScan(
         geoBareRank: geoBareMatch.rank,
         geoBareUrl: geoBareMatch.url,
         geoCity: effectiveCity,
-        geoLocationCode: effectiveCode,
+        geoLocationCode:
+          geoTarget?.kind === "code" ? geoTarget.code : null,
         checkedAt: new Date(),
       });
     },

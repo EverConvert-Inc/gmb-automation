@@ -4,7 +4,6 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KeywordManagementCard } from "@/components/keyword-management-card";
-import { METRO_LOCATIONS } from "@/lib/dataforseo";
 import { getClientBySlug } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -27,8 +26,6 @@ export default async function KeywordsPage({
   const { slug } = await params;
   const client = await getClientBySlug(slug);
   if (!client) notFound();
-
-  const cities = Object.keys(METRO_LOCATIONS).sort();
 
   return (
     <div className="space-y-6">
@@ -57,7 +54,6 @@ export default async function KeywordsPage({
       <KeywordManagementCard
         clientId={client.id}
         clientSlug={client.slug}
-        cities={cities}
       />
     </div>
   );

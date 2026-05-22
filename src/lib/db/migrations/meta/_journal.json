@@ -36,6 +36,13 @@
       "when": 1778537764968,
       "tag": "0004_previous_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779459354556,
+      "tag": "0005_fancy_banshee",
+      "breakpoints": true
     }
   ]
 }
