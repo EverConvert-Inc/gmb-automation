@@ -17,18 +17,27 @@ const sizes: Record<Size, string> = {
   lg: "h-10 px-6",
 };
 
+const baseClasses =
+  "inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50";
+
+// Shared button styling so we can apply it to a <Link> or any other element
+// without nesting <button> inside <a> (which produces a silent first-click
+// bug — the inner button absorbs the event but doesn't trigger navigation).
+export function buttonClasses(
+  variant: Variant = "default",
+  size: Size = "default",
+  className?: string,
+): string {
+  return cn(baseClasses, variants[variant], sizes[size], className);
+}
+
 export const Button = React.forwardRef<
   HTMLButtonElement,
   React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size }
 >(({ className, variant = "default", size = "default", ...props }, ref) => (
   <button
     ref={ref}
-    className={cn(
-      "inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
-      variants[variant],
-      sizes[size],
-      className,
-    )}
+    className={buttonClasses(variant, size, className)}
     {...props}
   />
 ));

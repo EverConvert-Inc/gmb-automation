@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
 import { KeywordManagementCard } from "@/components/keyword-management-card";
 import { getClientBySlug } from "@/lib/queries";
 
@@ -44,10 +44,11 @@ export default async function KeywordsPage({
             use &ldquo;Scan now&rdquo; for an ad-hoc check.
           </p>
         </div>
-        <Link href={`/clients/${client.slug}`}>
-          <Button variant="outline" size="sm">
-            View rankings
-          </Button>
+        <Link
+          href={`/clients/${client.slug}`}
+          className={buttonClasses("outline", "sm")}
+        >
+          View rankings
         </Link>
       </div>
 

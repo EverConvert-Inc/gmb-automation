@@ -3,13 +3,16 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { trackedKeywords } from "@/lib/db/schema";
-import { METRO_LOCATIONS } from "@/lib/dataforseo";
 
 export const runtime = "nodejs";
 
 const patchSchema = z.object({
+  keyword: z.string().trim().min(1).max(200).optional(),
   targetUrl: z.string().trim().url().optional(),
-  geoCity: z.string().trim().min(1).max(100).optional().nullable(),
+  geoCity: z.string().trim().min(1).max(100).optional(),
+  geoLat: z.number().min(-90).max(90).optional(),
+  geoLng: z.number().min(-180).max(180).optional(),
+  geoFormatted: z.string().trim().max(300).optional().nullable(),
   isActive: z.boolean().optional(),
 });
 
@@ -32,18 +35,18 @@ export async function PATCH(
     );
   }
   const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (parsed.data.keyword !== undefined) updates.keyword = parsed.data.keyword;
   if (parsed.data.targetUrl !== undefined) updates.targetUrl = parsed.data.targetUrl;
   if (parsed.data.isActive !== undefined) updates.isActive = parsed.data.isActive;
-  if (parsed.data.geoCity !== undefined) {
-    const city = parsed.data.geoCity;
-    if (city && !(city in METRO_LOCATIONS)) {
-      return NextResponse.json(
-        { error: `Unknown city '${city}'.` },
-        { status: 400 },
-      );
-    }
-    updates.geoCity = city ?? null;
-    updates.geoLocationCode = city ? METRO_LOCATIONS[city] : null;
+  if (parsed.data.geoCity !== undefined) updates.geoCity = parsed.data.geoCity;
+  if (parsed.data.geoLat !== undefined) {
+    updates.geoLat = parsed.data.geoLat != null ? String(parsed.data.geoLat) : null;
+  }
+  if (parsed.data.geoLng !== undefined) {
+    updates.geoLng = parsed.data.geoLng != null ? String(parsed.data.geoLng) : null;
+  }
+  if (parsed.data.geoFormatted !== undefined) {
+    updates.geoFormatted = parsed.data.geoFormatted ?? null;
   }
 
   const [row] = await db

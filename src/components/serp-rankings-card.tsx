@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { AlertTriangle, KeyRound, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import type { RankAnnotation, RankingsOverviewRow } from "@/lib/queries";
@@ -84,10 +84,11 @@ export function SerpRankingsCard({
                 check Google every Thursday and surface in-city ranks here.
               </p>
             </div>
-            <Link href={`/clients/${clientSlug}/keywords`}>
-              <Button size="sm" variant="outline">
-                Manage keywords
-              </Button>
+            <Link
+              href={`/clients/${clientSlug}/keywords`}
+              className={buttonClasses("outline", "sm")}
+            >
+              Manage keywords
             </Link>
           </div>
         </CardContent>
@@ -124,10 +125,11 @@ export function SerpRankingsCard({
               with the city name stripped. Lower number = closer to #1.
             </InfoTooltip>
           </span>
-          <Link href={`/clients/${clientSlug}/keywords`}>
-            <Button size="sm" variant="outline">
-              Manage keywords
-            </Button>
+          <Link
+            href={`/clients/${clientSlug}/keywords`}
+            className={buttonClasses("outline", "sm")}
+          >
+            Manage keywords
           </Link>
         </CardTitle>
       </CardHeader>

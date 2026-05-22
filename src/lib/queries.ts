@@ -136,6 +136,7 @@ export type LocationCardRow = {
   reviewCount: number;
   daysSinceLastReview: number | null;
   velocity: Velocity;
+  gbpConnected: boolean;
   latestScan: { id: string; completedAt: Date | null; arp: number | null; solv: number | null } | null;
 };
 
@@ -206,6 +207,7 @@ export async function listLocationsForClient(clientId: string): Promise<Location
           this30: reviewAgg[0]?.this30 ?? 0,
           prior30: reviewAgg[0]?.prior30 ?? 0,
         },
+        gbpConnected: l.gbpOauthTokenId !== null,
         latestScan: latestScan
           ? {
               id: latestScan.id,

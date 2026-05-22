@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { RowActions } from "@/components/row-actions";
 import { Sparkline, VelocityDelta } from "@/components/sparkline";
@@ -93,8 +93,11 @@ export default async function LocationDetailPage({
           {location.gbpOauthTokenId ? (
             <Badge variant="success">GBP connected</Badge>
           ) : (
-            <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
-              <Button variant="outline">Connect Google Business Profile</Button>
+            <Link
+              href={`/api/oauth/google/start?locationId=${location.id}`}
+              className={buttonClasses("outline")}
+            >
+              Connect Google Business Profile
             </Link>
           )}
           <RowActions

@@ -4,7 +4,7 @@ import { Fragment, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ChevronRight, ExternalLink, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { DeltaPill, NumericDeltaPill } from "@/components/charts";
 import { RowActions } from "@/components/row-actions";
@@ -108,15 +108,16 @@ export function ClientsTable({
                       className="flex items-center justify-end gap-1"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <Link href={`/clients/${c.slug}`}>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="whitespace-nowrap"
-                        >
-                          View client
-                          <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-                        </Button>
+                      <Link
+                        href={`/clients/${c.slug}`}
+                        className={buttonClasses(
+                          "outline",
+                          "sm",
+                          "whitespace-nowrap",
+                        )}
+                      >
+                        View client
+                        <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
                       </Link>
                       <RowActions
                         entity="client"

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { LocationSwitcher } from "@/components/location-switcher";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
@@ -75,19 +75,21 @@ export default async function ClientDashboardPage({
             <h1 className="text-2xl font-semibold">{client.name}</h1>
             <p className="text-sm text-muted-foreground">No locations yet</p>
           </div>
-          <Link href={`/clients/${client.slug}/locations/new`}>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" /> Add location
-            </Button>
+          <Link
+            href={`/clients/${client.slug}/locations/new`}
+            className={buttonClasses()}
+          >
+            <Plus className="mr-2 h-4 w-4" /> Add location
           </Link>
         </div>
         <Card>
           <CardContent className="space-y-3 py-12 text-center text-sm text-muted-foreground">
             <p>No locations for this client yet.</p>
-            <Link href={`/clients/${client.slug}/locations/new`}>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> Add the first location
-              </Button>
+            <Link
+              href={`/clients/${client.slug}/locations/new`}
+              className={buttonClasses()}
+            >
+              <Plus className="mr-2 h-4 w-4" /> Add the first location
             </Link>
           </CardContent>
         </Card>
@@ -160,11 +162,15 @@ export default async function ClientDashboardPage({
           </div>
         </div>
         <div className="flex items-start gap-3">
-          <SyncAllLocationsButton clientId={client.id} />
-          <Link href={`/clients/${client.slug}/locations/new`}>
-            <Button variant="outline">
-              <Plus className="mr-2 h-4 w-4" /> Add location
-            </Button>
+          <SyncAllLocationsButton
+            clientId={client.id}
+            connectedCount={locs.filter((l) => l.gbpConnected).length}
+          />
+          <Link
+            href={`/clients/${client.slug}/locations/new`}
+            className={buttonClasses("outline")}
+          >
+            <Plus className="mr-2 h-4 w-4" /> Add location
           </Link>
         </div>
       </div>
@@ -241,8 +247,11 @@ export default async function ClientDashboardPage({
             {hasGbpConnected ? (
               <Badge variant="success">GBP connected</Badge>
             ) : (
-              <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
-                <Button variant="outline">Connect Google Business Profile</Button>
+              <Link
+                href={`/api/oauth/google/start?locationId=${location.id}`}
+                className={buttonClasses("outline")}
+              >
+                Connect Google Business Profile
               </Link>
             )}
           </div>
@@ -348,10 +357,11 @@ export default async function ClientDashboardPage({
             <div className="space-y-3 py-6 text-center text-sm text-muted-foreground">
               <p>No reviews yet for this location.</p>
               {!hasGbpConnected && (
-                <Link href={`/api/oauth/google/start?locationId=${location.id}`}>
-                  <Button size="sm" variant="outline">
-                    Connect Google Business Profile to sync reviews
-                  </Button>
+                <Link
+                  href={`/api/oauth/google/start?locationId=${location.id}`}
+                  className={buttonClasses("outline", "sm")}
+                >
+                  Connect Google Business Profile to sync reviews
                 </Link>
               )}
               {hasGbpConnected && hasNoReviews && (

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
 import { ClientsTable } from "@/components/clients-table";
 import {
   listClientsWithRollup,
@@ -49,20 +49,16 @@ export default async function ClientListPage() {
             {rows.length} clients · performance summary across all client locations
           </p>
         </div>
-        <Link href="/clients/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" /> New client
-          </Button>
+        <Link href="/clients/new" className={buttonClasses()}>
+          <Plus className="mr-2 h-4 w-4" /> New client
         </Link>
       </div>
       {rows.length === 0 ? (
         <Card>
           <CardContent className="space-y-3 py-12 text-center text-sm text-muted-foreground">
             <p>No clients yet.</p>
-            <Link href="/clients/new">
-              <Button>
-                <Plus className="mr-2 h-4 w-4" /> Create your first client
-              </Button>
+            <Link href="/clients/new" className={buttonClasses()}>
+              <Plus className="mr-2 h-4 w-4" /> Create your first client
             </Link>
           </CardContent>
         </Card>

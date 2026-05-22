@@ -70,7 +70,7 @@ function ClientBadge({ name, slug }: { name: string; slug: string }) {
   return (
     <Link
       href={`/clients/${slug}`}
-      className={`inline-flex max-w-[14ch] items-center truncate rounded-full border px-2 py-0.5 text-xs font-medium ${clientColor(slug)} hover:opacity-80`}
+      className={`inline-flex max-w-[28ch] items-center truncate whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${clientColor(slug)} hover:opacity-80`}
       title={name}
     >
       {name}

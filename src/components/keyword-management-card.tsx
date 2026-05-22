@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, Loader2, MapPin, RefreshCw, Trash2 } from "lucide-react";
+import { KeyRound, Loader2, MapPin, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/form";
@@ -43,6 +43,11 @@ export function KeywordManagementCard({
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [banner, setBanner] = useState<Banner | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editKeyword, setEditKeyword] = useState("");
+  const [editTargetUrl, setEditTargetUrl] = useState("");
+  const [editGeoCity, setEditGeoCity] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
   const [, startRefresh] = useTransition();
 
   async function refreshList(includeInactive: boolean) {
@@ -123,6 +128,89 @@ export function KeywordManagementCard({
       setBanner({ kind: "error", message: (err as Error).message });
     } finally {
       setAdding(false);
+    }
+  }
+
+  function startEdit(row: TrackedKeywordRow) {
+    setEditingId(row.id);
+    setEditKeyword(row.keyword);
+    setEditTargetUrl(row.targetUrl);
+    setEditGeoCity(row.geoCity ?? "");
+    setBanner(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditKeyword("");
+    setEditTargetUrl("");
+    setEditGeoCity("");
+  }
+
+  async function saveEdit(row: TrackedKeywordRow) {
+    setEditSaving(true);
+    setBanner(null);
+    try {
+      // Only re-geocode if the city actually changed — saves a Places call
+      // when the user is only fixing the keyword text or target URL.
+      const cityChanged = editGeoCity.trim() !== (row.geoCity ?? "").trim();
+      let geo: { lat: number | null; lng: number | null; formatted: string | null } = {
+        lat: null,
+        lng: null,
+        formatted: null,
+      };
+      if (cityChanged && editGeoCity.trim()) {
+        const geoRes = await fetch(
+          `/api/places/search?q=${encodeURIComponent(editGeoCity.trim())}`,
+        );
+        if (!geoRes.ok) throw new Error(`Couldn't geocode "${editGeoCity}"`);
+        const geoBody = (await geoRes.json()) as {
+          results?: Array<{ formattedAddress?: string; lat: number; lng: number }>;
+        };
+        const first = geoBody.results?.[0];
+        if (!first) throw new Error(`No location found for "${editGeoCity}"`);
+        geo = {
+          lat: first.lat,
+          lng: first.lng,
+          formatted: first.formattedAddress ?? null,
+        };
+      }
+
+      const payload: Record<string, unknown> = {};
+      if (editKeyword.trim() !== row.keyword) payload.keyword = editKeyword.trim();
+      if (editTargetUrl.trim() !== row.targetUrl) payload.targetUrl = editTargetUrl.trim();
+      if (cityChanged) {
+        payload.geoCity = editGeoCity.trim() || row.geoCity;
+        if (geo.lat != null) {
+          payload.geoLat = geo.lat;
+          payload.geoLng = geo.lng;
+          payload.geoFormatted = geo.formatted;
+        }
+      }
+
+      if (Object.keys(payload).length === 0) {
+        cancelEdit();
+        return;
+      }
+
+      const res = await fetch(
+        `/api/clients/${clientId}/keywords/${row.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      cancelEdit();
+      await refreshList(showInactive);
+      setBanner({ kind: "success", message: "Keyword updated." });
+    } catch (err) {
+      setBanner({ kind: "error", message: (err as Error).message });
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -325,81 +413,149 @@ export function KeywordManagementCard({
                   </td>
                 </tr>
               )}
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="px-3 py-2 font-medium">{r.keyword}</td>
-                  <td
-                    className="px-3 py-2 text-muted-foreground"
-                    title={r.targetUrl}
-                  >
-                    <span className="block max-w-[28ch] truncate">
-                      {r.targetUrl.replace(/^https?:\/\//, "")}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {r.geoCity ? (
-                      <div className="space-y-0.5">
-                        <div className="inline-flex items-center gap-1 text-foreground">
-                          <MapPin className="h-3 w-3" />
-                          {r.geoCity}
-                        </div>
-                        {r.geoFormatted && (
-                          <div
-                            className="text-[10px] leading-tight"
-                            title={
-                              r.geoLat && r.geoLng
-                                ? `Search from ${r.geoLat}, ${r.geoLng}`
-                                : undefined
-                            }
+              {rows.map((r) => {
+                if (editingId === r.id) {
+                  return (
+                    <tr key={r.id} className="border-b bg-muted/10 last:border-0">
+                      <td className="px-3 py-2">
+                        <Input
+                          value={editKeyword}
+                          onChange={(e) => setEditKeyword(e.target.value)}
+                          className="h-8 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input
+                          type="url"
+                          value={editTargetUrl}
+                          onChange={(e) => setEditTargetUrl(e.target.value)}
+                          className="h-8 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input
+                          value={editGeoCity}
+                          onChange={(e) => setEditGeoCity(e.target.value)}
+                          placeholder="Cumming, GA"
+                          className="h-8 text-sm"
+                        />
+                        {r.geoFormatted && editGeoCity === (r.geoCity ?? "") && (
+                          <div className="mt-0.5 text-[10px] text-muted-foreground">
+                            currently: {r.geoFormatted}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2" colSpan={2}>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => saveEdit(r)}
+                            disabled={editSaving}
                           >
-                            {r.geoFormatted}
+                            {editSaving ? "Saving…" : "Save"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={cancelEdit}
+                            disabled={editSaving}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+                return (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="px-3 py-2 font-medium">{r.keyword}</td>
+                    <td
+                      className="px-3 py-2 text-muted-foreground"
+                      title={r.targetUrl}
+                    >
+                      <span className="block max-w-[28ch] truncate">
+                        {r.targetUrl.replace(/^https?:\/\//, "")}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {r.geoCity ? (
+                        <div className="space-y-0.5">
+                          <div className="inline-flex items-center gap-1 text-foreground">
+                            <MapPin className="h-3 w-3" />
+                            {r.geoCity}
                           </div>
-                        )}
-                        {r.geoLat && r.geoLng && (
-                          <div className="text-[10px] leading-tight tabular-nums opacity-60">
-                            {Number(r.geoLat).toFixed(4)},{" "}
-                            {Number(r.geoLng).toFixed(4)}
-                          </div>
-                        )}
+                          {r.geoFormatted && (
+                            <div
+                              className="text-[10px] leading-tight"
+                              title={
+                                r.geoLat && r.geoLng
+                                  ? `Search from ${r.geoLat}, ${r.geoLng}`
+                                  : undefined
+                              }
+                            >
+                              {r.geoFormatted}
+                            </div>
+                          )}
+                          {r.geoLat && r.geoLng && (
+                            <div className="text-[10px] leading-tight tabular-nums opacity-60">
+                              {Number(r.geoLat).toFixed(4)},{" "}
+                              {Number(r.geoLng).toFixed(4)}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs italic">no geo</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.isActive ? (
+                        <span className="text-xs uppercase tracking-wide text-green-700">
+                          active
+                        </span>
+                      ) : (
+                        <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                          paused
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="inline-flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => startEdit(r)}
+                          aria-label="Edit"
+                          title="Edit"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleActive(r)}
+                        >
+                          {r.isActive ? "Pause" : "Resume"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteRow(r)}
+                          aria-label="Delete"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
-                    ) : (
-                      <span className="text-xs italic">national</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.isActive ? (
-                      <span className="text-xs uppercase tracking-wide text-green-700">
-                        active
-                      </span>
-                    ) : (
-                      <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                        paused
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => toggleActive(r)}
-                      >
-                        {r.isActive ? "Pause" : "Resume"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteRow(r)}
-                        aria-label="Delete"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

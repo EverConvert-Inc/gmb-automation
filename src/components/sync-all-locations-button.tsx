@@ -13,7 +13,13 @@ type SyncAllResponse = {
   error?: string;
 };
 
-export function SyncAllLocationsButton({ clientId }: { clientId: string }) {
+export function SyncAllLocationsButton({
+  clientId,
+  connectedCount,
+}: {
+  clientId: string;
+  connectedCount: number;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [pendingRefresh, startRefresh] = useTransition();
@@ -63,20 +69,31 @@ export function SyncAllLocationsButton({ clientId }: { clientId: string }) {
     }
   }
 
+  const noneConnected = connectedCount === 0;
+
   return (
     <div className="flex flex-col items-end gap-1">
       <Button
         variant="outline"
         size="sm"
         onClick={run}
-        disabled={busy || pendingRefresh}
+        disabled={busy || pendingRefresh || noneConnected}
+        title={
+          noneConnected
+            ? "No locations have Google Business Profile connected yet. Click \"Connect Google Business Profile\" on any location to enable syncing."
+            : undefined
+        }
       >
         {busy ? (
           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
         ) : (
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
         )}
-        {busy ? "Syncing all locations…" : "Sync all locations"}
+        {busy
+          ? "Syncing all locations…"
+          : noneConnected
+            ? "Sync all locations · GBP not connected"
+            : "Sync all locations"}
       </Button>
       {okMessage && <span className="text-xs text-green-700">{okMessage}</span>}
       {errorMessage && <span className="text-xs text-red-600">{errorMessage}</span>}
