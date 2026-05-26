@@ -7,9 +7,9 @@ import { buttonClasses } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
 import { LocationSwitcher } from "@/components/location-switcher";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
+import { ReviewsTriageCard } from "@/components/reviews-triage-card";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
 import { StarBar } from "@/components/star-bar";
-import { SyncReviewsButton } from "@/components/sync-reviews-button";
 import { SyncAllLocationsButton } from "@/components/sync-all-locations-button";
 import {
   getActiveScanForLocation,
@@ -25,8 +25,8 @@ import {
 } from "@/lib/queries";
 import { SerpRankingsCard } from "@/components/serp-rankings-card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
-import { formatRelativeDate, formatRelativeTime } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, Map, MessageSquare, Plus } from "lucide-react";
+import { formatRelativeTime } from "@/lib/utils";
+import { AlertTriangle, CheckCircle2, Map, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -146,7 +146,6 @@ export default async function ClientDashboardPage({
   }));
   const latestScanKeywordIds = Array.from(new Set(points.map((p) => p.keywordId)));
   const hasGbpConnected = location.gbpOauthTokenId !== null;
-  const hasNoReviews = reviewCount === 0;
 
   return (
     <div className="space-y-6">
@@ -391,54 +390,11 @@ export default async function ClientDashboardPage({
         </CardContent>
       </Card>
 
-      <Card id="reviews">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-brand" />
-            Recent reviews
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {recentReviews.length === 0 ? (
-            <div className="space-y-3 py-6 text-center text-sm text-muted-foreground">
-              <p>No reviews yet for this location.</p>
-              {!hasGbpConnected && (
-                <Link
-                  href={`/api/oauth/google/start?locationId=${location.id}`}
-                  className={buttonClasses("outline", "sm")}
-                >
-                  Connect Google Business Profile to sync reviews
-                </Link>
-              )}
-              {hasGbpConnected && hasNoReviews && (
-                <div className="flex flex-col items-center gap-2">
-                  <p className="text-xs">
-                    Reviews sync automatically every day. Use the button below
-                    to pull them now.
-                  </p>
-                  <SyncReviewsButton locationId={location.id} />
-                </div>
-              )}
-            </div>
-          ) : (
-            <ul className="space-y-3">
-              {recentReviews.map((r) => (
-                <li key={r.id} className="border-b pb-3 last:border-0">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium">{r.reviewerName ?? "Anonymous"}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {r.rating}★ · {formatRelativeDate(r.createdAt)}
-                    </div>
-                  </div>
-                  {r.text && (
-                    <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">{r.text}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <ReviewsTriageCard
+        reviews={recentReviews}
+        locationId={location.id}
+        hasGbpConnected={hasGbpConnected}
+      />
 
       <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
     </div>

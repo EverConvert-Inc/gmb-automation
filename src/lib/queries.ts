@@ -318,7 +318,6 @@ export async function getLocationWithLatestScan(locationId: string) {
   const recentReviews = await db.query.reviews.findMany({
     where: eq(reviews.locationId, location.id),
     orderBy: desc(reviews.createdAt),
-    limit: 10,
   });
 
   const reviewAgg = await db

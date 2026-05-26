@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
+import { ReviewsTriageCard } from "@/components/reviews-triage-card";
 import { RowActions } from "@/components/row-actions";
 import { Sparkline, VelocityDelta } from "@/components/sparkline";
 import { StarBar } from "@/components/star-bar";
@@ -233,32 +234,11 @@ export default async function LocationDetailPage({
           </CardContent>
         </Card>
 
-        <Card id="reviews">
-          <CardHeader>
-            <CardTitle>Recent reviews</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentReviews.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No reviews yet.</div>
-            ) : (
-              <ul className="space-y-3">
-                {recentReviews.map((r) => (
-                  <li key={r.id} className="border-b pb-3 last:border-0">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-medium">{r.reviewerName ?? "Anonymous"}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {r.rating}★ · {formatRelativeDate(r.createdAt)}
-                      </div>
-                    </div>
-                    {r.text && (
-                      <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">{r.text}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        <ReviewsTriageCard
+          reviews={recentReviews}
+          locationId={location.id}
+          hasGbpConnected={location.gbpOauthTokenId !== null}
+        />
       </div>
     </div>
   );
