@@ -33,7 +33,10 @@ export function nextFailurePollDate(
   return new Date(from.getTime() + BACKOFF_MINUTES[idx] * 60_000);
 }
 
-export async function pollReviewsForLocation(locationId: string): Promise<{
+export async function pollReviewsForLocation(
+  locationId: string,
+  opts: { full?: boolean } = {},
+): Promise<{
   ingested: number;
   newLowRated: Array<{ rating: number; reviewerName: string | null; text: string | null }>;
 }> {
@@ -55,7 +58,10 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       accountId: location.gbpAccountId,
       locationId: location.gbpLocationId,
       refreshTokenEncrypted: cred.refreshTokenEncrypted,
-      updatedSince: location.lastPolledAt ?? undefined,
+      // Full re-sync ignores lastPolledAt so we re-walk every review on GBP.
+      // Used by the manual sync buttons so owner replies (which may not bump
+      // the review's updateTime) and any other drift get backfilled.
+      updatedSince: opts.full ? undefined : (location.lastPolledAt ?? undefined),
     });
 
     const newLowRated: Array<{
@@ -89,6 +95,8 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
           reviewerPhotoUrl: r.reviewerPhotoUrl,
           createdAt: new Date(r.createdAt),
           updatedAt: new Date(r.updatedAt),
+          replyText: r.reply?.text ?? null,
+          repliedAt: r.reply ? new Date(r.reply.updatedAt) : null,
         });
         if (r.rating <= 3) {
           newLowRated.push({ rating: r.rating, reviewerName: r.reviewerName, text: r.text });

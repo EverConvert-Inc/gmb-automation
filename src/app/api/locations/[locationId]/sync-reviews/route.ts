@@ -71,7 +71,7 @@ export async function POST(
   let performanceError: string | null = null;
 
   try {
-    const reviewResult = await pollReviewsForLocation(locationId);
+    const reviewResult = await pollReviewsForLocation(locationId, { full: true });
     ingested = reviewResult.ingested;
   } catch (err) {
     return NextResponse.json(

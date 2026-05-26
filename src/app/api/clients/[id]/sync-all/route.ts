@@ -67,7 +67,7 @@ async function syncOneLocation(
   }
 
   try {
-    const r = await pollReviewsForLocation(loc.id);
+    const r = await pollReviewsForLocation(loc.id, { full: true });
     result.ingested = r.ingested;
   } catch (err) {
     result.error = (err as Error).message;
