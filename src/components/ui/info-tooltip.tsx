@@ -5,10 +5,17 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
+// w-56 in Tailwind = 14rem = 224px. Hard-coded so we can clamp the
+// portal-rendered bubble to the viewport without having to measure it.
+const BUBBLE_WIDTH = 224;
+const VIEWPORT_PADDING = 8;
+
 // Portal-rendered tooltip. The trigger stays inline; the bubble is appended to
 // document.body on open so it can escape `overflow:hidden` / `overflow-x-auto`
 // ancestors (e.g. table scroll wrappers). Position is recomputed from the
-// trigger's bounding rect on open and on scroll/resize while open.
+// trigger's bounding rect on open and on scroll/resize while open, and the
+// left coordinate is clamped so the bubble stays inside the viewport even
+// when the trigger sits near the right edge of the screen.
 export function InfoTooltip({
   children,
   side = "top",
@@ -35,9 +42,16 @@ export function InfoTooltip({
     const el = triggerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
+    const triggerCenter = r.left + r.width / 2;
+    const idealLeft = triggerCenter - BUBBLE_WIDTH / 2;
+    const maxLeft = window.innerWidth - BUBBLE_WIDTH - VIEWPORT_PADDING;
+    const clampedLeft = Math.max(
+      VIEWPORT_PADDING,
+      Math.min(idealLeft, maxLeft),
+    );
     setCoords({
       top: side === "top" ? r.top : r.bottom,
-      left: r.left + r.width / 2,
+      left: clampedLeft,
     });
   };
 
@@ -68,12 +82,13 @@ export function InfoTooltip({
               position: "fixed",
               top: coords.top,
               left: coords.left,
+              width: BUBBLE_WIDTH,
               transform:
                 side === "top"
-                  ? "translate(-50%, calc(-100% - 8px))"
-                  : "translate(-50%, 8px)",
+                  ? "translateY(calc(-100% - 8px))"
+                  : "translateY(8px)",
             }}
-            className="pointer-events-none z-[1000] w-56 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-normal normal-case leading-snug text-slate-50 shadow-lg"
+            className="pointer-events-none z-[1000] rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-normal normal-case leading-snug text-slate-50 shadow-lg"
           >
             {children}
           </span>,
