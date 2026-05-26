@@ -182,15 +182,25 @@ export default async function ClientDashboardPage({
       />
 
       {justAddedThis && (
-        <div className="flex items-start gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+        <div className="flex flex-col gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900 sm:flex-row sm:items-start">
           <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
           <div className="flex-1">
             <div className="font-medium">{location.name} added.</div>
             <div className="mt-0.5 text-green-800">
-              Run a scan below to populate the heat map. Reviews will sync once
-              Google Business Profile is connected.
+              Run a scan below to populate the heat map.
+              {!hasGbpConnected
+                ? " Connect Google Business Profile to start syncing reviews."
+                : " Reviews will sync from Google shortly."}
             </div>
           </div>
+          {!hasGbpConnected && (
+            <Link
+              href={`/api/oauth/google/start?locationId=${location.id}`}
+              className={buttonClasses("default", "sm")}
+            >
+              Connect Google Business Profile
+            </Link>
+          )}
         </div>
       )}
 

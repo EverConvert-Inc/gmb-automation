@@ -26,6 +26,7 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
   const [keywordsText, setKeywordsText] = useState("");
   const [gridSize, setGridSize] = useState<number>(11);
   const [radiusMiles, setRadiusMiles] = useState<number>(5);
+  const [connectGbpAfter, setConnectGbpAfter] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -94,6 +95,16 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
       const created = (await res.json().catch(() => null)) as { id?: string } | null;
+      // Hand off directly to Google's OAuth flow when requested — the
+      // callback already redirects back to /clients/<slug> with a banner.
+      // Use a full-page navigation since /api/oauth/google/start is a
+      // server route that 302s out of the Next app.
+      if (created?.id && connectGbpAfter) {
+        window.location.assign(
+          `/api/oauth/google/start?locationId=${created.id}`,
+        );
+        return;
+      }
       const redirectTo = created?.id
         ? `/clients/${clientSlug}?location=${created.id}&just_added=1`
         : `/clients/${clientSlug}`;
@@ -217,6 +228,27 @@ export function NewLocationForm({ clientId, clientSlug }: { clientId: string; cl
               />
             </div>
           </div>
+
+          <label className="flex items-start gap-2 rounded-md border bg-background p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={connectGbpAfter}
+              onChange={(e) => setConnectGbpAfter(e.target.checked)}
+            />
+            <span className="flex-1">
+              <span className="font-medium">
+                Connect Google Business Profile after creating
+              </span>
+              <span className="ml-1 text-xs text-muted-foreground">
+                (recommended)
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                We&apos;ll send you to Google to grant access so reviews can
+                sync. You can also do this later from the client page.
+              </span>
+            </span>
+          </label>
         </div>
       )}
 
