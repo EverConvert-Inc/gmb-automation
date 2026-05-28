@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Card, CardContent } from "@/components/ui/card";
+import { Clock, Crosshair, Grid3x3, TrendingUp } from "lucide-react";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { StatTile } from "@/components/ui/stat-tile";
 import { HeatMapKeywordTabs, type KeywordTab } from "./heat-map-keyword-tabs";
 import { computeScanMetrics } from "@/lib/metrics";
 import { METRIC_DESCRIPTIONS } from "@/lib/metric-descriptions";
@@ -215,25 +216,47 @@ export function HeatMapClient({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
-        <Stat
-          label="ARP"
-          info={METRIC_DESCRIPTIONS.arp}
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              ARP
+              <InfoTooltip>{METRIC_DESCRIPTIONS.arp}</InfoTooltip>
+            </span>
+          }
           value={metrics.arp !== null ? metrics.arp.toFixed(1) : "—"}
+          icon={<Crosshair className="h-4 w-4" />}
+          tone="brand"
         />
-        <Stat
-          label="SoLV"
-          info={METRIC_DESCRIPTIONS.solv}
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              SoLV
+              <InfoTooltip>{METRIC_DESCRIPTIONS.solv}</InfoTooltip>
+            </span>
+          }
           value={metrics.totalPoints ? `${metrics.solv.toFixed(0)}%` : "—"}
+          icon={<TrendingUp className="h-4 w-4" />}
+          tone="brand"
         />
-        <Stat
-          label="Coverage"
-          info={METRIC_DESCRIPTIONS.coverage}
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              Coverage
+              <InfoTooltip>{METRIC_DESCRIPTIONS.coverage}</InfoTooltip>
+            </span>
+          }
           value={metrics.totalPoints ? `${metrics.coverage.toFixed(0)}%` : "—"}
+          icon={<Grid3x3 className="h-4 w-4" />}
         />
-        <Stat
-          label="Last scan"
-          info={METRIC_DESCRIPTIONS.lastScan}
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              Last scan
+              <InfoTooltip>{METRIC_DESCRIPTIONS.lastScan}</InfoTooltip>
+            </span>
+          }
           value={completedAt ? formatRelativeDate(completedAt) : "—"}
+          icon={<Clock className="h-4 w-4" />}
         />
       </div>
 
@@ -321,27 +344,6 @@ function HeatMapLegend() {
   );
 }
 
-function Stat({
-  label,
-  value,
-  info,
-}: {
-  label: string;
-  value: string;
-  info?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-1.5 text-xs uppercase text-muted-foreground">
-          <span>{label}</span>
-          {info && <InfoTooltip>{info}</InfoTooltip>}
-        </div>
-        <div className="mt-1 text-2xl font-semibold">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function ScanPicker({
   scans,

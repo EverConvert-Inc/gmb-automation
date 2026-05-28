@@ -36,6 +36,39 @@
 
     --radius: 0.625rem;
   }
+
+  .dark {
+    /* Surface — deep neutral with a hint of blue so cards feel premium
+       rather than flat black. Card is one stop lighter than the page so
+       it floats. */
+    --background: 222 18% 8%;          /* ~#10131a */
+    --foreground: 210 20% 96%;         /* ~#f0f3f7 */
+    --card: 222 16% 12%;               /* ~#181c25 */
+    --card-foreground: 210 20% 96%;
+    --muted: 222 14% 17%;              /* ~#222732 */
+    --muted-foreground: 215 14% 65%;
+    --border: 222 14% 20%;             /* ~#2a303d */
+    --input: 222 14% 20%;
+    --accent: 222 14% 17%;
+    --accent-foreground: 210 20% 96%;
+    --secondary: 222 14% 17%;
+    --secondary-foreground: 210 20% 96%;
+
+    /* Brand stays the same green — it reads well on dark and keeps EC
+       identity consistent across themes. */
+    --brand: 98 46% 53%;
+    --brand-foreground: 0 0% 8%;
+    --brand-dark: 0 0% 4%;
+    --brand-dark-foreground: 0 0% 100%;
+    --brand-muted: 98 30% 15%;
+
+    --primary: 98 46% 53%;
+    --primary-foreground: 0 0% 8%;
+
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --ring: 98 46% 53%;
+  }
 }
 
 @layer base {
@@ -48,5 +81,29 @@
   h1, h2 {
     font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
     letter-spacing: -0.01em;
+  }
+}
+
+@layer utilities {
+  /* Brand-tinted gradient surface — used by stat tiles and elevated cards
+     to lift them off the page. Subtle in light, slightly more visible in
+     dark mode where flat surfaces feel especially lifeless. */
+  .surface-elevated {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--card)) 0%,
+      hsl(var(--muted) / 0.5) 100%
+    );
+  }
+  .surface-brand-tint {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--brand) / 0.08) 0%,
+      hsl(var(--card)) 50%
+    );
+  }
+  .ring-brand-soft {
+    box-shadow: 0 0 0 1px hsl(var(--brand) / 0.18),
+      0 1px 2px 0 hsl(0 0% 0% / 0.04);
   }
 }

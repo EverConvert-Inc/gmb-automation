@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, Oxygen } from "next/font/google";
-import { Toaster } from "sonner";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import { AppShell } from "@/components/app-shell";
+import { ThemeProvider } from "@/components/theme-provider";
+import { ThemedToaster } from "@/components/themed-toaster";
 
 const sans = Inter({
   subsets: ["latin"],
@@ -32,15 +33,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${sans.variable} ${display.variable}`}>
+    <html
+      lang="en"
+      className={`${sans.variable} ${display.variable}`}
+      suppressHydrationWarning
+    >
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <AppShell>{children}</AppShell>
-        <Toaster
-          position="bottom-right"
-          richColors
-          closeButton
-          toastOptions={{ duration: 5000 }}
-        />
+        <ThemeProvider>
+          <AppShell>{children}</AppShell>
+          <ThemedToaster />
+        </ThemeProvider>
       </body>
     </html>
   );

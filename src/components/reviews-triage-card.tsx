@@ -2,10 +2,19 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, MessageSquare, Star } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  MessageSquare,
+  Percent,
+  Star,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionCard } from "@/components/ui/section-card";
+import { StatTile } from "@/components/ui/stat-tile";
 import { SyncReviewsButton } from "@/components/sync-reviews-button";
 import { formatRelativeDate } from "@/lib/utils";
 
@@ -119,63 +128,63 @@ export function ReviewsTriageCard({
 
   if (reviews.length === 0) {
     return (
-      <Card id="reviews">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-brand" />
-            Reviews
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3 py-6 text-center text-sm text-muted-foreground">
-            <p>No reviews yet for this location.</p>
-            {!hasGbpConnected && (
-              <Link
-                href={`/api/oauth/google/start?locationId=${locationId}`}
-                className={buttonClasses("outline", "sm")}
-              >
-                Connect Google Business Profile to sync reviews
-              </Link>
-            )}
-            {hasGbpConnected && (
-              <div className="flex flex-col items-center gap-2">
-                <p className="text-xs">
-                  Reviews sync automatically every day. Use the button below
-                  to pull them now.
-                </p>
-                <SyncReviewsButton locationId={locationId} />
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <SectionCard
+        id="reviews"
+        icon={<MessageSquare className="h-4 w-4" />}
+        title="Reviews"
+        eyebrow="Reputation triage"
+      >
+        <div className="space-y-3 py-6 text-center text-sm text-muted-foreground">
+          <p>No reviews yet for this location.</p>
+          {!hasGbpConnected && (
+            <Link
+              href={`/api/oauth/google/start?locationId=${locationId}`}
+              className={buttonClasses("outline", "sm")}
+            >
+              Connect Google Business Profile to sync reviews
+            </Link>
+          )}
+          {hasGbpConnected && (
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-xs">
+                Reviews sync automatically every day. Use the button below to
+                pull them now.
+              </p>
+              <SyncReviewsButton locationId={locationId} />
+            </div>
+          )}
+        </div>
+      </SectionCard>
     );
   }
 
   return (
-    <Card id="reviews">
-      <CardHeader className="border-b border-border/60 pb-4">
-        <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <span className="inline-flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-brand" />
-            Reviews
-          </span>
-          {hasGbpConnected && <SyncReviewsButton locationId={locationId} />}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 pt-4">
-        <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-          <StatTile label="Total" value={String(stats.total)} />
+    <SectionCard
+      id="reviews"
+      icon={<MessageSquare className="h-4 w-4" />}
+      title="Reviews"
+      eyebrow="Reputation triage"
+      actions={hasGbpConnected ? <SyncReviewsButton locationId={locationId} /> : null}
+      contentClassName="space-y-4 p-5"
+    >
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatTile
+            label="Total"
+            value={String(stats.total)}
+            icon={<MessageSquare className="h-4 w-4" />}
+          />
           <StatTile
             label="Unreplied"
             value={String(stats.unrepliedCount)}
             tone={stats.unrepliedCount > 0 ? "amber" : "default"}
+            icon={<AlertTriangle className="h-4 w-4" />}
           />
           <StatTile
             label="Needs attention"
             sublabel="≤3★ unreplied"
             value={String(stats.lowStarUnrepliedCount)}
             tone={stats.lowStarUnrepliedCount > 0 ? "red" : "default"}
+            icon={<AlertTriangle className="h-4 w-4" />}
           />
           <StatTile
             label="Reply rate"
@@ -183,6 +192,14 @@ export function ReviewsTriageCard({
               stats.replyRate == null
                 ? "—"
                 : `${Math.round(stats.replyRate * 100)}%`
+            }
+            tone="brand"
+            icon={
+              stats.replyRate === 1 ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : (
+                <Percent className="h-4 w-4" />
+              )
             }
           />
         </div>
@@ -413,36 +430,7 @@ export function ReviewsTriageCard({
             </div>
           </div>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function StatTile({
-  label,
-  value,
-  sublabel,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  sublabel?: string;
-  tone?: "default" | "amber" | "red";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "text-red-700"
-      : tone === "amber"
-        ? "text-amber-700"
-        : "text-foreground";
-  return (
-    <div className="rounded-md border bg-muted/30 p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-lg font-semibold ${toneClass}`}>{value}</div>
-      {sublabel && (
-        <div className="text-[10px] text-muted-foreground">{sublabel}</div>
-      )}
-    </div>
+    </SectionCard>
   );
 }
 

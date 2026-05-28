@@ -2,8 +2,23 @@
 
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { useTheme } from "next-themes";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import { rankCellColor, rankCellOpacity } from "@/lib/metrics";
+
+// Carto's free no-API-key basemaps. Voyager (light) reads cleanly in light
+// theme; Dark Matter is the standard dark dashboard tile and pairs well
+// with the brand green markers.
+const LIGHT_TILES = {
+  url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+};
+const DARK_TILES = {
+  url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+};
 
 export type HeatMapPoint = {
   gridX: number;
@@ -43,6 +58,20 @@ function makeRankIcon(status: string | null | undefined, rank: number | null) {
     iconSize: [30, 30],
     iconAnchor: [15, 15],
   });
+}
+
+function ThemedTileLayer() {
+  const { resolvedTheme } = useTheme();
+  const tiles = resolvedTheme === "dark" ? DARK_TILES : LIGHT_TILES;
+  // Key forces the tile layer to re-mount on theme swap so leaflet swaps
+  // tiles cleanly instead of compositing the old set under the new.
+  return (
+    <TileLayer
+      key={resolvedTheme}
+      url={tiles.url}
+      attribution={tiles.attribution}
+    />
+  );
 }
 
 function FitBounds({ points }: { points: HeatMapPoint[] }) {
@@ -85,10 +114,7 @@ export function HeatMap({
         scrollWheelZoom
         className="h-full w-full"
       >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        <ThemedTileLayer />
         <FitBounds points={points} />
         {points.map((p) => (
           <Marker

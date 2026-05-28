@@ -1,6 +1,7 @@
-import { Star } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CalendarClock, MessageSquareText, Star, TrendingUp } from "lucide-react";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { SectionCard } from "@/components/ui/section-card";
+import { StatTile } from "@/components/ui/stat-tile";
 import { DeltaPill, MiniBars } from "@/components/charts";
 import { METRIC_DESCRIPTIONS } from "@/lib/metric-descriptions";
 import type { ReviewInsights } from "@/lib/queries";
@@ -12,11 +13,11 @@ function formatMonthLabel(monthStart: string): string {
   return date.toLocaleString(undefined, { month: "short" });
 }
 
-function freshnessTone(days: number | null): string {
-  if (days === null) return "text-muted-foreground";
-  if (days <= 14) return "text-green-700";
-  if (days <= 45) return "text-amber-700";
-  return "text-red-700";
+function freshnessTone(days: number | null): "default" | "amber" | "red" {
+  if (days === null) return "default";
+  if (days <= 14) return "default";
+  if (days <= 45) return "amber";
+  return "red";
 }
 
 export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
@@ -25,102 +26,94 @@ export function ReviewInsightsCard({ data }: { data: ReviewInsights }) {
   const sumLast12 = totals.reduce((a, b) => a + b, 0);
 
   return (
-    <Card>
-      <CardHeader className="border-b border-border/60 pb-4">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <Star className="h-4 w-4 text-brand" />
-          Review insights
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-6">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Kpi
-            label="Days since last review"
-            info={METRIC_DESCRIPTIONS.daysSinceLastReview}
-            value={
-              data.daysSinceLastReview === null
-                ? "—"
-                : data.daysSinceLastReview === 0
-                  ? "today"
-                  : String(data.daysSinceLastReview)
-            }
-            valueClassName={freshnessTone(data.daysSinceLastReview)}
-            sub={
-              data.lastReviewAt
-                ? new Date(data.lastReviewAt).toLocaleDateString()
-                : "No reviews yet"
-            }
-          />
-          <Kpi
-            label="Last 7 days"
-            info={METRIC_DESCRIPTIONS.reviewsLast7}
-            value={String(data.last7)}
-            delta={<DeltaPill current={data.last7} prior={data.prior7} />}
-          />
-          <Kpi
-            label="Last 30 days"
-            info={METRIC_DESCRIPTIONS.reviewsLast30}
-            value={String(data.last30)}
-            delta={<DeltaPill current={data.last30} prior={data.prior30} />}
-          />
-        </div>
+    <SectionCard
+      icon={<Star className="h-4 w-4" />}
+      title="Review insights"
+      eyebrow="Reputation"
+    >
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              Days since last review
+              <InfoTooltip>
+                {METRIC_DESCRIPTIONS.daysSinceLastReview}
+              </InfoTooltip>
+            </span>
+          }
+          value={
+            data.daysSinceLastReview === null
+              ? "—"
+              : data.daysSinceLastReview === 0
+                ? "today"
+                : String(data.daysSinceLastReview)
+          }
+          sublabel={
+            data.lastReviewAt
+              ? new Date(data.lastReviewAt).toLocaleDateString()
+              : "No reviews yet"
+          }
+          tone={freshnessTone(data.daysSinceLastReview)}
+          icon={<CalendarClock className="h-4 w-4" />}
+        />
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              Last 7 days
+              <InfoTooltip>{METRIC_DESCRIPTIONS.reviewsLast7}</InfoTooltip>
+            </span>
+          }
+          value={String(data.last7)}
+          sublabel={<DeltaPill current={data.last7} prior={data.prior7} />}
+          icon={<MessageSquareText className="h-4 w-4" />}
+          tone="brand"
+        />
+        <StatTile
+          label={
+            <span className="inline-flex items-center gap-1">
+              Last 30 days
+              <InfoTooltip>{METRIC_DESCRIPTIONS.reviewsLast30}</InfoTooltip>
+            </span>
+          }
+          value={String(data.last30)}
+          sublabel={<DeltaPill current={data.last30} prior={data.prior30} />}
+          icon={<TrendingUp className="h-4 w-4" />}
+          tone="brand"
+        />
+      </div>
 
-        <div className="mt-5 flex items-end justify-between gap-4 border-t pt-4">
-          <div>
-            <div className="text-xs uppercase text-muted-foreground">
-              Reviews per month
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Last 12 months · {sumLast12} review{sumLast12 === 1 ? "" : "s"}
-            </div>
+      <div className="mt-5 flex items-end justify-between gap-4 border-t border-border/60 pt-4">
+        <div>
+          <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Reviews per month
           </div>
-          <div className="flex flex-col items-end">
-            <MiniBars
-              values={totals}
-              labels={labels}
-              width={260}
-              height={42}
-              className="text-brand"
-            />
-            <div className="mt-1 grid grid-flow-col text-[10px] uppercase tracking-wide text-muted-foreground" style={{ gridTemplateColumns: `repeat(${labels.length}, 1fr)`, width: 260 }}>
-              {labels.map((l, i) => (
-                <span key={i} className="text-center">{l[0]}</span>
-              ))}
-            </div>
+          <div className="text-xs text-muted-foreground">
+            Last 12 months · {sumLast12} review{sumLast12 === 1 ? "" : "s"}
           </div>
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  sub,
-  delta,
-  info,
-  valueClassName,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  delta?: React.ReactNode;
-  info?: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="rounded-md border bg-muted/10 p-3">
-      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-        <span>{label}</span>
-        {info && <InfoTooltip>{info}</InfoTooltip>}
+        <div className="flex flex-col items-end">
+          <MiniBars
+            values={totals}
+            labels={labels}
+            width={260}
+            height={42}
+            className="text-brand"
+          />
+          <div
+            className="mt-1 grid grid-flow-col text-[10px] uppercase tracking-wide text-muted-foreground"
+            style={{
+              gridTemplateColumns: `repeat(${labels.length}, 1fr)`,
+              width: 260,
+            }}
+          >
+            {labels.map((l, i) => (
+              <span key={i} className="text-center">
+                {l[0]}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
-      <div className={`mt-1 text-2xl font-semibold ${valueClassName ?? ""}`}>
-        {value}
-      </div>
-      <div className="mt-1 text-xs text-muted-foreground">
-        {delta ?? sub ?? " "}
-      </div>
-    </div>
+    </SectionCard>
   );
 }

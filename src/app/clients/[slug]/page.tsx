@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { HeatMapClient } from "@/components/heat-map-client";
@@ -9,6 +9,7 @@ import { LocationSwitcher } from "@/components/location-switcher";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
 import { ReviewsTriageCard } from "@/components/reviews-triage-card";
 import { ScanManagementPanel } from "@/components/scan-management-panel";
+import { SectionCard } from "@/components/ui/section-card";
 import { StarBar } from "@/components/star-bar";
 import { SyncAllLocationsButton } from "@/components/sync-all-locations-button";
 import {
@@ -330,15 +331,14 @@ export default async function ClientDashboardPage({
 
       <ReviewInsightsCard data={reviewInsights} />
 
-      <Card key={`heat-map-${location.id}`}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Map className="h-4 w-4 text-brand" />
-            Heat map
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <HeatMapClient
+      <SectionCard
+        key={`heat-map-${location.id}`}
+        icon={<Map className="h-4 w-4" />}
+        title="Heat map"
+        eyebrow="Local pack visibility"
+        contentClassName="space-y-5 p-5"
+      >
+        <HeatMapClient
             locationId={location.id}
             centerLat={Number(location.lat)}
             centerLng={Number(location.lng)}
@@ -387,8 +387,7 @@ export default async function ClientDashboardPage({
             }))}
             initialActiveScan={activeScan}
           />
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       <ReviewsTriageCard
         reviews={recentReviews}

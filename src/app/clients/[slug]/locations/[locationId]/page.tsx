@@ -9,6 +9,7 @@ import { ReviewsTriageCard } from "@/components/reviews-triage-card";
 import { RowActions } from "@/components/row-actions";
 import { Sparkline, VelocityDelta } from "@/components/sparkline";
 import { StarBar } from "@/components/star-bar";
+import { StatTile } from "@/components/ui/stat-tile";
 import {
   getClientBySlug,
   getLocationReviewStats,
@@ -245,12 +246,5 @@ export default async function LocationDetailPage({
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs uppercase text-muted-foreground">{label}</div>
-        <div className="mt-1 text-2xl font-semibold">{value}</div>
-      </CardContent>
-    </Card>
-  );
+  return <StatTile label={label} value={value} />;
 }

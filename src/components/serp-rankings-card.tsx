@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { AlertTriangle, KeyRound, Search } from "lucide-react";
 import { buttonClasses } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { SectionCard } from "@/components/ui/section-card";
 import type { RankAnnotation, RankingsOverviewRow } from "@/lib/queries";
 
 const NO_GEO_KEY = "__no_geo__";
@@ -62,37 +62,31 @@ export function SerpRankingsCard({
 }) {
   if (data.length === 0) {
     return (
-      <Card>
-        <CardHeader className="border-b border-border/60 pb-4">
-          <CardTitle className="flex items-center justify-between text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            <span className="inline-flex items-center gap-2">
-              <Search className="h-4 w-4 text-brand" />
-              Search rankings
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-6">
-          <div className="flex flex-col items-center gap-4 py-6 text-center">
-            <div className="rounded-full bg-brand/10 p-4">
-              <KeyRound className="h-7 w-7 text-brand" />
-            </div>
-            <div className="max-w-md space-y-1.5">
-              <p className="text-sm font-medium">No tracked keywords yet</p>
-              <p className="text-xs text-muted-foreground">
-                Add the keywords you want to rank for, the target page on your
-                site, and the city you want to be searched from. We&apos;ll
-                check Google every Thursday and surface in-city ranks here.
-              </p>
-            </div>
-            <Link
-              href={`/clients/${clientSlug}/keywords`}
-              className={buttonClasses("outline", "sm")}
-            >
-              Manage keywords
-            </Link>
+      <SectionCard
+        icon={<Search className="h-4 w-4" />}
+        title="Search rankings"
+        eyebrow="Organic visibility"
+      >
+        <div className="flex flex-col items-center gap-4 py-6 text-center">
+          <div className="rounded-full bg-brand/10 p-4">
+            <KeyRound className="h-7 w-7 text-brand" />
           </div>
-        </CardContent>
-      </Card>
+          <div className="max-w-md space-y-1.5">
+            <p className="text-sm font-medium">No tracked keywords yet</p>
+            <p className="text-xs text-muted-foreground">
+              Add the keywords you want to rank for, the target page on your
+              site, and the city you want to be searched from. We&apos;ll check
+              Google every Thursday and surface in-city ranks here.
+            </p>
+          </div>
+          <Link
+            href={`/clients/${clientSlug}/keywords`}
+            className={buttonClasses("outline", "sm")}
+          >
+            Manage keywords
+          </Link>
+        </div>
+      </SectionCard>
     );
   }
 
@@ -113,28 +107,30 @@ export function SerpRankingsCard({
   });
 
   return (
-    <Card>
-      <CardHeader className="border-b border-border/60 pb-4">
-        <CardTitle className="flex items-center justify-between gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <span className="inline-flex items-center gap-2">
-            <Search className="h-4 w-4 text-brand" />
-            Search rankings
-            <InfoTooltip>
-              Two ranks per keyword, both as searched from within the
-              configured city: the full keyword as listed, and the keyword
-              with the city name stripped. Lower number = closer to #1.
-            </InfoTooltip>
-          </span>
-          <Link
-            href={`/clients/${clientSlug}/keywords`}
-            className={buttonClasses("outline", "sm")}
-          >
-            Manage keywords
-          </Link>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6 pt-6">
-        {cityKeys.map((city) => {
+    <SectionCard
+      icon={<Search className="h-4 w-4" />}
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          Search rankings
+          <InfoTooltip>
+            Two ranks per keyword, both as searched from within the configured
+            city: the full keyword as listed, and the keyword with the city
+            name stripped. Lower number = closer to #1.
+          </InfoTooltip>
+        </span>
+      }
+      eyebrow="Organic visibility"
+      actions={
+        <Link
+          href={`/clients/${clientSlug}/keywords`}
+          className={buttonClasses("outline", "sm")}
+        >
+          Manage keywords
+        </Link>
+      }
+      contentClassName="space-y-6 p-5"
+    >
+      {cityKeys.map((city) => {
           const rows = byCity.get(city)!;
           const isNoGeo = city === NO_GEO_KEY;
           return (
@@ -269,7 +265,6 @@ export function SerpRankingsCard({
             </section>
           );
         })}
-      </CardContent>
-    </Card>
+    </SectionCard>
   );
 }
