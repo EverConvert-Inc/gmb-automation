@@ -79,6 +79,22 @@ export function HeatMapClient({
   );
 
   useEffect(() => {
+    // When the parent server-component re-runs (e.g. after the user
+    // dispatches a new scan via router.refresh), a new latestScanId arrives
+    // as a prop. The local mirror state was only seeded at mount, so without
+    // this re-sync `status` stays at the previous scan's "completed" forever
+    // and the polling effect below never fires. Only re-sync on scan-id
+    // change — during a live scan, the polling effect is authoritative.
+    setStatus(initialStatus);
+    setPoints(initialPoints);
+    setCompletedPoints(initialCompletedPoints);
+    setCompletedAt(latestScanCompletedAt);
+    setViewingScanId(latestScanId);
+    setScanKeywordIds(latestScanKeywordIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestScanId]);
+
+  useEffect(() => {
     // Only poll while the latest scan is in progress. Stop polling when the
     // user is browsing an older scan — that view is static.
     if (!isViewingLatest) return;
