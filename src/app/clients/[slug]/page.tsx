@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
+import { Banner } from "@/components/ui/banner";
 import { buttonClasses } from "@/components/ui/button";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { HeatMapClient } from "@/components/heat-map-client";
@@ -27,7 +28,7 @@ import {
 } from "@/lib/queries";
 import { SerpRankingsCard } from "@/components/serp-rankings-card";
 import { computeScanMetrics } from "@/lib/metrics";
-import { CheckCircle2, Map, Plus } from "lucide-react";
+import { Map, MapPin, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -71,21 +72,34 @@ export default async function ClientDashboardPage({
   if (locs.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="flex items-end justify-between">
+        <header className="flex items-end justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">{client.name}</h1>
-            <p className="text-sm text-muted-foreground">No locations yet</p>
+            <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Client
+            </div>
+            <h1 className="font-display text-3xl font-bold tracking-tight">
+              {client.name}
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              No locations yet
+            </p>
           </div>
-          <Link
-            href={`/clients/${client.slug}/locations/new`}
-            className={buttonClasses()}
-          >
-            <Plus className="mr-2 h-4 w-4" /> Add location
-          </Link>
-        </div>
-        <Card>
-          <CardContent className="space-y-3 py-12 text-center text-sm text-muted-foreground">
-            <p>No locations for this client yet.</p>
+        </header>
+        <Card className="surface-brand-tint">
+          <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
+            <div className="rounded-full bg-brand/10 p-4 ring-1 ring-brand/20">
+              <MapPin className="h-7 w-7 text-brand" />
+            </div>
+            <div className="max-w-md space-y-1.5">
+              <p className="text-sm font-semibold">
+                Let&rsquo;s set up your first location
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Search Google Places to attach a real business listing, then
+                we&rsquo;ll fill in the rest — address, coordinates, and
+                public Google rating — automatically.
+              </p>
+            </div>
             <Link
               href={`/clients/${client.slug}/locations/new`}
               className={buttonClasses()}
@@ -163,18 +177,23 @@ export default async function ClientDashboardPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">{client.name}</h1>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+          <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Client
+          </div>
+          <h1 className="font-display text-3xl font-bold tracking-tight">
+            {client.name}
+          </h1>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
             <StarBar rating={weightedRating} reviewCount={totalReviews} />
-            <span>·</span>
+            <span className="text-muted-foreground/50">·</span>
             <span>
               {locs.length} location{locs.length === 1 ? "" : "s"}
             </span>
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="flex flex-wrap items-start gap-2">
           <SyncAllLocationsButton
             clientId={client.id}
             connectedCount={locs.filter((l) => l.gbpConnected).length}
@@ -186,7 +205,7 @@ export default async function ClientDashboardPage({
             <Plus className="mr-2 h-4 w-4" /> Add location
           </Link>
         </div>
-      </div>
+      </header>
 
       <LocationSwitcher
         clientSlug={client.slug}
@@ -195,58 +214,52 @@ export default async function ClientDashboardPage({
       />
 
       {justAddedThis && (
-        <div className="flex flex-col gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900 sm:flex-row sm:items-start">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
-          <div className="flex-1">
-            <div className="font-medium">{location.name} added.</div>
-            <div className="mt-0.5 text-green-800">
-              Run a scan below to populate the heat map.
-              {!hasGbpConnected
-                ? " Connect Google Business Profile to start syncing reviews."
-                : " Reviews will sync from Google shortly."}
-            </div>
-          </div>
-          {!hasGbpConnected && (
-            <Link
-              href={`/api/oauth/google/start?locationId=${location.id}`}
-              className={buttonClasses("default", "sm")}
-            >
-              Connect Google Business Profile
-            </Link>
-          )}
-        </div>
+        <Banner
+          tone="success"
+          title={`${location.name} added.`}
+          action={
+            !hasGbpConnected && (
+              <Link
+                href={`/api/oauth/google/start?locationId=${location.id}`}
+                className={buttonClasses("default", "sm")}
+              >
+                Connect Google Business Profile
+              </Link>
+            )
+          }
+        >
+          Run a scan below to populate the heat map.
+          {!hasGbpConnected
+            ? " Connect Google Business Profile to start syncing reviews."
+            : " Reviews will sync from Google shortly."}
+        </Banner>
       )}
 
       {gbpLink === "linked" && (
-        <div className="flex items-start gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
-          <div className="flex-1">
-            <div className="font-medium">Google Business Profile connected.</div>
-            <div className="mt-0.5 text-green-800">
-              Started the first review sync. Reviews will appear below within a
-              few seconds — refresh if you don&rsquo;t see them yet.
-            </div>
-          </div>
-        </div>
+        <Banner tone="success" title="Google Business Profile connected.">
+          Started the first review sync. Reviews will appear below within a few
+          seconds — refresh if you don&rsquo;t see them yet.
+        </Banner>
       )}
       {gbpLink === "no_match" && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="font-medium">Google Business Profile connected, but no matching listing found.</div>
-          <div className="mt-1 text-amber-800">
-            The Google account you connected doesn&rsquo;t manage a business
-            with this Place ID. Sign in with the account that owns this listing,
-            or use &ldquo;Sync reviews&rdquo; below once you&rsquo;ve granted access.
-          </div>
-        </div>
+        <Banner
+          tone="warning"
+          title="Google Business Profile connected, but no matching listing found."
+        >
+          The Google account you connected doesn&rsquo;t manage a business with
+          this Place ID. Sign in with the account that owns this listing, or
+          use &ldquo;Sync reviews&rdquo; below once you&rsquo;ve granted
+          access.
+        </Banner>
       )}
       {gbpLink === "failed" && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="font-medium">Connected, but couldn&rsquo;t auto-link this listing.</div>
-          <div className="mt-1 text-amber-800">
-            We saved the token but the GBP discovery call failed. Click
-            &ldquo;Sync reviews&rdquo; below to retry, or check the server logs.
-          </div>
-        </div>
+        <Banner
+          tone="warning"
+          title="Connected, but couldn&rsquo;t auto-link this listing."
+        >
+          We saved the token but the GBP discovery call failed. Click
+          &ldquo;Sync reviews&rdquo; below to retry, or check the server logs.
+        </Banner>
       )}
 
       <HeroSnapshotCard
