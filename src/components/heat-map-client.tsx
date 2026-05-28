@@ -250,7 +250,6 @@ export function HeatMapClient({
         return (
           <ScanPicker
             scans={visible}
-            latestScanId={latestScanId}
             selectedId={viewingScanId}
             loading={scanLoading}
             error={scanLoadError}
@@ -346,14 +345,12 @@ function Stat({
 
 function ScanPicker({
   scans,
-  latestScanId,
   selectedId,
   loading,
   error,
   onSelect,
 }: {
   scans: ScanOption[];
-  latestScanId: string | null;
   selectedId: string | null;
   loading: boolean;
   error: string | null;
@@ -367,7 +364,6 @@ function ScanPicker({
       <div className="flex flex-wrap gap-1.5">
         {scans.map((s) => {
           const isSelected = s.id === selectedId;
-          const isLatest = s.id === latestScanId;
           const when = s.completedAt ?? s.startedAt;
           return (
             <button
@@ -381,7 +377,7 @@ function ScanPicker({
                   : "rounded-full border border-border bg-background px-2.5 py-0.5 text-muted-foreground hover:border-foreground/40 hover:text-foreground disabled:opacity-50"
               }
             >
-              {isLatest ? "Latest" : formatRelativeDate(when)}
+              {formatRelativeDate(when)}
             </button>
           );
         })}
