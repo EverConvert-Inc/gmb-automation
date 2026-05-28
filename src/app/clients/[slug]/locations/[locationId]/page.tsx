@@ -180,7 +180,6 @@ export default async function LocationDetailPage({
               isPrimary: k.isPrimary,
             }))}
             latestScanKeywordIds={latestScanKeywordIds}
-            latestScanCompletedAt={latestScan?.completedAt ?? null}
             latestScanId={latestScan?.id ?? null}
             recentScans={completedRecent.map((s) => ({
               id: s.id,

@@ -2,9 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
+import { DashboardNav } from "@/components/dashboard-nav";
 import { HeatMapClient } from "@/components/heat-map-client";
+import { HeroSnapshotCard } from "@/components/hero-snapshot-card";
 import { LocationSwitcher } from "@/components/location-switcher";
 import { ReviewInsightsCard } from "@/components/review-insights-card";
 import { ReviewsTriageCard } from "@/components/reviews-triage-card";
@@ -25,9 +26,8 @@ import {
   listScanKeywordIds,
 } from "@/lib/queries";
 import { SerpRankingsCard } from "@/components/serp-rankings-card";
-import { InfoTooltip } from "@/components/ui/info-tooltip";
-import { formatRelativeTime } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, Map, Plus } from "lucide-react";
+import { computeScanMetrics } from "@/lib/metrics";
+import { CheckCircle2, Map, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -148,6 +148,19 @@ export default async function ClientDashboardPage({
   const latestScanKeywordIds = Array.from(new Set(points.map((p) => p.keywordId)));
   const hasGbpConnected = location.gbpOauthTokenId !== null;
 
+  // Pre-compute the headline KPIs for the hero snapshot. ARP/SoLV come from
+  // the latest scan's points (filtered to the primary keyword if there is
+  // one — otherwise all of them) so the hero stays in sync with the heat
+  // map's default keyword view.
+  const primaryKeywordId =
+    allKeywords.find((k) => k.isPrimary)?.id ?? allKeywords[0]?.id ?? null;
+  const heroScanPoints = primaryKeywordId
+    ? heatMapPoints.filter((p) => p.keywordId === primaryKeywordId)
+    : heatMapPoints;
+  const heroMetrics = computeScanMetrics(
+    heroScanPoints.map((p) => ({ rank: p.rank ?? null })),
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -236,107 +249,53 @@ export default async function ClientDashboardPage({
         </div>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold">{location.name}</h2>
-          <p className="text-sm text-muted-foreground">{location.address}</p>
-          {rating !== null ? (
-            <StarBar rating={rating} reviewCount={reviewCount} />
-          ) : location.placeRating !== null ? (
-            // Pre-OAuth fallback: show the public Google Places rating so
-            // the user has *something* to anchor on before connecting GBP.
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <StarBar
-                rating={Number(location.placeRating)}
-                reviewCount={location.placeReviewCount ?? 0}
-              />
-              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                from Google Places
-              </span>
-            </div>
-          ) : hasGbpConnected ? (
-            <p className="text-sm text-muted-foreground">
-              Awaiting first review sync from Google.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No reviews yet. Connect Google Business Profile to start syncing.
-            </p>
-          )}
-          {(location.placeWebsiteUri || location.placeGoogleMapsUri) && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-              {location.placeWebsiteUri && (
-                <a
-                  href={location.placeWebsiteUri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-brand hover:underline"
-                >
-                  {location.placeWebsiteUri.replace(/^https?:\/\//, "").replace(/\/$/, "")}
-                </a>
-              )}
-              {location.placeGoogleMapsUri && (
-                <a
-                  href={location.placeGoogleMapsUri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-muted-foreground hover:underline"
-                >
-                  View on Google Maps ↗
-                </a>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col items-start gap-1 sm:items-end">
-          <div className="flex items-center gap-2">
-            {hasGbpConnected ? (
-              <Badge variant="success">GBP connected</Badge>
-            ) : (
-              <Link
-                href={`/api/oauth/google/start?locationId=${location.id}`}
-                className={buttonClasses("outline")}
-              >
-                Connect Google Business Profile
-              </Link>
-            )}
-          </div>
-          {hasGbpConnected && (
-            <div className="text-right text-xs">
-              {location.lastPollError ? (
-                <span className="inline-flex items-center gap-1 text-red-700">
-                  <AlertTriangle className="h-3 w-3" />
-                  Last sync failed
-                  {location.lastPollErrorAt &&
-                    ` ${formatRelativeTime(location.lastPollErrorAt)}`}
-                  {location.consecutivePollFailures > 1 &&
-                    ` · ${location.consecutivePollFailures} attempts`}
-                  <InfoTooltip aria-label="Error details">
-                    {location.lastPollError}
-                  </InfoTooltip>
-                </span>
-              ) : location.lastPolledAt ? (
-                <span className="text-muted-foreground">
-                  Last sync {formatRelativeTime(location.lastPolledAt)}
-                  {location.nextPollAfter &&
-                    ` · next ${formatRelativeTime(location.nextPollAfter)}`}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">Awaiting first sync</span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <HeroSnapshotCard
+        locationId={location.id}
+        name={location.name}
+        address={location.address}
+        rating={rating}
+        reviewCount={reviewCount}
+        placeRating={
+          location.placeRating !== null ? Number(location.placeRating) : null
+        }
+        placeReviewCount={location.placeReviewCount}
+        placeWebsiteUri={location.placeWebsiteUri}
+        placeGoogleMapsUri={location.placeGoogleMapsUri}
+        hasGbpConnected={hasGbpConnected}
+        lastPolledAt={location.lastPolledAt}
+        nextPollAfter={location.nextPollAfter}
+        lastPollError={location.lastPollError}
+        lastPollErrorAt={location.lastPollErrorAt}
+        consecutivePollFailures={location.consecutivePollFailures}
+        kpis={{
+          daysSinceLastReview: reviewInsights.daysSinceLastReview,
+          arp: heroMetrics.arp,
+          solv: heroMetrics.totalPoints ? heroMetrics.solv : null,
+          lastScanAt: latestScan?.completedAt ?? null,
+        }}
+      />
 
-      <ReviewInsightsCard data={reviewInsights} />
+      <DashboardNav
+        items={[
+          { id: "review-velocity", label: "Reviews velocity" },
+          { id: "heat-map", label: "Heat map" },
+          { id: "reviews", label: "Reviews" },
+          { id: "search-rankings", label: "Search rankings" },
+        ]}
+      />
+
+      <div id="review-velocity" className="scroll-mt-24">
+        <ReviewInsightsCard data={reviewInsights} />
+      </div>
 
       <SectionCard
         key={`heat-map-${location.id}`}
+        id="heat-map"
         icon={<Map className="h-4 w-4" />}
         title="Heat map"
         eyebrow="Local pack visibility"
         contentClassName="space-y-5 p-5"
+        className="scroll-mt-24"
       >
         <HeatMapClient
             locationId={location.id}
@@ -351,7 +310,6 @@ export default async function ClientDashboardPage({
               isPrimary: k.isPrimary,
             }))}
             latestScanKeywordIds={latestScanKeywordIds}
-            latestScanCompletedAt={latestScan?.completedAt ?? null}
             latestScanId={latestScan?.id ?? null}
             recentScans={completedRecent.map((s) => ({
               id: s.id,
@@ -389,13 +347,17 @@ export default async function ClientDashboardPage({
           />
       </SectionCard>
 
-      <ReviewsTriageCard
-        reviews={recentReviews}
-        locationId={location.id}
-        hasGbpConnected={hasGbpConnected}
-      />
+      <div className="scroll-mt-24">
+        <ReviewsTriageCard
+          reviews={recentReviews}
+          locationId={location.id}
+          hasGbpConnected={hasGbpConnected}
+        />
+      </div>
 
-      <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
+      <div id="search-rankings" className="scroll-mt-24">
+        <SerpRankingsCard data={serpRankings} clientSlug={client.slug} />
+      </div>
     </div>
   );
 }

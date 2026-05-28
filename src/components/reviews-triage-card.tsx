@@ -43,7 +43,7 @@ export function ReviewsTriageCard({
   locationId: string;
   hasGbpConnected: boolean;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("attention");
+  const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

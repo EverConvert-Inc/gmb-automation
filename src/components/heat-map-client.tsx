@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Clock, Crosshair, Grid3x3, TrendingUp } from "lucide-react";
+import { Crosshair, Grid3x3, TrendingUp } from "lucide-react";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { StatTile } from "@/components/ui/stat-tile";
 import { HeatMapKeywordTabs, type KeywordTab } from "./heat-map-keyword-tabs";
@@ -36,7 +36,6 @@ type Props = {
   initialCompletedPoints: number;
   keywords: KeywordTab[];
   latestScanKeywordIds: string[];
-  latestScanCompletedAt: Date | string | null;
   latestScanId: string | null;
   recentScans: ScanOption[];
   zoom?: number;
@@ -51,14 +50,12 @@ export function HeatMapClient({
   initialCompletedPoints,
   keywords,
   latestScanKeywordIds,
-  latestScanCompletedAt,
   latestScanId,
   recentScans,
   zoom,
 }: Props) {
   const [points, setPoints] = useState(initialPoints);
   const [status, setStatus] = useState(initialStatus);
-  const [completedAt, setCompletedAt] = useState(latestScanCompletedAt);
   const [completedPoints, setCompletedPoints] = useState(initialCompletedPoints);
   const [viewingScanId, setViewingScanId] = useState<string | null>(latestScanId);
   const [scanLoading, setScanLoading] = useState(false);
@@ -89,7 +86,6 @@ export function HeatMapClient({
     setStatus(initialStatus);
     setPoints(initialPoints);
     setCompletedPoints(initialCompletedPoints);
-    setCompletedAt(latestScanCompletedAt);
     setViewingScanId(latestScanId);
     setScanKeywordIds(latestScanKeywordIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -117,7 +113,6 @@ export function HeatMapClient({
         setStatus(data.scan.status);
         setPoints(data.points);
         setCompletedPoints(data.completedPoints);
-        if (data.scan.completedAt) setCompletedAt(data.scan.completedAt);
       } catch {
         // ignore transient failures
       }
@@ -139,7 +134,6 @@ export function HeatMapClient({
       if (scanId === latestScanId) {
         // Restore the latest scan view from the props snapshot.
         setPoints(initialPoints);
-        setCompletedAt(latestScanCompletedAt);
         setCompletedPoints(initialCompletedPoints);
         setStatus(initialStatus);
         setScanKeywordIds(latestScanKeywordIds);
@@ -164,7 +158,6 @@ export function HeatMapClient({
         return;
       }
       setPoints(data.points);
-      setCompletedAt(data.scan.completedAt);
       setCompletedPoints(data.completedPoints);
       setStatus(data.scan.status);
       setScanKeywordIds(Array.from(new Set(data.points.map((p) => p.keywordId ?? ""))));
@@ -215,7 +208,10 @@ export function HeatMapClient({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
+      {/* Per-scan / per-keyword metric strip. Differs from the hero
+          snapshot's KPIs as the user changes the scan picker or keyword
+          tab — these track whatever the user is currently inspecting. */}
+      <div className="grid grid-cols-3 gap-3 sm:gap-4">
         <StatTile
           label={
             <span className="inline-flex items-center gap-1">
@@ -247,16 +243,6 @@ export function HeatMapClient({
           }
           value={metrics.totalPoints ? `${metrics.coverage.toFixed(0)}%` : "—"}
           icon={<Grid3x3 className="h-4 w-4" />}
-        />
-        <StatTile
-          label={
-            <span className="inline-flex items-center gap-1">
-              Last scan
-              <InfoTooltip>{METRIC_DESCRIPTIONS.lastScan}</InfoTooltip>
-            </span>
-          }
-          value={completedAt ? formatRelativeDate(completedAt) : "—"}
-          icon={<Clock className="h-4 w-4" />}
         />
       </div>
 
