@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
+import { BrandMark } from "@/components/brand-mark";
 import { Sidebar } from "@/components/sidebar";
 
 // Routes that render full-bleed without the sidebar chrome (e.g. /login).
@@ -44,11 +45,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <Link
-          href="/clients"
-          className="font-display text-lg font-bold uppercase text-brand"
-        >
-          EverConvert
+        <Link href="/clients" aria-label="EverConvert home">
+          <BrandMark />
         </Link>
         {/* Empty spacer keeps brand centered. */}
         <span className="w-9" aria-hidden />
