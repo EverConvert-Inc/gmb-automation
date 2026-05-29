@@ -1,0 +1,1 @@
+ALTER TABLE "ppc_clients" ADD COLUMN "signed_case_name_filters" text[] DEFAULT ARRAY['PPC', 'Ads', 'GMB']::text[] NOT NULL;

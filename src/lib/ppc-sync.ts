@@ -212,6 +212,7 @@ export async function syncCallrailForClient(
       opts.fromDate,
       opts.toDate,
       client.signedCaseTag,
+      client.signedCaseNameFilters,
     );
 
     for (const r of rows) {

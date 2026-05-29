@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { oauthCredentials, ppcClients } from "@/lib/db/schema";
 import { encryptString, hmacVerify } from "@/lib/crypto";
-import { listAccessibleCustomers } from "@/lib/google-ads";
+import { discoverGoogleAdsCustomers } from "@/lib/google-ads";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -153,28 +153,31 @@ export async function GET(req: Request) {
   let autoBoundCustomerId: string | null = null;
   let customerError: string | null = null;
   let customerErrorMessage: string | null = null;
+  let discoveredCustomers: Array<{ id: string; name: string | null }> | null =
+    null;
   try {
     // Wrap with a hard timeout — google-ads-api uses gRPC under the hood
     // and can hang indefinitely on network blips; without this the user
     // sits on a spinner with no feedback.
     const customers = await Promise.race([
-      listAccessibleCustomers(tokens.refresh_token),
+      discoverGoogleAdsCustomers(tokens.refresh_token),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error("Timed out after 15s")),
-          15000,
+          () => reject(new Error("Timed out after 25s")),
+          25000,
         ),
       ),
     ]);
+    discoveredCustomers = customers;
     if (customers.length === 1) {
-      autoBoundCustomerId = customers[0].customerId;
+      autoBoundCustomerId = customers[0].id;
     } else if (customers.length === 0) {
       customerError = "no_customers";
     } else {
       customerError = "needs_picker";
     }
   } catch (e) {
-    console.error("listAccessibleCustomers failed", e);
+    console.error("discoverGoogleAdsCustomers failed", e);
     customerError = "list_failed";
     customerErrorMessage = (e as Error).message;
   }
@@ -184,6 +187,9 @@ export async function GET(req: Request) {
     .set({
       googleAdsOauthTokenId: credId,
       ...(autoBoundCustomerId ? { googleAdsCustomerId: autoBoundCustomerId } : {}),
+      ...(discoveredCustomers
+        ? { googleAdsDiscoveredCustomersJson: discoveredCustomers }
+        : {}),
       lastSyncError: customerErrorMessage,
       updatedAt: new Date(),
     })

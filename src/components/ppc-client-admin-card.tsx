@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, RefreshCw, Trash2, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,7 @@ type ExistingAdsCredential = {
   accountEmail: string;
   updatedAt: Date;
 };
+type DiscoveredAdsCustomer = { id: string; name: string | null };
 
 export type PpcClientAdminProps = {
   id: string;
@@ -24,9 +25,11 @@ export type PpcClientAdminProps = {
   googleAdsTokenSaved: boolean;
   googleAdsLinked: boolean;
   googleAdsCustomerId: string | null;
+  googleAdsDiscoveredCustomers: DiscoveredAdsCustomer[] | null;
   callrailLinked: boolean;
   callrailCompanyId: string | null;
   signedCaseTag: string;
+  signedCaseNameFilters: string[];
   lastAdsSyncAt: Date | null;
   lastCallrailSyncAt: Date | null;
   lastSyncError: string | null;
@@ -34,6 +37,13 @@ export type PpcClientAdminProps = {
   callrailListError: string | null;
   existingAdsCredentials: ExistingAdsCredential[];
 };
+
+// Format a 10-digit customer id as "123-456-7890" for readability.
+function formatCustomerId(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length !== 10) return raw;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
 
 function relTime(d: Date | string | null): string {
   if (!d) return "never";
@@ -53,7 +63,34 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
   const [pending, startTransition] = useTransition();
   const [syncing, setSyncing] = useState(false);
   const [attachingId, setAttachingId] = useState<string | null>(null);
+  const [refreshingCustomers, setRefreshingCustomers] = useState(false);
+
+  async function refreshAdsCustomers() {
+    setRefreshingCustomers(true);
+    try {
+      const res = await fetch(
+        `/api/ppc/clients/${props.id}/refresh-customers`,
+        { method: "POST" },
+      );
+      const body = (await res.json().catch(() => ({}))) as {
+        count?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      toast.success(`Found ${body.count ?? 0} Google Ads account(s)`);
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error("Refresh failed", { description: (err as Error).message });
+    } finally {
+      setRefreshingCustomers(false);
+    }
+  }
   const [tagDraft, setTagDraft] = useState(props.signedCaseTag);
+  const [nameFiltersDraft, setNameFiltersDraft] = useState(
+    props.signedCaseNameFilters.join(", "),
+  );
   const [companyDraft, setCompanyDraft] = useState(props.callrailCompanyId ?? "");
   const [customerDraft, setCustomerDraft] = useState(
     props.googleAdsCustomerId ?? "",
@@ -266,26 +303,44 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                     You&apos;ll only need to pick the customer id for this
                     client &mdash; no OAuth round-trip.
                   </p>
-                  <div className="space-y-1.5">
-                    {props.existingAdsCredentials.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => attachExisting(c.id)}
-                        disabled={attachingId !== null}
-                        className="flex w-full items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-left text-sm hover:bg-muted/30 disabled:opacity-60"
-                      >
-                        <span>
-                          <span className="font-medium">{c.accountEmail}</span>
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            connected {relTime(c.updatedAt)}
+                  <div className="space-y-2">
+                    {props.existingAdsCredentials.map((c) => {
+                      const isAttaching = attachingId === c.id;
+                      const disabled = attachingId !== null;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => attachExisting(c.id)}
+                          disabled={disabled}
+                          className="group flex w-full items-center justify-between gap-3 rounded-md border bg-background p-3 text-left transition-colors hover:border-brand/50 hover:bg-brand/5 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand ring-1 ring-brand/20">
+                              <UserRound className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium">
+                                {c.accountEmail}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Connected {relTime(c.updatedAt)}
+                              </div>
+                            </div>
+                          </div>
+                          <span className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-brand-foreground shadow-sm group-hover:brightness-110">
+                            {isAttaching ? (
+                              "Linking…"
+                            ) : (
+                              <>
+                                Use this account
+                                <ArrowRight className="h-3.5 w-3.5" />
+                              </>
+                            )}
                           </span>
-                        </span>
-                        <span className="text-xs font-medium text-brand">
-                          {attachingId === c.id ? "Linking…" : "Use this"}
-                        </span>
-                      </button>
-                    ))}
+                        </button>
+                      );
+                    })}
                   </div>
                   <details className="text-xs text-muted-foreground">
                     <summary className="cursor-pointer hover:text-foreground">
@@ -317,38 +372,102 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
             </div>
           )}
 
-          {/* Manual override / picker for when listAccessibleCustomers
-              returned more than one (or for fixing a wrong auto-bind). */}
-          <div className="rounded-md border bg-muted/20 p-3">
-            <Label htmlFor="customerId">Google Ads Customer ID</Label>
-            <div className="mt-1 flex gap-2">
-              <Input
-                id="customerId"
-                value={customerDraft}
-                onChange={(e) => setCustomerDraft(e.target.value)}
-                placeholder="123-456-7890"
-                pattern="[0-9-]+"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  saveField(
-                    { googleAdsCustomerId: customerDraft || null },
-                    "Customer id saved",
-                  ).catch((e) => toast.error((e as Error).message))
-                }
-                disabled={pending}
-              >
-                Save
-              </Button>
+          {/* Customer-id picker. Renders a dropdown sourced from the
+              cached discovery (listAccessibleCustomers + descriptive_name)
+              when available, with a refresh button. Falls back to a
+              free-text input when no discovery data is on file. */}
+          {props.googleAdsTokenSaved && (
+            <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="customerId">Google Ads account</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={refreshAdsCustomers}
+                  disabled={refreshingCustomers || pending}
+                >
+                  <RefreshCw
+                    className={`mr-1.5 h-3 w-3 ${refreshingCustomers ? "animate-spin" : ""}`}
+                  />
+                  {refreshingCustomers ? "Refreshing…" : "Refresh list"}
+                </Button>
+              </div>
+              {props.googleAdsDiscoveredCustomers &&
+              props.googleAdsDiscoveredCustomers.length > 0 ? (
+                <>
+                  <div className="flex gap-2">
+                    <Select
+                      id="customerId"
+                      value={customerDraft}
+                      onChange={(e) => setCustomerDraft(e.target.value)}
+                    >
+                      <option value="">— Select an account —</option>
+                      {props.googleAdsDiscoveredCustomers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name
+                            ? `${c.name} (${formatCustomerId(c.id)})`
+                            : formatCustomerId(c.id)}
+                        </option>
+                      ))}
+                    </Select>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() =>
+                        saveField(
+                          { googleAdsCustomerId: customerDraft || null },
+                          "Customer id saved",
+                        ).catch((e) => toast.error((e as Error).message))
+                      }
+                      disabled={pending || !customerDraft}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {props.googleAdsDiscoveredCustomers.length} account
+                    {props.googleAdsDiscoveredCustomers.length === 1 ? "" : "s"}
+                    {" "}visible to the connected Google user. If you don&apos;t
+                    see the right one, hit Refresh after granting access in
+                    Google Ads.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <Input
+                      id="customerId"
+                      value={customerDraft}
+                      onChange={(e) => setCustomerDraft(e.target.value)}
+                      placeholder="123-456-7890"
+                      pattern="[0-9-]+"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        saveField(
+                          { googleAdsCustomerId: customerDraft || null },
+                          "Customer id saved",
+                        ).catch((e) => toast.error((e as Error).message))
+                      }
+                      disabled={pending}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    No account list cached yet &mdash; click <strong>Refresh
+                    list</strong> above to discover the Google Ads accounts
+                    visible to the connected user, or paste the 10-digit
+                    customer id manually.
+                  </p>
+                </>
+              )}
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Use the 10-digit Google Ads customer id (dashes accepted but
-              optional). Override only if the auto-pick is wrong.
-            </p>
-          </div>
+          )}
         </CardContent>
       </Card>
 
@@ -404,19 +523,41 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
               </p>
             </div>
           </div>
+          <div>
+            <Label htmlFor="nameFilters">
+              Tracking-number name filters
+            </Label>
+            <Input
+              id="nameFilters"
+              value={nameFiltersDraft}
+              onChange={(e) => setNameFiltersDraft(e.target.value)}
+              placeholder="PPC, Ads, GMB"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Comma-separated substrings. A signed call only counts if its
+              tracking number&apos;s name contains one of these (case-
+              insensitive). Leave blank to count every tagged call regardless
+              of which number it came in on.
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               size="sm"
-              onClick={() =>
+              onClick={() => {
+                const filters = nameFiltersDraft
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean);
                 saveField(
                   {
                     callrailCompanyId: companyDraft || null,
                     signedCaseTag: tagDraft || "signed",
+                    signedCaseNameFilters: filters,
                   },
                   "CallRail settings saved",
-                ).catch((e) => toast.error((e as Error).message))
-              }
+                ).catch((e) => toast.error((e as Error).message));
+              }}
               disabled={pending}
             >
               Save CallRail settings

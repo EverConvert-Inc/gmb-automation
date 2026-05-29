@@ -13,6 +13,7 @@ const PatchBody = z
     googleAdsCustomerId: z.string().nullable().optional(),
     callrailCompanyId: z.string().nullable().optional(),
     signedCaseTag: z.string().min(1).optional(),
+    signedCaseNameFilters: z.array(z.string().min(1)).optional(),
   })
   .strict();
 

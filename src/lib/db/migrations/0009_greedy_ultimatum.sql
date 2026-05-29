@@ -1,0 +1,1 @@
+ALTER TABLE "ppc_clients" ADD COLUMN "google_ads_discovered_customers_json" jsonb;

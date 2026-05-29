@@ -80,6 +80,99 @@ function getCustomer(refreshToken: string, customerId: string): Customer {
   });
 }
 
+export type DiscoveredCustomer = {
+  id: string;
+  name: string | null;
+};
+
+// Resolve every customer id the OAuth user can see, plus best-effort
+// descriptive names. Used to populate the customer-id dropdown on the
+// PPC client admin page so operators pick instead of typing digits.
+//
+// We also expand any manager (MCC) accounts via customer_client to surface
+// their children — typical agency setup is one MCC with many child clients
+// and we don't want the operator to have to know each child's id.
+export async function discoverGoogleAdsCustomers(
+  refreshToken: string,
+): Promise<DiscoveredCustomer[]> {
+  const accessible = await listAccessibleCustomers(refreshToken);
+  // Map by id so MCC expansion doesn't introduce duplicates.
+  const byId = new Map<string, DiscoveredCustomer>();
+  for (const c of accessible) {
+    byId.set(c.customerId, { id: c.customerId, name: null });
+  }
+  // For each accessible customer, try to pull its descriptive name and (if
+  // it's a manager) its children. Failures are skipped per-customer so a
+  // single permissioning glitch doesn't kill the whole list.
+  await Promise.all(
+    accessible.map(async (c) => {
+      try {
+        const customer = getCustomer(refreshToken, c.customerId);
+        // Descriptive name + manager flag for this customer itself.
+        const selfRows = (await customer.query(`
+          SELECT customer.id, customer.descriptive_name, customer.manager
+          FROM customer
+        `)) as Array<{
+          customer?: {
+            id?: string | number | null;
+            descriptive_name?: string | null;
+            manager?: boolean | null;
+          };
+        }>;
+        const self = selfRows[0]?.customer;
+        if (self) {
+          byId.set(c.customerId, {
+            id: c.customerId,
+            name: self.descriptive_name ?? null,
+          });
+          if (self.manager) {
+            // Expand children one level. Direct children only — agency MCCs
+            // typically don't nest beyond that and recursive expansion adds
+            // a lot of cost for little payoff.
+            const childRows = (await customer.query(`
+              SELECT
+                customer_client.id,
+                customer_client.descriptive_name,
+                customer_client.level,
+                customer_client.manager
+              FROM customer_client
+              WHERE customer_client.level <= 1
+            `)) as Array<{
+              customer_client?: {
+                id?: string | number | null;
+                descriptive_name?: string | null;
+                manager?: boolean | null;
+              };
+            }>;
+            for (const r of childRows) {
+              const cc = r.customer_client;
+              if (!cc?.id) continue;
+              const id = normalizeCustomerId(String(cc.id));
+              if (id === c.customerId) continue; // skip self
+              if (cc.manager) continue; // skip nested managers
+              byId.set(id, {
+                id,
+                name: cc.descriptive_name ?? null,
+              });
+            }
+          }
+        }
+      } catch {
+        // Leave the entry with name=null so the dropdown still shows the
+        // bare id and the operator can pick it.
+      }
+    }),
+  );
+  return Array.from(byId.values()).sort((a, b) => {
+    const an = a.name ?? "";
+    const bn = b.name ?? "";
+    if (an && bn) return an.localeCompare(bn);
+    if (an) return -1;
+    if (bn) return 1;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export type AdsDailyMetricsRow = {
   campaignId: string;
   campaignName: string;

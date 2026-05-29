@@ -123,9 +123,15 @@ export default async function PpcClientDetailPage({
           row.googleAdsOauthTokenId !== null && row.googleAdsCustomerId !== null
         }
         googleAdsCustomerId={row.googleAdsCustomerId}
+        googleAdsDiscoveredCustomers={
+          (row.googleAdsDiscoveredCustomersJson as
+            | Array<{ id: string; name: string | null }>
+            | null) ?? null
+        }
         callrailLinked={row.callrailCompanyId !== null}
         callrailCompanyId={row.callrailCompanyId}
         signedCaseTag={row.signedCaseTag}
+        signedCaseNameFilters={row.signedCaseNameFilters}
         lastAdsSyncAt={row.lastAdsSyncAt}
         lastCallrailSyncAt={row.lastCallrailSyncAt}
         lastSyncError={row.lastSyncError}

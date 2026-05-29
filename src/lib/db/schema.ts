@@ -333,8 +333,21 @@ export const ppcClients = pgTable(
       () => oauthCredentials.id,
       { onDelete: "set null" },
     ),
+    // Cached output of listAccessibleCustomers + descriptive-name lookup,
+    // populated on connect/attach/refresh. Powers the customer-id dropdown
+    // in the admin UI so the operator picks rather than types digits.
+    // Shape: Array<{ id: string; name: string | null }>.
+    googleAdsDiscoveredCustomersJson: jsonb("google_ads_discovered_customers_json"),
     callrailCompanyId: text("callrail_company_id"),
     signedCaseTag: text("signed_case_tag").notNull().default("signed"),
+    // Per-client substring filters applied to the CallRail tracking number's
+    // name. A call counts as a signed case only if it carries the tag above
+    // AND its tracker name contains one of these substrings (case-insensitive).
+    // Empty array = no name filter (tag-only behavior).
+    signedCaseNameFilters: text("signed_case_name_filters")
+      .array()
+      .notNull()
+      .default(sql`ARRAY['PPC', 'Ads', 'GMB']::text[]`),
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
