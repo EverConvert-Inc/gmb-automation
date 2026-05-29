@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { PpcReportRow } from "@/lib/queries";
 
 type SortKey =
   | "client"
-  | "campaign"
   | "phoneCalls"
   | "conversions"
   | "clicks"
@@ -74,33 +74,83 @@ function SortHeader({
   );
 }
 
-// PPC table: one row per (client × campaign) for the active date range.
-// Sortable. "Signed cases" is shown only on the first row per client to avoid
-// double-counting visually. Mobile collapses to a card per campaign.
+type ClientGroup = {
+  ppcClientId: string;
+  ppcClientName: string;
+  clicks: number;
+  impressions: number;
+  conversions: number;
+  phoneCalls: number;
+  costMicros: bigint;
+  signedCases: number | null;
+  campaigns: PpcReportRow[];
+};
+
+// PPC table: default view is one row per client showing totals; click any
+// client row to expand and reveal that client's per-campaign breakdown.
+// Sort applies to the client totals; campaigns inside an expanded group are
+// always sorted by campaign name.
 export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
   const [sortKey, setSortKey] = useState<SortKey>("client");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpand(ppcClientId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(ppcClientId)) next.delete(ppcClientId);
+      else next.add(ppcClientId);
+      return next;
+    });
+  }
 
   function onSort(field: SortKey) {
     if (field === sortKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(field);
-      setSortDir(field === "client" || field === "campaign" ? "asc" : "desc");
+      setSortDir(field === "client" ? "asc" : "desc");
     }
   }
 
-  const sorted = useMemo(() => {
-    const arr = [...rows];
+  // Group campaign rows by client and aggregate per-client totals.
+  // signedCases is per-client and identical across that client's campaign
+  // rows, so we grab whichever value the first row carries.
+  const groups: ClientGroup[] = useMemo(() => {
+    const map = new Map<string, ClientGroup>();
+    for (const r of rows) {
+      const cur = map.get(r.ppcClientId) ?? {
+        ppcClientId: r.ppcClientId,
+        ppcClientName: r.ppcClientName,
+        clicks: 0,
+        impressions: 0,
+        conversions: 0,
+        phoneCalls: 0,
+        costMicros: 0n,
+        signedCases: r.signedCases,
+        campaigns: [],
+      };
+      cur.clicks += r.clicks;
+      cur.impressions += r.impressions;
+      cur.conversions += r.conversions;
+      cur.phoneCalls += r.phoneCalls;
+      cur.costMicros += r.costMicros;
+      cur.campaigns.push(r);
+      map.set(r.ppcClientId, cur);
+    }
+    // Stable campaign-name sort inside each group.
+    for (const g of map.values()) {
+      g.campaigns.sort((a, b) => a.campaignName.localeCompare(b.campaignName));
+    }
+    return Array.from(map.values());
+  }, [rows]);
+
+  const sortedGroups = useMemo(() => {
+    const arr = [...groups];
     arr.sort((a, b) => {
       switch (sortKey) {
         case "client":
-          return (
-            compareStrings(a.ppcClientName, b.ppcClientName, sortDir) ||
-            compareStrings(a.campaignName, b.campaignName, "asc")
-          );
-        case "campaign":
-          return compareStrings(a.campaignName, b.campaignName, sortDir);
+          return compareStrings(a.ppcClientName, b.ppcClientName, sortDir);
         case "phoneCalls":
           return compareNumbers(a.phoneCalls, b.phoneCalls, sortDir);
         case "conversions":
@@ -120,21 +170,7 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
       }
     });
     return arr;
-  }, [rows, sortKey, sortDir]);
-
-  // Build a flag map so signed-case totals appear once per client even when
-  // the table is sorted by something other than client name.
-  const firstRowSeen = useMemo(() => {
-    const seen = new Set<string>();
-    const flag = new Array(sorted.length).fill(false);
-    sorted.forEach((r, i) => {
-      if (!seen.has(r.ppcClientId)) {
-        seen.add(r.ppcClientId);
-        flag[i] = true;
-      }
-    });
-    return flag;
-  }, [sorted]);
+  }, [groups, sortKey, sortDir]);
 
   if (rows.length === 0) {
     return (
@@ -147,50 +183,102 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
 
   return (
     <>
-      {/* Mobile card-per-row */}
+      {/* Mobile: stacked client cards, tap to expand campaigns. */}
       <div className="space-y-2 sm:hidden">
-        {sorted.map((r, i) => (
-          <div key={r.campaignId} className="rounded-md border bg-background p-3 text-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate font-medium">{r.campaignName}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {r.ppcClientName}
+        {sortedGroups.map((g) => {
+          const open = expanded.has(g.ppcClientId);
+          return (
+            <div
+              key={g.ppcClientId}
+              className="rounded-md border bg-background text-sm"
+            >
+              <button
+                type="button"
+                onClick={() => toggleExpand(g.ppcClientId)}
+                className="flex w-full items-start gap-2 p-3 text-left"
+              >
+                <span className="mt-0.5 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center text-muted-foreground">
+                  {open ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="truncate font-medium">{g.ppcClientName}</div>
+                    {g.signedCases !== null && (
+                      <div className="text-right">
+                        <span className="text-[10px] uppercase text-muted-foreground">
+                          Signed{" "}
+                        </span>
+                        <span className="font-semibold">
+                          {fmtNumber(g.signedCases)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {g.campaigns.length} campaign
+                    {g.campaigns.length === 1 ? "" : "s"}
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                    <div className="text-muted-foreground">Phone calls</div>
+                    <div className="text-right font-medium">
+                      {fmtNumber(g.phoneCalls)}
+                    </div>
+                    <div className="text-muted-foreground">Conversions</div>
+                    <div className="text-right font-medium">
+                      {fmtConversions(g.conversions)}
+                    </div>
+                    <div className="text-muted-foreground">Clicks</div>
+                    <div className="text-right font-medium">
+                      {fmtNumber(g.clicks)}
+                    </div>
+                    <div className="text-muted-foreground">Cost</div>
+                    <div className="text-right font-medium">
+                      {fmtMicros(g.costMicros)}
+                    </div>
+                    <div className="text-muted-foreground">Impressions</div>
+                    <div className="text-right font-medium">
+                      {fmtNumber(g.impressions)}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              {firstRowSeen[i] && r.signedCases !== null && (
-                <div className="text-right">
-                  <div className="text-[10px] uppercase text-muted-foreground">
-                    Signed
-                  </div>
-                  <div className="text-base font-semibold">
-                    {fmtNumber(r.signedCases)}
-                  </div>
+              </button>
+              {open && (
+                <div className="space-y-2 border-t bg-muted/20 p-3">
+                  {g.campaigns.map((c) => (
+                    <div
+                      key={c.campaignId}
+                      className="rounded-md border bg-background p-2.5 text-xs"
+                    >
+                      <div className="font-medium">{c.campaignName}</div>
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
+                        <div className="text-muted-foreground">Phone calls</div>
+                        <div className="text-right">
+                          {fmtNumber(c.phoneCalls)}
+                        </div>
+                        <div className="text-muted-foreground">Conversions</div>
+                        <div className="text-right">
+                          {fmtConversions(c.conversions)}
+                        </div>
+                        <div className="text-muted-foreground">Clicks</div>
+                        <div className="text-right">{fmtNumber(c.clicks)}</div>
+                        <div className="text-muted-foreground">Cost</div>
+                        <div className="text-right">{fmtMicros(c.costMicros)}</div>
+                        <div className="text-muted-foreground">Impressions</div>
+                        <div className="text-right">
+                          {fmtNumber(c.impressions)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-              <div className="text-muted-foreground">Phone calls</div>
-              <div className="text-right font-medium">
-                {fmtNumber(r.phoneCalls)}
-              </div>
-              <div className="text-muted-foreground">Conversions</div>
-              <div className="text-right font-medium">
-                {fmtConversions(r.conversions)}
-              </div>
-              <div className="text-muted-foreground">Clicks</div>
-              <div className="text-right font-medium">{fmtNumber(r.clicks)}</div>
-              <div className="text-muted-foreground">Cost</div>
-              <div className="text-right font-medium">
-                {fmtMicros(r.costMicros)}
-              </div>
-              <div className="text-muted-foreground">Impressions</div>
-              <div className="text-right font-medium">
-                {fmtNumber(r.impressions)}
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Desktop table */}
@@ -198,16 +286,10 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
         <table className="w-full text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
+              <th className="w-8 px-2 py-2" />
               <SortHeader
                 label="Client"
                 field="client"
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={onSort}
-              />
-              <SortHeader
-                label="Campaign"
-                field="campaign"
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={onSort}
@@ -263,41 +345,106 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r, i) => (
-              <tr key={r.campaignId} className="border-b last:border-0">
-                <td className="px-3 py-2 align-top">{r.ppcClientName}</td>
-                <td className="px-3 py-2 align-top">{r.campaignName}</td>
-                <td className="px-3 py-2 text-right align-top tabular-nums">
-                  {fmtNumber(r.phoneCalls)}
-                </td>
-                <td className="px-3 py-2 text-right align-top tabular-nums">
-                  {fmtConversions(r.conversions)}
-                </td>
-                <td className="px-3 py-2 text-right align-top tabular-nums">
-                  {fmtNumber(r.clicks)}
-                </td>
-                <td className="px-3 py-2 text-right align-top tabular-nums">
-                  {fmtMicros(r.costMicros)}
-                </td>
-                <td className="px-3 py-2 text-right align-top tabular-nums">
-                  {fmtNumber(r.impressions)}
-                </td>
-                <td className="px-3 py-2 text-right align-top tabular-nums">
-                  {firstRowSeen[i] ? (
-                    r.signedCases === null ? (
-                      <span className="text-muted-foreground">—</span>
-                    ) : (
-                      fmtNumber(r.signedCases)
-                    )
-                  ) : (
-                    <span className="text-muted-foreground/40">·</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {sortedGroups.map((g) => {
+              const open = expanded.has(g.ppcClientId);
+              return (
+                <ClientRows
+                  key={g.ppcClientId}
+                  group={g}
+                  open={open}
+                  onToggle={() => toggleExpand(g.ppcClientId)}
+                />
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </>
+  );
+}
+
+function ClientRows({
+  group,
+  open,
+  onToggle,
+}: {
+  group: ClientGroup;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <tr
+        className="cursor-pointer border-b font-medium hover:bg-muted/30"
+        onClick={onToggle}
+      >
+        <td className="w-8 px-2 py-2 align-middle text-muted-foreground">
+          {open ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+        </td>
+        <td className="px-3 py-2 align-middle">
+          {group.ppcClientName}
+          <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+            {group.campaigns.length} campaign
+            {group.campaigns.length === 1 ? "" : "s"}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums">
+          {fmtNumber(group.phoneCalls)}
+        </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums">
+          {fmtConversions(group.conversions)}
+        </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums">
+          {fmtNumber(group.clicks)}
+        </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums">
+          {fmtMicros(group.costMicros)}
+        </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums">
+          {fmtNumber(group.impressions)}
+        </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums">
+          {group.signedCases === null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            fmtNumber(group.signedCases)
+          )}
+        </td>
+      </tr>
+      {open &&
+        group.campaigns.map((c) => (
+          <tr
+            key={c.campaignId}
+            className="border-b bg-muted/10 text-xs text-muted-foreground last:border-0"
+          >
+            <td className="px-2 py-1.5" />
+            <td className="px-3 py-1.5 pl-8 align-middle">
+              <span className="text-foreground">{c.campaignName}</span>
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle tabular-nums">
+              {fmtNumber(c.phoneCalls)}
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle tabular-nums">
+              {fmtConversions(c.conversions)}
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle tabular-nums">
+              {fmtNumber(c.clicks)}
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle tabular-nums">
+              {fmtMicros(c.costMicros)}
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle tabular-nums">
+              {fmtNumber(c.impressions)}
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle">
+              <span className="text-muted-foreground/40">·</span>
+            </td>
+          </tr>
+        ))}
     </>
   );
 }
