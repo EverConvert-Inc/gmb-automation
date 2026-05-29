@@ -1027,6 +1027,50 @@ export async function listExistingAdsCredentials(): Promise<
   }));
 }
 
+// For the admin pickers: map of customer-id → list of PPC-client names that
+// are already linked to it. Lets the combobox flag "Already linked to AG
+// Injury Law" so the operator notices when a multi-match would clash.
+export async function getLinkedAdsCustomerMap(
+  excludeClientId?: string,
+): Promise<Record<string, string[]>> {
+  const rows = await db
+    .select({
+      customerId: ppcClients.googleAdsCustomerId,
+      name: ppcClients.name,
+      id: ppcClients.id,
+    })
+    .from(ppcClients)
+    .where(sql`${ppcClients.googleAdsCustomerId} is not null`);
+  const map: Record<string, string[]> = {};
+  for (const r of rows) {
+    if (!r.customerId) continue;
+    if (excludeClientId && r.id === excludeClientId) continue;
+    (map[r.customerId] ??= []).push(r.name);
+  }
+  return map;
+}
+
+// Same shape for CallRail companies.
+export async function getLinkedCallrailCompanyMap(
+  excludeClientId?: string,
+): Promise<Record<string, string[]>> {
+  const rows = await db
+    .select({
+      companyId: ppcClients.callrailCompanyId,
+      name: ppcClients.name,
+      id: ppcClients.id,
+    })
+    .from(ppcClients)
+    .where(sql`${ppcClients.callrailCompanyId} is not null`);
+  const map: Record<string, string[]> = {};
+  for (const r of rows) {
+    if (!r.companyId) continue;
+    if (excludeClientId && r.id === excludeClientId) continue;
+    (map[r.companyId] ??= []).push(r.name);
+  }
+  return map;
+}
+
 export async function listPpcClients(): Promise<PpcClientListItem[]> {
   const rows = await db.query.ppcClients.findMany({
     orderBy: (cols, ops) => ops.asc(cols.name),

@@ -7,7 +7,8 @@ import { AlertTriangle, ArrowRight, RefreshCw, Trash2, UserRound } from "lucide-
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input, Label, Select } from "@/components/ui/form";
+import { ComboBox } from "@/components/ui/combobox";
+import { Input, Label } from "@/components/ui/form";
 
 type CallrailCompanyOption = { id: string; name: string };
 type ExistingAdsCredential = {
@@ -36,6 +37,10 @@ export type PpcClientAdminProps = {
   callrailCompanyChoices: CallrailCompanyOption[] | null;
   callrailListError: string | null;
   existingAdsCredentials: ExistingAdsCredential[];
+  // customerId / companyId → names of OTHER PPC clients already linked.
+  // Surfaced as "Already linked to: X" hints in the comboboxes.
+  linkedAdsCustomerMap: Record<string, string[]>;
+  linkedCallrailCompanyMap: Record<string, string[]>;
 };
 
 // Format a 10-digit customer id as "123-456-7890" for readability.
@@ -65,6 +70,44 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
   const [attachingId, setAttachingId] = useState<string | null>(null);
   const [refreshingCustomers, setRefreshingCustomers] = useState(false);
 
+  // Auto-save the customer id when the user picks one, then — if this is
+  // the first time Ads + a CallRail company are linked — fire off the
+  // initial sync without an explicit click. Closes the "Save then Sync"
+  // two-step that operators were hitting.
+  async function handleAdsCustomerPick(rawId: string) {
+    const cleaned = rawId.replace(/-/g, "").trim();
+    setCustomerDraft(rawId);
+    try {
+      const res = await fetch(`/api/ppc/clients/${props.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          googleAdsCustomerId: cleaned || null,
+        }),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(detail.error ?? `HTTP ${res.status}`);
+      }
+      toast.success("Account linked", {
+        description: !props.lastAdsSyncAt
+          ? "Running first sync now — this may take a moment."
+          : "Sync now to pull the latest data.",
+      });
+      // Trigger first sync automatically when we've never synced before.
+      // Only here, not on every save — re-picks of an already-synced
+      // customer shouldn't re-burn 30 days of API calls.
+      if (!props.lastAdsSyncAt && cleaned) {
+        void runSync();
+      }
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error("Couldn't link account", {
+        description: (err as Error).message,
+      });
+    }
+  }
+
   async function refreshAdsCustomers() {
     setRefreshingCustomers(true);
     try {
@@ -91,7 +134,42 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
   const [nameFiltersDraft, setNameFiltersDraft] = useState(
     props.signedCaseNameFilters.join(", "),
   );
+  // Dirty-state indicator for the tag + filters Save button so the operator
+  // sees they have unsaved changes (the comboboxes auto-save, these don't).
+  const [tagFiltersDirty, setTagFiltersDirty] = useState(false);
   const [companyDraft, setCompanyDraft] = useState(props.callrailCompanyId ?? "");
+
+  // Auto-save the CallRail company on selection, and — if there's no prior
+  // CallRail sync — fire off the first sync immediately. Mirrors the Ads
+  // picker behavior so both integrations follow the same "pick → done"
+  // model.
+  async function handleCallrailCompanyPick(rawId: string) {
+    setCompanyDraft(rawId);
+    try {
+      const res = await fetch(`/api/ppc/clients/${props.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callrailCompanyId: rawId || null }),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(detail.error ?? `HTTP ${res.status}`);
+      }
+      toast.success("CallRail company linked", {
+        description: !props.lastCallrailSyncAt
+          ? "Running first sync now — this may take a moment."
+          : "Sync now to pull the latest data.",
+      });
+      if (!props.lastCallrailSyncAt && rawId) {
+        void runSync();
+      }
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error("Couldn't link company", {
+        description: (err as Error).message,
+      });
+    }
+  }
   const [customerDraft, setCustomerDraft] = useState(
     props.googleAdsCustomerId ?? "",
   );
@@ -271,7 +349,9 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                 <div className="mt-0.5 font-mono">{props.googleAdsCustomerId}</div>
               </div>
               <div className="text-xs text-muted-foreground">
-                Last synced {relTime(props.lastAdsSyncAt)}
+                {props.lastAdsSyncAt
+                  ? `Last synced ${relTime(props.lastAdsSyncAt)}`
+                  : "Awaiting first sync."}
               </div>
               <a
                 href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
@@ -373,10 +453,13 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
             </div>
           )}
 
-          {/* Customer-id picker. Renders a dropdown sourced from the
-              cached discovery (listAccessibleCustomers + descriptive_name)
-              when available, with a refresh button. Falls back to a
-              free-text input when no discovery data is on file. */}
+          {/* Customer-id picker. Renders a searchable combobox sourced from
+              the cached discovery (listAccessibleCustomers + descriptive_name)
+              when available, fuzzy-prefiltered to the PPC client's name.
+              Selection auto-saves; if there's no prior sync we also kick off
+              the first sync immediately so the operator doesn't have to
+              click Sync now. Falls back to a free-text input when no
+              discovery data is on file. */}
           {props.googleAdsTokenSaved && (
             <div className="rounded-md border bg-muted/20 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -397,41 +480,32 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
               {props.googleAdsDiscoveredCustomers &&
               props.googleAdsDiscoveredCustomers.length > 0 ? (
                 <>
-                  <div className="flex gap-2">
-                    <Select
-                      id="customerId"
-                      value={customerDraft}
-                      onChange={(e) => setCustomerDraft(e.target.value)}
-                    >
-                      <option value="">— Select an account —</option>
-                      {props.googleAdsDiscoveredCustomers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name
-                            ? `${c.name} (${formatCustomerId(c.id)})`
-                            : formatCustomerId(c.id)}
-                        </option>
-                      ))}
-                    </Select>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() =>
-                        saveField(
-                          { googleAdsCustomerId: customerDraft || null },
-                          "Customer id saved",
-                        ).catch((e) => toast.error((e as Error).message))
-                      }
-                      disabled={pending || !customerDraft}
-                    >
-                      Save
-                    </Button>
-                  </div>
+                  <ComboBox
+                    id="customerId"
+                    options={props.googleAdsDiscoveredCustomers.map((c) => {
+                      const linked = props.linkedAdsCustomerMap[c.id];
+                      return {
+                        id: c.id,
+                        name: c.name,
+                        meta:
+                          linked && linked.length > 0
+                            ? `Already linked to: ${linked.join(", ")}`
+                            : null,
+                      };
+                    })}
+                    value={customerDraft}
+                    onChange={handleAdsCustomerPick}
+                    placeholder="— Select an account —"
+                    prefilterText={props.name}
+                    formatId={formatCustomerId}
+                    disabled={pending || syncing}
+                  />
                   <p className="text-xs text-muted-foreground">
                     {props.googleAdsDiscoveredCustomers.length} account
                     {props.googleAdsDiscoveredCustomers.length === 1 ? "" : "s"}
-                    {" "}visible to the connected Google user. If you don&apos;t
-                    see the right one, hit Refresh after granting access in
-                    Google Ads.
+                    {" "}visible. Pre-filtered to <em>{props.name}</em> —
+                    clear the search box to see them all. Selection saves
+                    automatically.
                   </p>
                 </>
               ) : (
@@ -448,12 +522,7 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() =>
-                        saveField(
-                          { googleAdsCustomerId: customerDraft || null },
-                          "Customer id saved",
-                        ).catch((e) => toast.error((e as Error).message))
-                      }
+                      onClick={() => handleAdsCustomerPick(customerDraft)}
                       disabled={pending}
                     >
                       Save
@@ -486,60 +555,88 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
             </div>
           ) : null}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <Label htmlFor="callrailCompany">CallRail company</Label>
-              {props.callrailCompanyChoices ? (
-                <Select
-                  id="callrailCompany"
-                  value={companyDraft}
-                  onChange={(e) => setCompanyDraft(e.target.value)}
-                >
-                  <option value="">— Select —</option>
-                  {props.callrailCompanyChoices.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </Select>
-              ) : (
+          <div>
+            <Label htmlFor="callrailCompany">CallRail company</Label>
+            {props.callrailCompanyChoices ? (
+              <ComboBox
+                id="callrailCompany"
+                options={props.callrailCompanyChoices.map((c) => {
+                  const linked = props.linkedCallrailCompanyMap[c.id];
+                  return {
+                    id: c.id,
+                    name: c.name,
+                    meta:
+                      linked && linked.length > 0
+                        ? `Already linked to: ${linked.join(", ")}`
+                        : null,
+                  };
+                })}
+                value={companyDraft}
+                onChange={handleCallrailCompanyPick}
+                placeholder="— Select a company —"
+                prefilterText={props.name}
+                disabled={pending || syncing}
+              />
+            ) : (
+              <div className="flex gap-2">
                 <Input
                   id="callrailCompany"
                   value={companyDraft}
                   onChange={(e) => setCompanyDraft(e.target.value)}
                   placeholder="CallRail company id"
                 />
-              )}
-            </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCallrailCompanyPick(companyDraft)}
+                  disabled={pending}
+                >
+                  Save
+                </Button>
+              </div>
+            )}
+            <p className="mt-1 text-xs text-muted-foreground">
+              Pre-filtered to <em>{props.name}</em>. Selection saves
+              automatically.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label htmlFor="signedTag">Signed-case tag</Label>
               <Input
                 id="signedTag"
                 value={tagDraft}
-                onChange={(e) => setTagDraft(e.target.value)}
+                onChange={(e) => {
+                  setTagDraft(e.target.value);
+                  setTagFiltersDirty(true);
+                }}
                 placeholder="Signed"
               />
               <p className="mt-1 text-xs text-muted-foreground">
                 Calls tagged with this name count as signed cases.
               </p>
             </div>
-          </div>
-          <div>
-            <Label htmlFor="nameFilters">
-              Tracking-number name filters
-            </Label>
-            <Input
-              id="nameFilters"
-              value={nameFiltersDraft}
-              onChange={(e) => setNameFiltersDraft(e.target.value)}
-              placeholder="PPC, Ads, GMB"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Comma-separated substrings. A signed call only counts if its
-              tracking number&apos;s name contains one of these (case-
-              insensitive). Leave blank to count every tagged call regardless
-              of which number it came in on.
-            </p>
+            <div>
+              <Label htmlFor="nameFilters">
+                Tracking-number name filters
+              </Label>
+              <Input
+                id="nameFilters"
+                value={nameFiltersDraft}
+                onChange={(e) => {
+                  setNameFiltersDraft(e.target.value);
+                  setTagFiltersDirty(true);
+                }}
+                placeholder="PPC, Ads, GMB"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Comma-separated substrings. A signed call only counts if its
+                tracking number&apos;s name contains one of these
+                (case-insensitive). Leave blank to count every tagged call
+                regardless of which number it came in on.
+              </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -552,20 +649,28 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                   .filter(Boolean);
                 saveField(
                   {
-                    callrailCompanyId: companyDraft || null,
                     signedCaseTag: tagDraft || "Signed",
                     signedCaseNameFilters: filters,
                   },
-                  "CallRail settings saved",
-                ).catch((e) => toast.error((e as Error).message));
+                  "Tag & filters saved",
+                )
+                  .then(() => setTagFiltersDirty(false))
+                  .catch((e) => toast.error((e as Error).message));
               }}
-              disabled={pending}
+              disabled={pending || !tagFiltersDirty}
             >
-              Save CallRail settings
+              {tagFiltersDirty ? "Save tag & filters" : "Saved"}
             </Button>
+            {tagFiltersDirty && (
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                Unsaved changes
+              </span>
+            )}
             {props.callrailLinked && (
               <span className="text-xs text-muted-foreground">
-                Last synced {relTime(props.lastCallrailSyncAt)}
+                {props.lastCallrailSyncAt
+                  ? `Last synced ${relTime(props.lastCallrailSyncAt)}`
+                  : "Awaiting first sync."}
               </span>
             )}
           </div>

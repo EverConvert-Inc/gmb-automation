@@ -7,7 +7,11 @@ import { PpcClientAdminCard } from "@/components/ppc-client-admin-card";
 import { db } from "@/lib/db/client";
 import { ppcClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
-import { listExistingAdsCredentials } from "@/lib/queries";
+import {
+  getLinkedAdsCustomerMap,
+  getLinkedCallrailCompanyMap,
+  listExistingAdsCredentials,
+} from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +58,14 @@ export default async function PpcClientDetailPage({
   // one-click reuse rather than forcing a fresh OAuth round every time a
   // PPC client is added.
   const existingAdsCredentials = await listExistingAdsCredentials();
+
+  // Linkage maps power the "Already linked to: …" disambiguation hint in
+  // the customer / company comboboxes. Excludes the current client so we
+  // don't tell the operator they're already linked to themselves.
+  const [linkedAdsCustomerMap, linkedCallrailCompanyMap] = await Promise.all([
+    getLinkedAdsCustomerMap(id),
+    getLinkedCallrailCompanyMap(id),
+  ]);
 
   // Auto-attach the most-recently-used Google Ads credential when a PPC
   // client is loaded with nothing connected yet. Saves the operator a
@@ -171,6 +183,8 @@ export default async function PpcClientDetailPage({
         callrailCompanyChoices={callrailCompanyChoices}
         callrailListError={callrailListError}
         existingAdsCredentials={existingAdsCredentials}
+        linkedAdsCustomerMap={linkedAdsCustomerMap}
+        linkedCallrailCompanyMap={linkedCallrailCompanyMap}
       />
     </div>
   );
