@@ -29,13 +29,13 @@ type CallRailCall = {
   start_time: string;
   duration: number | null;
   tags: Array<{ id: number; name: string } | string> | null;
-  // CallRail returns the tracking number's metadata under `tracker` when
-  // requested via the fields parameter. The tracker's `name` is what the
-  // CallRail user typed into "Tracking number name" — that's what we
-  // substring-match against the per-client filter list.
-  tracker?: { name?: string | null; phone_number?: string | null } | null;
-  // Some accounts surface this as a top-level convenience field instead.
-  tracking_phone_number_name?: string | null;
+  // CallRail v3 doesn't surface a "tracker name" field directly. The closest
+  // thing — and what operators actually mean by "the tracking number's
+  // name" — is `source_name`, the label set on the tracking source when
+  // the number was created. `formatted_tracking_source` carries the same
+  // text with formatting; we read both as fallbacks.
+  source_name?: string | null;
+  formatted_tracking_source?: string | null;
 };
 
 // CallRail's "account" is the agency. Most setups have one. We list and
@@ -104,12 +104,14 @@ export async function pullCallsForCompany(
     url.searchParams.set("per_page", "250");
     url.searchParams.set("start_date", fromDate);
     url.searchParams.set("end_date", toDate);
-    // Ask for both the modern `tracker` object (preferred) and the legacy
-    // `tracking_phone_number_name` field so we work across older CallRail
-    // accounts that don't return the tracker shape.
+    // CallRail v3 accepts only the documented field names — `tracker` and
+    // `tracking_phone_number_name` are 400-rejected. `source_name` is the
+    // tracking source label (what users typically call "the tracking
+    // number's name"); `formatted_tracking_source` is the same data
+    // formatted, kept as a fallback.
     url.searchParams.set(
       "fields",
-      "tags,duration,tracker,tracking_phone_number_name",
+      "tags,duration,source_name,formatted_tracking_source",
     );
     const res = await fetch(url.toString(), { headers: authHeaders() });
     if (!res.ok) {
@@ -145,8 +147,8 @@ export async function pullCallsForCompany(
     const hasTag = tagNames.some((t) => t.toLowerCase() === wantTag);
     if (hasTag) {
       const trackerName = (
-        call.tracker?.name ??
-        call.tracking_phone_number_name ??
+        call.source_name ??
+        call.formatted_tracking_source ??
         ""
       ).toLowerCase();
       const nameMatches =
