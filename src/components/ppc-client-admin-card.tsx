@@ -10,6 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/form";
 
 type CallrailCompanyOption = { id: string; name: string };
+type ExistingAdsCredential = {
+  id: string;
+  accountEmail: string;
+  updatedAt: Date;
+};
 
 export type PpcClientAdminProps = {
   id: string;
@@ -27,6 +32,7 @@ export type PpcClientAdminProps = {
   lastSyncError: string | null;
   callrailCompanyChoices: CallrailCompanyOption[] | null;
   callrailListError: string | null;
+  existingAdsCredentials: ExistingAdsCredential[];
 };
 
 function relTime(d: Date | string | null): string {
@@ -46,11 +52,57 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [syncing, setSyncing] = useState(false);
+  const [attachingId, setAttachingId] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState(props.signedCaseTag);
   const [companyDraft, setCompanyDraft] = useState(props.callrailCompanyId ?? "");
   const [customerDraft, setCustomerDraft] = useState(
     props.googleAdsCustomerId ?? "",
   );
+
+  async function attachExisting(credentialId: string) {
+    setAttachingId(credentialId);
+    try {
+      const res = await fetch(`/api/ppc/clients/${props.id}/attach-ads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oauthCredentialId: credentialId }),
+      });
+      const detail = (await res.json().catch(() => ({}))) as {
+        status?: string;
+        customerId?: string;
+        accountEmail?: string;
+        errorMessage?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(detail.error ?? `HTTP ${res.status}`);
+      }
+      if (detail.status === "linked") {
+        toast.success(`Linked to customer ${detail.customerId}`, {
+          description: `Using ${detail.accountEmail}. Run Sync now to backfill.`,
+        });
+      } else if (detail.status === "needs_picker") {
+        toast.success("Connection attached", {
+          description: `${detail.accountEmail} manages multiple customer ids — paste the right one below.`,
+        });
+      } else if (detail.status === "no_customers") {
+        toast.warning("Attached but no Ads accounts visible", {
+          description: `${detail.accountEmail} doesn't have access to any Google Ads customers.`,
+        });
+      } else if (detail.status === "list_failed") {
+        toast.warning("Attached, but couldn't list accounts", {
+          description: detail.errorMessage ?? "See the page banner for details.",
+        });
+      }
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error("Couldn't attach connection", {
+        description: (err as Error).message,
+      });
+    } finally {
+      setAttachingId(null);
+    }
+  }
 
   async function saveField(body: Record<string, unknown>, successMsg: string) {
     const res = await fetch(`/api/ppc/clients/${props.id}`, {
@@ -207,17 +259,61 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-muted-foreground">
-                Authorize the agency Google account that has access to this
-                client&apos;s Google Ads. We&apos;ll pull campaigns, clicks,
-                conversions, phone calls, cost and impressions daily.
-              </p>
-              <a
-                href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
-                className={buttonClasses()}
-              >
-                Connect Google Ads
-              </a>
+              {props.existingAdsCredentials.length > 0 ? (
+                <>
+                  <p className="text-muted-foreground">
+                    Reuse a Google account you&apos;ve already connected.
+                    You&apos;ll only need to pick the customer id for this
+                    client &mdash; no OAuth round-trip.
+                  </p>
+                  <div className="space-y-1.5">
+                    {props.existingAdsCredentials.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => attachExisting(c.id)}
+                        disabled={attachingId !== null}
+                        className="flex w-full items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-left text-sm hover:bg-muted/30 disabled:opacity-60"
+                      >
+                        <span>
+                          <span className="font-medium">{c.accountEmail}</span>
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            connected {relTime(c.updatedAt)}
+                          </span>
+                        </span>
+                        <span className="text-xs font-medium text-brand">
+                          {attachingId === c.id ? "Linking…" : "Use this"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer hover:text-foreground">
+                      Or connect a different Google account
+                    </summary>
+                    <a
+                      href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
+                      className={`mt-2 inline-block ${buttonClasses("outline", "sm")}`}
+                    >
+                      Connect a different Google account
+                    </a>
+                  </details>
+                </>
+              ) : (
+                <>
+                  <p className="text-muted-foreground">
+                    Authorize the agency Google account that has access to this
+                    client&apos;s Google Ads. We&apos;ll pull campaigns, clicks,
+                    conversions, phone calls, cost and impressions daily.
+                  </p>
+                  <a
+                    href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
+                    className={buttonClasses()}
+                  >
+                    Connect Google Ads
+                  </a>
+                </>
+              )}
             </div>
           )}
 

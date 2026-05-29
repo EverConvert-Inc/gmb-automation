@@ -6,6 +6,7 @@ import {
   locationDailyMetrics,
   locationPerformanceDaily,
   locations,
+  oauthCredentials,
   ppcAdsDaily,
   ppcCallrailDaily,
   ppcCampaigns,
@@ -1008,6 +1009,23 @@ export type PpcClientListItem = {
   lastCallrailSyncAt: Date | null;
   lastSyncError: string | null;
 };
+
+// Lists every saved Google Ads OAuth credential. Used by the PPC-client
+// admin page to offer "reuse existing connection" instead of forcing a
+// fresh OAuth round-trip every time a new PPC client is added.
+export async function listExistingAdsCredentials(): Promise<
+  Array<{ id: string; accountEmail: string; updatedAt: Date }>
+> {
+  const rows = await db.query.oauthCredentials.findMany({
+    where: eq(oauthCredentials.provider, "google_ads"),
+    orderBy: desc(oauthCredentials.updatedAt),
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    accountEmail: r.accountEmail,
+    updatedAt: r.updatedAt,
+  }));
+}
 
 export async function listPpcClients(): Promise<PpcClientListItem[]> {
   const rows = await db.query.ppcClients.findMany({

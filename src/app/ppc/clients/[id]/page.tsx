@@ -7,6 +7,7 @@ import { PpcClientAdminCard } from "@/components/ppc-client-admin-card";
 import { db } from "@/lib/db/client";
 import { ppcClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
+import { listExistingAdsCredentials } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,11 @@ export default async function PpcClientDetailPage({
   } catch (e) {
     callrailListError = (e as Error).message;
   }
+
+  // Surface existing google_ads credentials so the admin card can offer
+  // one-click reuse rather than forcing a fresh OAuth round every time a
+  // PPC client is added.
+  const existingAdsCredentials = await listExistingAdsCredentials();
 
   return (
     <div className="space-y-6">
@@ -125,6 +131,7 @@ export default async function PpcClientDetailPage({
         lastSyncError={row.lastSyncError}
         callrailCompanyChoices={callrailCompanyChoices}
         callrailListError={callrailListError}
+        existingAdsCredentials={existingAdsCredentials}
       />
     </div>
   );
