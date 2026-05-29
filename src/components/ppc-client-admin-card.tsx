@@ -16,6 +16,7 @@ export type PpcClientAdminProps = {
   name: string;
   slug: string;
   isActive: boolean;
+  googleAdsTokenSaved: boolean;
   googleAdsLinked: boolean;
   googleAdsCustomerId: string | null;
   callrailLinked: boolean;
@@ -183,6 +184,20 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
               <div className="text-xs text-muted-foreground">
                 Last synced {relTime(props.lastAdsSyncAt)}
               </div>
+              <a
+                href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
+                className={buttonClasses("outline", "sm")}
+              >
+                Reconnect Google Ads
+              </a>
+            </div>
+          ) : props.googleAdsTokenSaved ? (
+            <div className="space-y-3">
+              <p className="text-muted-foreground">
+                OAuth token saved &mdash; we still need a customer id to know
+                which Google Ads account to query. Paste the 10-digit id below
+                or click reconnect to retry account discovery.
+              </p>
               <a
                 href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
                 className={buttonClasses("outline", "sm")}

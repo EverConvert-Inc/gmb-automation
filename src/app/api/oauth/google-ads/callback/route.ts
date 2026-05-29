@@ -147,19 +147,36 @@ export async function GET(req: Request) {
 
   // Try to auto-bind a customer id. If the connected user manages exactly
   // one Google Ads account, we link it immediately. Otherwise we save the
-  // token and hand the user back to the admin page with a picker.
+  // token and hand the user back to the admin page with a picker. Always
+  // save the token first so a customer-discovery failure doesn't force the
+  // user back through OAuth — they can paste a customer id manually.
   let autoBoundCustomerId: string | null = null;
   let customerError: string | null = null;
+  let customerErrorMessage: string | null = null;
   try {
-    const customers = await listAccessibleCustomers(tokens.refresh_token);
+    // Wrap with a hard timeout — google-ads-api uses gRPC under the hood
+    // and can hang indefinitely on network blips; without this the user
+    // sits on a spinner with no feedback.
+    const customers = await Promise.race([
+      listAccessibleCustomers(tokens.refresh_token),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Timed out after 15s")),
+          15000,
+        ),
+      ),
+    ]);
     if (customers.length === 1) {
       autoBoundCustomerId = customers[0].customerId;
     } else if (customers.length === 0) {
       customerError = "no_customers";
+    } else {
+      customerError = "needs_picker";
     }
   } catch (e) {
     console.error("listAccessibleCustomers failed", e);
     customerError = "list_failed";
+    customerErrorMessage = (e as Error).message;
   }
 
   await db
@@ -167,10 +184,17 @@ export async function GET(req: Request) {
     .set({
       googleAdsOauthTokenId: credId,
       ...(autoBoundCustomerId ? { googleAdsCustomerId: autoBoundCustomerId } : {}),
+      lastSyncError: customerErrorMessage,
       updatedAt: new Date(),
     })
     .where(eq(ppcClients.id, ppcClientId));
 
+  if (customerError === "list_failed" && customerErrorMessage) {
+    return redirectWith(url, ppcClientId, {
+      ads_link: "list_failed",
+      reason: customerErrorMessage.slice(0, 300),
+    });
+  }
   if (customerError) {
     return redirectWith(url, ppcClientId, { ads_link: customerError });
   }

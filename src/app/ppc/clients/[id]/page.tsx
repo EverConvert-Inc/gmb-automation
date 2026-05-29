@@ -27,9 +27,12 @@ export default async function PpcClientDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ ads_link?: string }>;
+  searchParams: Promise<{ ads_link?: string; reason?: string }>;
 }) {
-  const [{ id }, { ads_link }] = await Promise.all([params, searchParams]);
+  const [{ id }, { ads_link, reason }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const row = await db.query.ppcClients.findFirst({
     where: eq(ppcClients.id, id),
   });
@@ -84,6 +87,19 @@ export default async function PpcClientDetailPage({
           this client&apos;s ads and reconnect.
         </Banner>
       )}
+      {ads_link === "list_failed" && (
+        <Banner
+          tone="warning"
+          title="Connected, but we couldn't list Google Ads accounts"
+        >
+          Your token is saved &mdash; no need to reconnect. The discovery call
+          failed with: <code>{reason ?? "unknown error"}</code>. Common causes:
+          the developer token isn&apos;t approved yet (Google Ads &rarr; API
+          Center), the OAuth client doesn&apos;t carry the{" "}
+          <code>adwords</code> scope, or the connected Google account has no
+          Ads access. You can also paste the customer id manually below.
+        </Banner>
+      )}
       {ads_link === "failed" && (
         <Banner tone="error" title="Google Ads connection failed">
           The OAuth handoff didn&apos;t complete. Try connecting again from
@@ -96,6 +112,7 @@ export default async function PpcClientDetailPage({
         name={row.name}
         slug={row.slug}
         isActive={row.isActive}
+        googleAdsTokenSaved={row.googleAdsOauthTokenId !== null}
         googleAdsLinked={
           row.googleAdsOauthTokenId !== null && row.googleAdsCustomerId !== null
         }

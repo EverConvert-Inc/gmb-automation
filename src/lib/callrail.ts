@@ -75,7 +75,9 @@ export type CallrailDailyTotals = {
 
 // Walks every call in the window and groups by (day in UTC). Signed cases =
 // count of calls that carry the configured tag (case-insensitive). We page
-// through all results — CallRail caps per_page at 250.
+// through all results — CallRail caps per_page at 250. CallRail v3 doesn't
+// expose a `/companies/{id}/calls.json` endpoint; we use the account-scoped
+// `/calls.json` and filter by company_id.
 export async function pullCallsForCompany(
   companyId: string,
   fromDate: string,
@@ -86,9 +88,8 @@ export async function pullCallsForCompany(
   const calls: CallRailCall[] = [];
   let page = 1;
   while (true) {
-    const url = new URL(
-      `${BASE_URL}/v3/a/${accountId}/companies/${companyId}/calls.json`,
-    );
+    const url = new URL(`${BASE_URL}/v3/a/${accountId}/calls.json`);
+    url.searchParams.set("company_id", companyId);
     url.searchParams.set("page", String(page));
     url.searchParams.set("per_page", "250");
     url.searchParams.set("start_date", fromDate);
