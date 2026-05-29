@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   date,
   integer,
@@ -313,6 +314,129 @@ export const serpScanJobs = pgTable("serp_scan_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ---------------------------------------------------------------------------
+// PPC reporting (Google Ads + CallRail)
+// ---------------------------------------------------------------------------
+
+export const ppcClients = pgTable(
+  "ppc_clients",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    isActive: boolean("is_active").notNull().default(true),
+    // Set after the OAuth flow completes. Distinct from the OAuth token id
+    // (which lives in oauth_credentials) because one Google account can
+    // manage many Google Ads customer ids and the user picks one to bind.
+    googleAdsCustomerId: text("google_ads_customer_id"),
+    googleAdsOauthTokenId: uuid("google_ads_oauth_token_id").references(
+      () => oauthCredentials.id,
+      { onDelete: "set null" },
+    ),
+    callrailCompanyId: text("callrail_company_id"),
+    signedCaseTag: text("signed_case_tag").notNull().default("signed"),
+    lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
+    lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
+    lastSyncError: text("last_sync_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    activeIdx: index("ppc_clients_active_idx").on(t.isActive),
+  }),
+);
+
+export const ppcCampaigns = pgTable(
+  "ppc_campaigns",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    googleAdsCampaignId: text("google_ads_campaign_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_campaigns_unique").on(t.ppcClientId, t.googleAdsCampaignId),
+    clientIdx: index("ppc_campaigns_client_idx").on(t.ppcClientId),
+  }),
+);
+
+export const ppcAdsDaily = pgTable(
+  "ppc_ads_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => ppcCampaigns.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    // Google Ads supports fractional conversions (counting rules, etc).
+    conversions: numeric("conversions", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    // Google Ads stores cost in micros (1/1,000,000 of currency unit). Bigint
+    // keeps us safe past a $9k/day per-campaign threshold.
+    costMicros: bigint("cost_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    phoneCalls: integer("phone_calls").notNull().default(0),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_ads_daily_unique").on(t.campaignId, t.date),
+    clientDateIdx: index("ppc_ads_daily_client_date_idx").on(
+      t.ppcClientId,
+      t.date,
+    ),
+  }),
+);
+
+export const ppcCallrailDaily = pgTable(
+  "ppc_callrail_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    totalCalls: integer("total_calls").notNull().default(0),
+    signedCases: integer("signed_cases").notNull().default(0),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_callrail_daily_unique").on(t.ppcClientId, t.date),
+  }),
+);
+
+export const ppcSyncJobs = pgTable("ppc_sync_jobs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Null for "sync all" cron runs; populated for per-client "sync now".
+  ppcClientId: uuid("ppc_client_id").references(() => ppcClients.id, {
+    onDelete: "cascade",
+  }),
+  kind: text("kind").notNull(), // 'google_ads' | 'callrail'
+  status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  errorMessage: text("error_message"),
+  triggeredBy: text("triggered_by").notNull().default("scheduled"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type Client = typeof clients.$inferSelect;
 export type Location = typeof locations.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
@@ -326,3 +450,8 @@ export type OauthCredential = typeof oauthCredentials.$inferSelect;
 export type TrackedKeyword = typeof trackedKeywords.$inferSelect;
 export type SerpRanking = typeof serpRankings.$inferSelect;
 export type SerpScanJob = typeof serpScanJobs.$inferSelect;
+export type PpcClient = typeof ppcClients.$inferSelect;
+export type PpcCampaign = typeof ppcCampaigns.$inferSelect;
+export type PpcAdsDaily = typeof ppcAdsDaily.$inferSelect;
+export type PpcCallrailDaily = typeof ppcCallrailDaily.$inferSelect;
+export type PpcSyncJob = typeof ppcSyncJobs.$inferSelect;

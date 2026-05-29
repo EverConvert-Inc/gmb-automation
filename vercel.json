@@ -11,6 +11,14 @@
     {
       "path": "/api/cron/serp-scan",
       "schedule": "0 9 * * 4"
+    },
+    {
+      "path": "/api/cron/ppc-google-ads-sync",
+      "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/cron/ppc-callrail-sync",
+      "schedule": "40 6 * * *"
     }
   ]
 }

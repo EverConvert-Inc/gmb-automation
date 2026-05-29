@@ -6,6 +6,10 @@ import {
   locationDailyMetrics,
   locationPerformanceDaily,
   locations,
+  ppcAdsDaily,
+  ppcCallrailDaily,
+  ppcCampaigns,
+  ppcClients,
   reviews,
   scanPoints,
   scans,
@@ -984,4 +988,273 @@ export async function getRankingsOverview(
       geoBare,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// PPC report queries
+// ---------------------------------------------------------------------------
+
+export type PpcClientListItem = {
+  id: string;
+  name: string;
+  slug: string;
+  isActive: boolean;
+  googleAdsLinked: boolean;
+  googleAdsCustomerId: string | null;
+  callrailLinked: boolean;
+  callrailCompanyId: string | null;
+  signedCaseTag: string;
+  lastAdsSyncAt: Date | null;
+  lastCallrailSyncAt: Date | null;
+  lastSyncError: string | null;
+};
+
+export async function listPpcClients(): Promise<PpcClientListItem[]> {
+  const rows = await db.query.ppcClients.findMany({
+    orderBy: (cols, ops) => ops.asc(cols.name),
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    isActive: r.isActive,
+    googleAdsLinked:
+      r.googleAdsOauthTokenId !== null && r.googleAdsCustomerId !== null,
+    googleAdsCustomerId: r.googleAdsCustomerId,
+    callrailLinked: r.callrailCompanyId !== null,
+    callrailCompanyId: r.callrailCompanyId,
+    signedCaseTag: r.signedCaseTag,
+    lastAdsSyncAt: r.lastAdsSyncAt,
+    lastCallrailSyncAt: r.lastCallrailSyncAt,
+    lastSyncError: r.lastSyncError,
+  }));
+}
+
+export type PpcKpis = {
+  clicks: number;
+  impressions: number;
+  conversions: number;
+  phoneCalls: number;
+  costMicros: bigint;
+};
+
+export type PpcReportRow = {
+  ppcClientId: string;
+  ppcClientName: string;
+  campaignId: string;
+  campaignName: string;
+  clicks: number;
+  impressions: number;
+  conversions: number;
+  phoneCalls: number;
+  costMicros: bigint;
+  signedCases: number | null; // null = client not linked to CallRail
+};
+
+export type PpcByDayPoint = {
+  ppcClientId: string;
+  ppcClientName: string;
+  date: string; // YYYY-MM-DD
+  phoneCalls: number;
+};
+
+export type PpcReport = {
+  kpis: PpcKpis;
+  kpisPrior: PpcKpis;
+  rows: PpcReportRow[];
+  byDay: PpcByDayPoint[];
+  clientTotals: Array<{
+    ppcClientId: string;
+    ppcClientName: string;
+    clicks: number;
+    impressions: number;
+    conversions: number;
+    phoneCalls: number;
+    costMicros: bigint;
+    signedCases: number | null;
+  }>;
+};
+
+async function aggregateKpis(from: string, to: string): Promise<PpcKpis> {
+  const [row] = await db
+    .select({
+      clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
+      impressions: sql<number | null>`sum(${ppcAdsDaily.impressions})::int`,
+      conversions: sql<string | null>`sum(${ppcAdsDaily.conversions})`,
+      phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
+      costMicros: sql<string | null>`sum(${ppcAdsDaily.costMicros})`,
+    })
+    .from(ppcAdsDaily)
+    .where(
+      and(
+        gte(ppcAdsDaily.date, from),
+        sql`${ppcAdsDaily.date} <= ${to}`,
+      ),
+    );
+  return {
+    clicks: row?.clicks ?? 0,
+    impressions: row?.impressions ?? 0,
+    conversions: row?.conversions ? Number(row.conversions) : 0,
+    phoneCalls: row?.phoneCalls ?? 0,
+    costMicros: row?.costMicros ? BigInt(row.costMicros) : 0n,
+  };
+}
+
+export async function getPpcReport({
+  from,
+  to,
+}: {
+  from: string; // YYYY-MM-DD
+  to: string; // YYYY-MM-DD
+}): Promise<PpcReport> {
+  // Prior period is the immediately-preceding window of the same length so
+  // the KPI delta pills have a sensible comparison point.
+  const msPerDay = 86_400_000;
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
+  const toMs = new Date(to + "T00:00:00Z").getTime();
+  const lengthDays = Math.max(0, Math.round((toMs - fromMs) / msPerDay)) + 1;
+  const priorFrom = new Date(fromMs - lengthDays * msPerDay)
+    .toISOString()
+    .slice(0, 10);
+  const priorTo = new Date(fromMs - msPerDay).toISOString().slice(0, 10);
+
+  const [kpis, kpisPrior] = await Promise.all([
+    aggregateKpis(from, to),
+    aggregateKpis(priorFrom, priorTo),
+  ]);
+
+  // Per (client × campaign) totals for the table.
+  const campaignRows = await db
+    .select({
+      ppcClientId: ppcClients.id,
+      ppcClientName: ppcClients.name,
+      campaignId: ppcCampaigns.id,
+      campaignName: ppcCampaigns.name,
+      clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
+      impressions: sql<number | null>`sum(${ppcAdsDaily.impressions})::int`,
+      conversions: sql<string | null>`sum(${ppcAdsDaily.conversions})`,
+      phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
+      costMicros: sql<string | null>`sum(${ppcAdsDaily.costMicros})`,
+    })
+    .from(ppcAdsDaily)
+    .innerJoin(ppcCampaigns, eq(ppcCampaigns.id, ppcAdsDaily.campaignId))
+    .innerJoin(ppcClients, eq(ppcClients.id, ppcAdsDaily.ppcClientId))
+    .where(
+      and(
+        gte(ppcAdsDaily.date, from),
+        sql`${ppcAdsDaily.date} <= ${to}`,
+      ),
+    )
+    .groupBy(
+      ppcClients.id,
+      ppcClients.name,
+      ppcCampaigns.id,
+      ppcCampaigns.name,
+    );
+
+  // Per-client signed-case totals (joined separately so the row table doesn't
+  // duplicate signed counts across campaigns).
+  const callrailRows = await db
+    .select({
+      ppcClientId: ppcClients.id,
+      signedCases: sql<number | null>`sum(${ppcCallrailDaily.signedCases})::int`,
+    })
+    .from(ppcCallrailDaily)
+    .innerJoin(ppcClients, eq(ppcClients.id, ppcCallrailDaily.ppcClientId))
+    .where(
+      and(
+        gte(ppcCallrailDaily.date, from),
+        sql`${ppcCallrailDaily.date} <= ${to}`,
+      ),
+    )
+    .groupBy(ppcClients.id);
+  const signedByClient = new Map<string, number>();
+  for (const r of callrailRows) {
+    signedByClient.set(r.ppcClientId, r.signedCases ?? 0);
+  }
+  // Track which clients have *any* CallRail data so we can render `—` vs `0`.
+  const callrailLinkedSet = new Set(
+    (
+      await db
+        .select({ id: ppcClients.id })
+        .from(ppcClients)
+        .where(sql`${ppcClients.callrailCompanyId} is not null`)
+    ).map((r) => r.id),
+  );
+
+  // Phone calls by day for the chart, per client.
+  const byDayRows = await db
+    .select({
+      ppcClientId: ppcClients.id,
+      ppcClientName: ppcClients.name,
+      date: ppcAdsDaily.date,
+      phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
+    })
+    .from(ppcAdsDaily)
+    .innerJoin(ppcClients, eq(ppcClients.id, ppcAdsDaily.ppcClientId))
+    .where(
+      and(
+        gte(ppcAdsDaily.date, from),
+        sql`${ppcAdsDaily.date} <= ${to}`,
+      ),
+    )
+    .groupBy(ppcClients.id, ppcClients.name, ppcAdsDaily.date)
+    .orderBy(ppcAdsDaily.date);
+
+  const rows: PpcReportRow[] = campaignRows.map((r) => ({
+    ppcClientId: r.ppcClientId,
+    ppcClientName: r.ppcClientName,
+    campaignId: r.campaignId,
+    campaignName: r.campaignName,
+    clicks: r.clicks ?? 0,
+    impressions: r.impressions ?? 0,
+    conversions: r.conversions ? Number(r.conversions) : 0,
+    phoneCalls: r.phoneCalls ?? 0,
+    costMicros: r.costMicros ? BigInt(r.costMicros) : 0n,
+    signedCases: callrailLinkedSet.has(r.ppcClientId)
+      ? signedByClient.get(r.ppcClientId) ?? 0
+      : null,
+  }));
+
+  // Aggregate per-client totals from campaign rows.
+  const clientTotalsMap = new Map<string, PpcReport["clientTotals"][number]>();
+  for (const r of rows) {
+    const cur = clientTotalsMap.get(r.ppcClientId) ?? {
+      ppcClientId: r.ppcClientId,
+      ppcClientName: r.ppcClientName,
+      clicks: 0,
+      impressions: 0,
+      conversions: 0,
+      phoneCalls: 0,
+      costMicros: 0n,
+      signedCases: r.signedCases,
+    };
+    cur.clicks += r.clicks;
+    cur.impressions += r.impressions;
+    cur.conversions += r.conversions;
+    cur.phoneCalls += r.phoneCalls;
+    cur.costMicros += r.costMicros;
+    clientTotalsMap.set(r.ppcClientId, cur);
+  }
+
+  const byDay: PpcByDayPoint[] = byDayRows.map((r) => ({
+    ppcClientId: r.ppcClientId,
+    ppcClientName: r.ppcClientName,
+    date: r.date,
+    phoneCalls: r.phoneCalls ?? 0,
+  }));
+
+  return {
+    kpis,
+    kpisPrior,
+    rows: rows.sort(
+      (a, b) =>
+        a.ppcClientName.localeCompare(b.ppcClientName) ||
+        a.campaignName.localeCompare(b.campaignName),
+    ),
+    byDay,
+    clientTotals: Array.from(clientTotalsMap.values()).sort((a, b) =>
+      a.ppcClientName.localeCompare(b.ppcClientName),
+    ),
+  };
 }
