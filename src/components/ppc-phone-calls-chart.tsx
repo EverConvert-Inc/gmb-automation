@@ -117,23 +117,51 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => Math.round(t * yMax));
 
   // Translate a pointer event over the wrapper into the nearest date index.
-  // We work in viewBox coords by using the wrapper's pixel size as the
+  // Works in viewBox coords by using the wrapper's pixel size as the
   // reference (the SVG fills the wrapper via w-full h-auto), so the ratio
-  // applies regardless of CSS scaling.
-  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+  // applies regardless of CSS scaling. Clamps to [0,1] so dragging slightly
+  // off either edge still pins the tooltip to the nearest day rather than
+  // disappearing.
+  function updateHoverFromEvent(e: React.PointerEvent<HTMLDivElement>) {
     if (!wrapperRef.current || dates.length === 0) return;
     const rect = wrapperRef.current.getBoundingClientRect();
     const xPx = e.clientX - rect.left;
     const leftPx = (PAD.left / W) * rect.width;
     const innerWPx = (innerW / W) * rect.width;
     const ratio = (xPx - leftPx) / innerWPx;
-    if (ratio < -0.02 || ratio > 1.02) {
-      setHoverIndex(null);
-      return;
-    }
     const clamped = Math.max(0, Math.min(1, ratio));
     const idx = Math.round(clamped * (dates.length - 1));
     setHoverIndex(idx);
+  }
+
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    // Pointer capture: keep getting pointermove events even if the finger
+    // slides off the chart bounds. Essential for mobile drag-tracking.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Some browsers reject capture on element types they don't support;
+      // safe to ignore — pointermove still fires when on-chart.
+    }
+    updateHoverFromEvent(e);
+  }
+
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    // For mouse, hover-track without requiring a button press. For touch,
+    // pointer capture (set on pointerdown) routes events here while the
+    // finger is down.
+    updateHoverFromEvent(e);
+  }
+
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    // Keep the tooltip visible after a touch ends so the user can read it.
+    // Desktop mouse relies on pointer-leave to clear; this only matters on
+    // touch where leave never fires after a lift.
   }
 
   if (series.length === 0) {
@@ -151,7 +179,6 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
     hoverIndex !== null
       ? ((PAD.left + hoverIndex * xStep) / W) * 100
       : null;
-  const flipLeft = tooltipLeftPct !== null && tooltipLeftPct > 65;
   const hoverDate = hoverIndex !== null ? dates[hoverIndex] : null;
   // Sort tooltip rows by value desc so the visually-prominent line tops
   // the list. Zero-value series fall to the bottom but stay visible.
@@ -166,13 +193,23 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
     <div className="space-y-3">
       <div
         ref={wrapperRef}
-        className="relative overflow-hidden"
+        // touch-pan-y → vertical gestures still scroll the page, horizontal
+        // gestures fall through to pointer events so the user can finger-
+        // scrub left-to-right to reveal each day's values.
+        className="relative touch-pan-y select-none overflow-hidden"
+        onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onPointerLeave={() => setHoverIndex(null)}
       >
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="block h-auto w-full min-w-[600px] text-muted-foreground"
+          // Drop min-width on small screens so the chart fits the viewport
+          // (otherwise it overflows under overflow-hidden and the right
+          // half of the data is clipped on phones). Keep the desktop
+          // minimum so dense ranges stay legible.
+          className="block h-auto w-full text-muted-foreground sm:min-w-[600px]"
           style={{ pointerEvents: "none" }}
         >
           {/* Y gridlines + tick labels */}
@@ -265,16 +302,16 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
             })}
         </svg>
 
-        {/* Floating tooltip */}
+        {/* Floating tooltip. left% is clamped to [4%, 96%] and centered via
+            translateX(-50%) so it stays fully on-screen at any chart width
+            (especially on phones where the chart is ~300px wide). */}
         {hoverIndex !== null && tooltipLeftPct !== null && hoverDate && (
           <div
-            className="pointer-events-none absolute z-10 min-w-[160px] rounded-md border bg-card text-card-foreground shadow-md"
+            className="pointer-events-none absolute z-10 max-w-[calc(100%-16px)] rounded-md border bg-card text-card-foreground shadow-md sm:min-w-[160px]"
             style={{
-              left: `${tooltipLeftPct}%`,
+              left: `${Math.max(4, Math.min(96, tooltipLeftPct))}%`,
               top: 8,
-              transform: flipLeft
-                ? "translateX(calc(-100% - 12px))"
-                : "translateX(12px)",
+              transform: "translateX(-50%)",
             }}
           >
             <div className="border-b px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
