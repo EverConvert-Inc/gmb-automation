@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Banner } from "@/components/ui/banner";
 import { PpcClientAdminCard } from "@/components/ppc-client-admin-card";
 import { db } from "@/lib/db/client";
@@ -34,7 +34,7 @@ export default async function PpcClientDetailPage({
     params,
     searchParams,
   ]);
-  const row = await db.query.ppcClients.findFirst({
+  let row = await db.query.ppcClients.findFirst({
     where: eq(ppcClients.id, id),
   });
   if (!row) notFound();
@@ -54,6 +54,39 @@ export default async function PpcClientDetailPage({
   // one-click reuse rather than forcing a fresh OAuth round every time a
   // PPC client is added.
   const existingAdsCredentials = await listExistingAdsCredentials();
+
+  // Auto-attach the most-recently-used Google Ads credential when a PPC
+  // client is loaded with nothing connected yet. Saves the operator a
+  // click on the standard "same agency account every time" path. The
+  // discovered-customers cache is also copied from another PPC client
+  // using the same credential when available, so the customer-id dropdown
+  // is pre-populated on first paint instead of needing a Refresh tap.
+  if (!row.googleAdsOauthTokenId && existingAdsCredentials.length > 0) {
+    const cred = existingAdsCredentials[0]; // listExistingAdsCredentials orders by updatedAt desc
+    const cacheDonor = await db.query.ppcClients.findFirst({
+      where: and(
+        eq(ppcClients.googleAdsOauthTokenId, cred.id),
+        sql`${ppcClients.googleAdsDiscoveredCustomersJson} is not null`,
+      ),
+    });
+    await db
+      .update(ppcClients)
+      .set({
+        googleAdsOauthTokenId: cred.id,
+        ...(cacheDonor?.googleAdsDiscoveredCustomersJson
+          ? {
+              googleAdsDiscoveredCustomersJson:
+                cacheDonor.googleAdsDiscoveredCustomersJson,
+            }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(ppcClients.id, row.id));
+    const refreshed = await db.query.ppcClients.findFirst({
+      where: eq(ppcClients.id, row.id),
+    });
+    if (refreshed) row = refreshed;
+  }
 
   return (
     <div className="space-y-6">

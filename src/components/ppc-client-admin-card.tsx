@@ -275,23 +275,24 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
               </div>
               <a
                 href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
-                className={buttonClasses("outline", "sm")}
+                className="text-xs text-muted-foreground hover:text-foreground"
               >
-                Reconnect Google Ads
+                &rsaquo; Connect a different Google account
               </a>
             </div>
           ) : props.googleAdsTokenSaved ? (
             <div className="space-y-3">
               <p className="text-muted-foreground">
-                OAuth token saved &mdash; we still need a customer id to know
-                which Google Ads account to query. Paste the 10-digit id below
-                or click reconnect to retry account discovery.
+                Pick the Google Ads account for this client below. If the
+                expected account isn&apos;t in the dropdown, hit{" "}
+                <strong>Refresh list</strong> after granting access in Google
+                Ads, or paste the 10-digit customer id manually.
               </p>
               <a
                 href={`/api/oauth/google-ads/start?ppcClientId=${props.id}`}
-                className={buttonClasses("outline", "sm")}
+                className="text-xs text-muted-foreground hover:text-foreground"
               >
-                Reconnect Google Ads
+                &rsaquo; Connect a different Google account
               </a>
             </div>
           ) : (
@@ -516,7 +517,7 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                 id="signedTag"
                 value={tagDraft}
                 onChange={(e) => setTagDraft(e.target.value)}
-                placeholder="signed"
+                placeholder="Signed"
               />
               <p className="mt-1 text-xs text-muted-foreground">
                 Calls tagged with this name count as signed cases.
@@ -552,7 +553,7 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                 saveField(
                   {
                     callrailCompanyId: companyDraft || null,
-                    signedCaseTag: tagDraft || "signed",
+                    signedCaseTag: tagDraft || "Signed",
                     signedCaseNameFilters: filters,
                   },
                   "CallRail settings saved",

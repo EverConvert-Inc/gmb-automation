@@ -339,7 +339,7 @@ export const ppcClients = pgTable(
     // Shape: Array<{ id: string; name: string | null }>.
     googleAdsDiscoveredCustomersJson: jsonb("google_ads_discovered_customers_json"),
     callrailCompanyId: text("callrail_company_id"),
-    signedCaseTag: text("signed_case_tag").notNull().default("signed"),
+    signedCaseTag: text("signed_case_tag").notNull().default("Signed"),
     // Per-client substring filters applied to the CallRail tracking number's
     // name. A call counts as a signed case only if it carries the tag above
     // AND its tracker name contains one of these substrings (case-insensitive).

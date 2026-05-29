@@ -302,18 +302,25 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
             })}
         </svg>
 
-        {/* Floating tooltip. left% is clamped to [4%, 96%] and centered via
-            translateX(-50%) so it stays fully on-screen at any chart width
-            (especially on phones where the chart is ~300px wide). */}
-        {hoverIndex !== null && tooltipLeftPct !== null && hoverDate && (
-          <div
-            className="pointer-events-none absolute z-10 max-w-[calc(100%-16px)] rounded-md border bg-card text-card-foreground shadow-md sm:min-w-[160px]"
-            style={{
-              left: `${Math.max(4, Math.min(96, tooltipLeftPct))}%`,
-              top: 8,
-              transform: "translateX(-50%)",
-            }}
-          >
+        {/* Floating tooltip. The X translate slides from 0 to -100%
+            proportional to the cursor's position across the chart, so the
+            tooltip pivots from "extending right of the cursor" on the left
+            edge to "extending left of the cursor" on the right edge.
+            Guarantees the tooltip's body stays inside the wrapper at every
+            scrub position — important on phones where the chart is ~320px
+            wide and a fixed center-pin lets the right side overflow. */}
+        {hoverIndex !== null && tooltipLeftPct !== null && hoverDate && (() => {
+          const clampedPct = Math.max(0, Math.min(100, tooltipLeftPct));
+          const translatePct = -clampedPct;
+          return (
+            <div
+              className="pointer-events-none absolute z-10 max-w-[80%] rounded-md border bg-card text-card-foreground shadow-md sm:min-w-[160px] sm:max-w-none"
+              style={{
+                left: `${clampedPct}%`,
+                top: 8,
+                transform: `translateX(${translatePct}%)`,
+              }}
+            >
             <div className="border-b px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               {hoverDate}
             </div>
@@ -333,7 +340,8 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
               ))}
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Legend */}

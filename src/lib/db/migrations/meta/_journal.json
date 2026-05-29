@@ -71,6 +71,13 @@
       "when": 1780075769709,
       "tag": "0009_greedy_ultimatum",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780077624928,
+      "tag": "0010_crazy_hercules",
+      "breakpoints": true
     }
   ]
 }
