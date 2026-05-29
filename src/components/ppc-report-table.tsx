@@ -138,9 +138,14 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
       cur.campaigns.push(r);
       map.set(r.ppcClientId, cur);
     }
-    // Stable campaign-name sort inside each group.
+    // Inside each expanded group, sort campaigns by Cost descending so the
+    // biggest spend rises to the top. Campaign name breaks ties.
     for (const g of map.values()) {
-      g.campaigns.sort((a, b) => a.campaignName.localeCompare(b.campaignName));
+      g.campaigns.sort((a, b) => {
+        const costDiff = Number(b.costMicros - a.costMicros);
+        if (costDiff !== 0) return costDiff;
+        return a.campaignName.localeCompare(b.campaignName);
+      });
     }
     return Array.from(map.values());
   }, [rows]);
