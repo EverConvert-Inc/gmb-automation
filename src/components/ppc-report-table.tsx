@@ -240,13 +240,13 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
                     <div className="text-right font-medium">
                       {fmtNumber(g.clicks)}
                     </div>
-                    <div className="text-muted-foreground">Cost</div>
-                    <div className="text-right font-medium">
-                      {fmtMicros(g.costMicros)}
-                    </div>
                     <div className="text-muted-foreground">Impressions</div>
                     <div className="text-right font-medium">
                       {fmtNumber(g.impressions)}
+                    </div>
+                    <div className="text-muted-foreground">Cost</div>
+                    <div className="text-right font-medium">
+                      {fmtMicros(g.costMicros)}
                     </div>
                   </div>
                 </div>
@@ -270,12 +270,12 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
                         </div>
                         <div className="text-muted-foreground">Clicks</div>
                         <div className="text-right">{fmtNumber(c.clicks)}</div>
-                        <div className="text-muted-foreground">Cost</div>
-                        <div className="text-right">{fmtMicros(c.costMicros)}</div>
                         <div className="text-muted-foreground">Impressions</div>
                         <div className="text-right">
                           {fmtNumber(c.impressions)}
                         </div>
+                        <div className="text-muted-foreground">Cost</div>
+                        <div className="text-right">{fmtMicros(c.costMicros)}</div>
                       </div>
                     </div>
                   ))}
@@ -324,17 +324,17 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
                 onSort={onSort}
               />
               <SortHeader
-                label="Cost"
+                label="Impressions"
                 align="right"
-                field="cost"
+                field="impressions"
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={onSort}
               />
               <SortHeader
-                label="Impressions"
+                label="Cost"
                 align="right"
-                field="impressions"
+                field="cost"
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={onSort}
@@ -407,10 +407,10 @@ function ClientRows({
           {fmtNumber(group.clicks)}
         </td>
         <td className="px-3 py-2 text-right align-middle tabular-nums">
-          {fmtMicros(group.costMicros)}
+          {fmtNumber(group.impressions)}
         </td>
         <td className="px-3 py-2 text-right align-middle tabular-nums">
-          {fmtNumber(group.impressions)}
+          {fmtMicros(group.costMicros)}
         </td>
         <td className="px-3 py-2 text-right align-middle tabular-nums">
           {group.signedCases === null ? (
@@ -440,10 +440,10 @@ function ClientRows({
               {fmtNumber(c.clicks)}
             </td>
             <td className="px-3 py-1.5 text-right align-middle tabular-nums">
-              {fmtMicros(c.costMicros)}
+              {fmtNumber(c.impressions)}
             </td>
             <td className="px-3 py-1.5 text-right align-middle tabular-nums">
-              {fmtNumber(c.impressions)}
+              {fmtMicros(c.costMicros)}
             </td>
             <td className="px-3 py-1.5 text-right align-middle">
               <span className="text-muted-foreground/40">·</span>
