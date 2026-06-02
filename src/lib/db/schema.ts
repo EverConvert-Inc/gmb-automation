@@ -468,3 +468,13 @@ export type PpcCampaign = typeof ppcCampaigns.$inferSelect;
 export type PpcAdsDaily = typeof ppcAdsDaily.$inferSelect;
 export type PpcCallrailDaily = typeof ppcCallrailDaily.$inferSelect;
 export type PpcSyncJob = typeof ppcSyncJobs.$inferSelect;
+
+export const ppcReportRecipients = pgTable("ppc_report_recipients", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type PpcReportRecipient = typeof ppcReportRecipients.$inferSelect;

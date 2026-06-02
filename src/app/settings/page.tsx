@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
+import { asc } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignOutButton } from "@/components/sign-out-button";
+import { PpcReportRecipientsCard } from "@/components/ppc-report-recipients-card";
+import { db } from "@/lib/db/client";
+import { ppcReportRecipients } from "@/lib/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +20,11 @@ export default async function SettingsPage() {
   } catch {
     // Supabase not configured locally; render without identity.
   }
+
+  const recipients = await db.query.ppcReportRecipients.findMany({
+    orderBy: asc(ppcReportRecipients.email),
+    columns: { id: true, email: true },
+  });
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -34,6 +43,7 @@ export default async function SettingsPage() {
           <SignOutButton />
         </CardContent>
       </Card>
+      <PpcReportRecipientsCard initial={recipients} />
     </div>
   );
 }

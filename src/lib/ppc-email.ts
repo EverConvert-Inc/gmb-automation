@@ -1,4 +1,7 @@
 import { Resend } from "resend";
+import { asc } from "drizzle-orm";
+import { db } from "./db/client";
+import { ppcReportRecipients } from "./db/schema";
 import { getPpcReport } from "./queries";
 import { renderPpcReportPdf } from "./ppc-pdf";
 
@@ -13,17 +16,15 @@ type SendResult =
   | { sent: 0; reason: string }
   | { sent: 0; dryRun: true; pdf: Buffer; recipients: string[] };
 
-function parseRecipients(raw: string | undefined): string[] {
-  if (!raw) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of raw.split(/[,;\s]+/)) {
-    const t = part.trim().toLowerCase();
-    if (!t || seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
-  }
-  return out;
+// Pull the recipient list from the DB (managed in the /settings page). The
+// uniqueness constraint on `ppc_report_recipients.email` plus the API's
+// lowercase normalization mean we don't need to dedup here.
+async function loadRecipients(): Promise<string[]> {
+  const rows = await db.query.ppcReportRecipients.findMany({
+    orderBy: asc(ppcReportRecipients.email),
+    columns: { email: true },
+  });
+  return rows.map((r) => r.email);
 }
 
 function fmtSubject(fromIso: string, toIso: string): string {
@@ -46,13 +47,13 @@ function fmtSubject(fromIso: string, toIso: string): string {
 // every daily email. `dryRun: true` skips the Resend call and returns the
 // PDF buffer for local preview.
 export async function sendDailyPpcEmail(opts: SendOpts): Promise<SendResult> {
-  const recipients = parseRecipients(process.env.PPC_REPORT_RECIPIENTS);
+  const recipients = await loadRecipients();
   const fromEmail = process.env.PPC_REPORT_FROM_EMAIL?.trim();
   const apiKey = process.env.RESEND_API_KEY;
 
   if (recipients.length === 0) {
     throw new Error(
-      "PPC_REPORT_RECIPIENTS is not set or contains no addresses",
+      "No PPC report recipients configured — add at least one address on the Settings page",
     );
   }
   if (!fromEmail) {
