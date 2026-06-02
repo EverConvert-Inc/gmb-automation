@@ -9,6 +9,17 @@ function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Latest day we actually have data for. The Google Ads + CallRail crons
+// only sync yesterday's metrics (today is still in flight), so capping
+// every preset at yesterday avoids comparing N-1 days of real data
+// against a full N-day prior period. Without this cap, every delta on
+// the report skews more negative than reality.
+function latestDataDay(): Date {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
+
 type Preset = {
   key: string;
   label: string;
@@ -22,7 +33,7 @@ function presets(): Preset[] {
       key: "last7",
       label: "Last 7 days",
       range: () => {
-        const to = new Date();
+        const to = latestDataDay();
         const from = new Date(to);
         from.setUTCDate(from.getUTCDate() - 6);
         return [iso(from), iso(to)];
@@ -32,7 +43,7 @@ function presets(): Preset[] {
       key: "last30",
       label: "Last 30 days",
       range: () => {
-        const to = new Date();
+        const to = latestDataDay();
         const from = new Date(to);
         from.setUTCDate(from.getUTCDate() - 29);
         return [iso(from), iso(to)];
@@ -42,9 +53,17 @@ function presets(): Preset[] {
       key: "mtd",
       label: "This month",
       range: () => {
-        const to = new Date();
-        const from = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), 1));
-        return [iso(from), iso(to)];
+        const to = latestDataDay();
+        const now = new Date();
+        const from = new Date(
+          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+        );
+        // Day-1-of-month edge case: yesterday is in the previous month,
+        // so clamp `to` forward to `from`. The query returns no rows and
+        // the report shows an empty state, which is accurate — this
+        // month has no synced data yet.
+        const toClamped = to.getTime() < from.getTime() ? from : to;
+        return [iso(from), iso(toClamped)];
       },
     },
     {
@@ -65,7 +84,7 @@ function presets(): Preset[] {
       key: "last90",
       label: "Last 90 days",
       range: () => {
-        const to = new Date();
+        const to = latestDataDay();
         const from = new Date(to);
         from.setUTCDate(from.getUTCDate() - 89);
         return [iso(from), iso(to)];

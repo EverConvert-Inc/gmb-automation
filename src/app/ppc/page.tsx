@@ -25,8 +25,15 @@ export const metadata: Metadata = {
   title: "PPC report",
 };
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+// "To" defaults to yesterday rather than today because the daily PPC
+// sync only pulls yesterday's metrics — today is always empty until the
+// next morning's cron. Using today as the end of the window causes the
+// current period to be one day shorter than the (same-length) prior
+// period, which biases every KPI delta more negative than reality.
+function yesterdayIso(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function firstOfMonthIso(): string {
@@ -51,7 +58,7 @@ export default async function PpcReportPage({
 }) {
   const { from: fromParam, to: toParam } = await searchParams;
   const from = fromParam || firstOfMonthIso();
-  const to = toParam || todayIso();
+  const to = toParam || yesterdayIso();
 
   const [report, ppcClients] = await Promise.all([
     getPpcReport({ from, to }),
