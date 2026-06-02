@@ -17,6 +17,7 @@
     "seed:big5": "tsx src/lib/seed-big5.ts"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.5.1",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
     "clsx": "^2.1.1",
@@ -30,6 +31,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-leaflet": "^5.0.0",
+    "resend": "^6.12.4",
     "sonner": "^2.0.7",
     "tailwind-merge": "^2.6.0",
     "zod": "^3.24.1"
