@@ -180,14 +180,19 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
       ? ((PAD.left + hoverIndex * xStep) / W) * 100
       : null;
   const hoverDate = hoverIndex !== null ? dates[hoverIndex] : null;
-  // Sort tooltip rows by value desc so the visually-prominent line tops
-  // the list. Zero-value series fall to the bottom but stay visible.
+  // Filter to clients that had calls on this day. Listing every zero-value
+  // client makes the tooltip taller than the chart on agencies with many
+  // PPC clients, which then gets clipped by the wrapper's overflow-hidden.
+  // The dropped rows are zeros — recoverable from the chart itself.
   const tooltipRows =
     hoverIndex !== null
       ? series
           .map((s) => ({ ...s, value: s.values[hoverIndex] ?? 0 }))
+          .filter((s) => s.value > 0)
           .sort((a, b) => b.value - a.value)
       : [];
+  const hiddenZeroCount =
+    hoverIndex !== null ? series.length - tooltipRows.length : 0;
 
   return (
     <div className="space-y-3">
@@ -324,21 +329,33 @@ export function PpcPhoneCallsChart({ byDay, from, to }: Props) {
             <div className="border-b px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               {hoverDate}
             </div>
-            <div className="space-y-0.5 px-2.5 py-1.5 text-xs">
-              {tooltipRows.map((s) => (
-                <div key={s.id} className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-                    style={{
-                      backgroundColor: colorByClientId.get(s.id) ?? "#888",
-                    }}
-                  />
-                  <span className="flex-1 truncate">{s.name}</span>
-                  <span className="font-medium tabular-nums">{s.value}</span>
-                </div>
-              ))}
-            </div>
+            {tooltipRows.length === 0 ? (
+              <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
+                No phone calls on this day.
+              </div>
+            ) : (
+              <div className="max-h-64 space-y-0.5 overflow-y-auto px-2.5 py-1.5 text-xs">
+                {tooltipRows.map((s) => (
+                  <div key={s.id} className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
+                      style={{
+                        backgroundColor: colorByClientId.get(s.id) ?? "#888",
+                      }}
+                    />
+                    <span className="flex-1 truncate">{s.name}</span>
+                    <span className="font-medium tabular-nums">{s.value}</span>
+                  </div>
+                ))}
+                {hiddenZeroCount > 0 && (
+                  <div className="border-t pt-1 text-[10px] text-muted-foreground">
+                    +{hiddenZeroCount} other client
+                    {hiddenZeroCount === 1 ? "" : "s"} with 0 calls
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           );
         })()}
