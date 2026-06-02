@@ -2,8 +2,10 @@ import { Resend } from "resend";
 import { asc } from "drizzle-orm";
 import { db } from "./db/client";
 import { ppcReportRecipients } from "./db/schema";
-import { getPpcReport } from "./queries";
+import { getPpcReport, type PpcReport } from "./queries";
 import { renderPpcReportPdf } from "./ppc-pdf";
+
+const DEFAULT_APP_URL = "https://gmb-automation.vercel.app";
 
 type SendOpts = {
   from: string; // YYYY-MM-DD, start of report window
@@ -27,6 +29,36 @@ async function loadRecipients(): Promise<string[]> {
   return rows.map((r) => r.email);
 }
 
+const NUMBER_FMT = new Intl.NumberFormat();
+function fmtNumber(n: number): string {
+  return NUMBER_FMT.format(n);
+}
+function fmtConversions(n: number): string {
+  return n % 1 === 0 ? fmtNumber(n) : n.toFixed(1);
+}
+function fmtMicros(microsBig: bigint): string {
+  const dollars = Number(microsBig / 10_000n) / 100;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(dollars);
+}
+
+function fmtRange(fromIso: string, toIso: string): string {
+  const f = new Date(fromIso + "T00:00:00Z");
+  const t = new Date(toIso + "T00:00:00Z");
+  const sameMonth =
+    f.getUTCFullYear() === t.getUTCFullYear() &&
+    f.getUTCMonth() === t.getUTCMonth();
+  const m = (d: Date) =>
+    d.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  if (sameMonth) {
+    return `${m(f)} ${f.getUTCDate()}–${t.getUTCDate()}, ${t.getUTCFullYear()}`;
+  }
+  return `${m(f)} ${f.getUTCDate()} – ${m(t)} ${t.getUTCDate()}, ${t.getUTCFullYear()}`;
+}
+
 function fmtSubject(fromIso: string, toIso: string): string {
   const f = new Date(fromIso + "T00:00:00Z");
   const t = new Date(toIso + "T00:00:00Z");
@@ -39,6 +71,106 @@ function fmtSubject(fromIso: string, toIso: string): string {
     return `PPC report — ${m(f)} ${f.getUTCDate()}–${t.getUTCDate()}, ${t.getUTCFullYear()}`;
   }
   return `PPC report — ${m(f)} ${f.getUTCDate()} – ${m(t)} ${t.getUTCDate()}, ${t.getUTCFullYear()}`;
+}
+
+// Inline-styled HTML so it renders consistently across mail clients
+// (Gmail strips <style> blocks but respects inline `style=` attributes).
+// Layout is intentionally tabular — the most reliable cross-client choice.
+function renderEmailHtml({
+  report,
+  range,
+  dashboardUrl,
+}: {
+  report: PpcReport;
+  range: string;
+  dashboardUrl: string;
+}): string {
+  const k = report.kpis;
+  const kpiCells = [
+    { label: "Clicks", value: fmtNumber(k.clicks) },
+    { label: "Conversions", value: fmtConversions(k.conversions) },
+    { label: "Phone calls", value: fmtNumber(k.phoneCalls) },
+    { label: "Cost", value: fmtMicros(k.costMicros) },
+  ];
+  const kpiRow = kpiCells
+    .map(
+      (c) => `
+      <td width="25%" valign="top" style="padding:0 4px;">
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+          <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;">${c.label}</div>
+          <div style="font-size:20px;font-weight:600;color:#0f172a;margin-top:4px;">${c.value}</div>
+        </div>
+      </td>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;">
+      <tr>
+        <td style="padding:24px 24px 8px;">
+          <div style="font-size:10px;font-weight:500;letter-spacing:1.5px;text-transform:uppercase;color:#64748b;">Paid Search</div>
+          <h1 style="margin:4px 0 4px;font-size:22px;font-weight:700;color:#0f172a;">PPC report</h1>
+          <p style="margin:0;font-size:14px;color:#64748b;">${range}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 20px 8px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>${kpiRow}</tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 24px 8px;">
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#334155;">
+            Full per-campaign breakdown across all PPC clients is attached as a PDF.
+          </p>
+          <a href="${dashboardUrl}" style="display:inline-block;padding:10px 18px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:500;">View interactive dashboard &rarr;</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:24px;border-top:1px solid #e2e8f0;">
+          <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.5;">
+            Generated automatically by EverConvert Local Visibility Platform.<br/>
+            Manage who receives this report at
+            <a href="${dashboardUrl.replace(/\/ppc$/, "")}/settings" style="color:#64748b;">/settings</a>.
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+// Plain-text fallback for email clients that don't render HTML (and
+// improves deliverability — Gmail dings senders who only ship HTML).
+function renderEmailText({
+  report,
+  range,
+  dashboardUrl,
+}: {
+  report: PpcReport;
+  range: string;
+  dashboardUrl: string;
+}): string {
+  const k = report.kpis;
+  return [
+    `PPC report — ${range}`,
+    ``,
+    `Clicks       ${fmtNumber(k.clicks)}`,
+    `Conversions  ${fmtConversions(k.conversions)}`,
+    `Phone calls  ${fmtNumber(k.phoneCalls)}`,
+    `Cost         ${fmtMicros(k.costMicros)}`,
+    ``,
+    `Full per-campaign breakdown across all PPC clients is attached as a PDF.`,
+    ``,
+    `Open the interactive dashboard:`,
+    dashboardUrl,
+    ``,
+    `— EverConvert Local Visibility Platform`,
+  ].join("\n");
 }
 
 // Pull the PPC report for the given window, render to PDF, and email it
@@ -83,18 +215,21 @@ export async function sendDailyPpcEmail(opts: SendOpts): Promise<SendResult> {
 
   const subject = fmtSubject(opts.from, opts.to);
   const filename = `ppc-report-${opts.to}.pdf`;
-  const htmlBody = `
-    <p>Daily PPC report attached.</p>
-    <p>Open <a href="${process.env.NEXT_PUBLIC_APP_URL ?? ""}/ppc">/ppc</a>
-    in the Local Visibility Platform for the interactive view.</p>
-  `.trim();
+  const appUrl = (
+    process.env.NEXT_PUBLIC_APP_URL?.trim() || DEFAULT_APP_URL
+  ).replace(/\/$/, "");
+  const dashboardUrl = `${appUrl}/ppc`;
+  const range = fmtRange(opts.from, opts.to);
+  const html = renderEmailHtml({ report, range, dashboardUrl });
+  const text = renderEmailText({ report, range, dashboardUrl });
 
   const resend = new Resend(apiKey!);
   const result = await resend.emails.send({
     from: fromEmail,
     to: recipients,
     subject,
-    html: htmlBody,
+    html,
+    text,
     attachments: [
       {
         filename,
