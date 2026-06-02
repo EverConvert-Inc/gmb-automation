@@ -16,6 +16,7 @@ import { DeltaPill } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { PpcPhoneCallsChart } from "@/components/ppc-phone-calls-chart";
 import { PpcReportTable } from "@/components/ppc-report-table";
+import { EmailPpcReportButton } from "@/components/email-ppc-report-button";
 import { getPpcReport, listPpcClients } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -111,6 +112,7 @@ export default async function PpcReportPage({
           </h1>
         </div>
         <div className="flex flex-wrap items-start gap-2">
+          <EmailPpcReportButton from={from} to={to} />
           <Link
             href="/ppc/clients"
             className={buttonClasses("outline")}
