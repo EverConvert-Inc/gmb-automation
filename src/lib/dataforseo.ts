@@ -470,10 +470,11 @@ export async function getMonthlyDataForSeoSpendUsd(): Promise<number | null> {
   }
 }
 
-// Debug helper: returns the raw DataForSEO transactions response so we
-// can inspect the shape and tighten the parser when it can't extract a
-// number. Same auth + timeout as the spend lookup. Not used by the
-// indicator itself — exposed via /api/seo-api-spend?debug=1.
+// Debug helper: probes DataForSEO endpoints to find the working
+// monthly-spend source. We previously assumed
+// /v3/appendix/transactions/list — that 404s, so try the candidates
+// most likely to exist. Returns one result per probe so the operator can
+// see which paths respond.
 export async function getRawMonthlyTransactions(): Promise<unknown> {
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
@@ -484,37 +485,80 @@ export async function getRawMonthlyTransactions(): Promise<unknown> {
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
   );
-  try {
-    const res = await fetch(TRANSACTIONS_LIST_URL, {
+  const dateFromIso = fmtDataForSeoDatetime(monthStart);
+  const dateToIso = fmtDataForSeoDatetime(now);
+
+  type Probe = {
+    label: string;
+    url: string;
+    method: "GET" | "POST";
+    body?: unknown;
+  };
+  const probes: Probe[] = [
+    {
+      label: "user_data (GET)",
+      url: "https://api.dataforseo.com/v3/appendix/user_data",
+      method: "GET",
+    },
+    {
+      label: "transactions_list (POST, underscore)",
+      url: "https://api.dataforseo.com/v3/appendix/transactions_list",
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authHeader(),
-      },
-      body: JSON.stringify([
-        {
-          datetime_from: fmtDataForSeoDatetime(monthStart),
-          datetime_to: fmtDataForSeoDatetime(now),
-          limit: 1000,
-        },
-      ]),
-      signal: AbortSignal.timeout(8000),
-    });
-    const text = await res.text();
-    let parsed: unknown = null;
+      body: [{ datetime_from: dateFromIso, datetime_to: dateToIso, limit: 1000 }],
+    },
+    {
+      label: "user/transactions (POST)",
+      url: "https://api.dataforseo.com/v3/appendix/user/transactions",
+      method: "POST",
+      body: [{ datetime_from: dateFromIso, datetime_to: dateToIso, limit: 1000 }],
+    },
+    {
+      label: "errors (POST, sanity check that an existing endpoint shape works)",
+      url: "https://api.dataforseo.com/v3/appendix/errors",
+      method: "POST",
+      body: [{ datetime_from: dateFromIso, datetime_to: dateToIso, limit: 5 }],
+    },
+  ];
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const p of probes) {
     try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
+      const res = await fetch(p.url, {
+        method: p.method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader(),
+        },
+        body: p.body !== undefined ? JSON.stringify(p.body) : undefined,
+        signal: AbortSignal.timeout(8000),
+      });
+      const text = await res.text();
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+      results.push({
+        label: p.label,
+        url: p.url,
+        method: p.method,
+        status: res.status,
+        ok: res.ok,
+        body: parsed,
+      });
+    } catch (err) {
+      results.push({
+        label: p.label,
+        url: p.url,
+        method: p.method,
+        error: (err as Error).message,
+      });
     }
-    return {
-      status: res.status,
-      ok: res.ok,
-      sentDatetimeFrom: fmtDataForSeoDatetime(monthStart),
-      sentDatetimeTo: fmtDataForSeoDatetime(now),
-      body: parsed,
-    };
-  } catch (err) {
-    return { error: (err as Error).message };
   }
+  return {
+    sentDatetimeFrom: dateFromIso,
+    sentDatetimeTo: dateToIso,
+    probes: results,
+  };
 }
