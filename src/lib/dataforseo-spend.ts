@@ -1,4 +1,4 @@
-import { desc, lt } from "drizzle-orm";
+import { asc, gte } from "drizzle-orm";
 import { db } from "./db/client";
 import { dataforseoSpendSnapshots } from "./db/schema";
 import { getDataForSeoMoneySnapshot } from "./dataforseo";
@@ -17,40 +17,46 @@ function firstOfMonthIso(): string {
 }
 
 export type SeoSpendResult = {
-  // Month-to-date spend in USD. null if we can't compute it (DataForSEO
-  // unreachable, missing env vars, or no baseline snapshot yet).
+  // Month-to-date spend in USD. null if the DataForSEO call failed.
   spentUsd: number | null;
-  // The lifetime-spend baseline we diffed against, and the date it was
-  // captured. Useful for the indicator's hover tooltip.
-  baselineUsd: number | null;
-  baselineDate: string | null;
-  // Either "ready" (we have a real MTD), "seeding" (just captured the
-  // first snapshot, MTD will be accurate next month), or "error"
-  // (DataForSEO call failed).
-  state: "ready" | "seeding" | "error";
+  // The lifetime-spend anchor we diffed against, and the date it was
+  // captured. The anchor is the FIRST snapshot stored in the current
+  // month — set automatically the first time the indicator is hit
+  // after the 1st rolls over.
+  anchorUsd: number | null;
+  anchorDate: string | null;
+  state: "ready" | "error";
 };
 
 // Computes month-to-date DataForSEO API spend by:
 // 1. Calling /v3/appendix/user_data for the current lifetime spent
 //    (money.total - money.balance — DataForSEO doesn't expose a
 //    monthly-spent field directly).
-// 2. Looking up the most recent snapshot stored BEFORE the first of the
-//    current month — that's our month-start baseline.
-// 3. MTD = current lifetime - baseline. Clamped to ≥ 0 in case the
-//    operator did a refund that shrunk total.
-// 4. Always upserts today's snapshot before returning, so future calls
-//    have an ever-more-accurate baseline.
+// 2. Inserting today's snapshot IF NOT EXISTS, so the first call of
+//    each day captures that day's lifetime once and freezes it.
+// 3. Finding the EARLIEST snapshot in the current calendar month —
+//    that's the anchor. The first time the indicator is hit each
+//    month, today's snapshot becomes the anchor; subsequent days
+//    inherit the same anchor until the next 1st.
+// 4. MTD = current lifetime - anchor. Clamped to ≥ 0 in case of
+//    refunds.
 //
-// On first install (no baseline before this month exists yet), captures
-// today's snapshot and returns "seeding" so the UI shows "—". Next month
-// will work correctly.
+// Behavioral consequences:
+// - Today (first call of the install): captures today's snapshot, that
+//   IS the anchor, so MTD = 0. Grows from here through the rest of
+//   the month.
+// - 1st of next month, first call: captures a new snapshot for that
+//   day, which becomes next month's anchor, resetting MTD to 0.
+// - If nobody opens the app on the 1st, the first call (say the 4th)
+//   becomes the anchor and MTD undercounts the 1st-3rd. Acceptable
+//   for an app that's used most days.
 export async function getMonthlyDataForSeoSpend(): Promise<SeoSpendResult> {
   const money = await getDataForSeoMoneySnapshot();
   if (!money) {
     return {
       spentUsd: null,
-      baselineUsd: null,
-      baselineDate: null,
+      anchorUsd: null,
+      anchorDate: null,
       state: "error",
     };
   }
@@ -59,50 +65,48 @@ export async function getMonthlyDataForSeoSpend(): Promise<SeoSpendResult> {
   const monthStart = firstOfMonthIso();
   const currentLifetime = money.lifetimeSpentUsd;
 
-  // Snapshot today's value. Upsert because the cache may call us multiple
-  // times per day; later calls overwrite earlier ones (lifetime only
-  // grows, so this just keeps it fresh).
+  // Insert today's snapshot IF NOT EXISTS. Critical that we don't
+  // overwrite — same-day calls would otherwise keep moving the anchor
+  // forward, and MTD would never grow within day 1 of the month.
   await db
     .insert(dataforseoSpendSnapshots)
     .values({
       date: today,
       lifetimeSpentUsd: String(currentLifetime),
     })
-    .onConflictDoUpdate({
+    .onConflictDoNothing({
       target: dataforseoSpendSnapshots.date,
-      set: {
-        lifetimeSpentUsd: String(currentLifetime),
-        capturedAt: new Date(),
-      },
     });
 
-  // Find the most-recent snapshot strictly before the first of this
-  // month — that's our baseline.
-  const baseline = await db
+  // Earliest snapshot in the current month → the anchor.
+  const anchor = await db
     .select({
       date: dataforseoSpendSnapshots.date,
       lifetimeSpentUsd: dataforseoSpendSnapshots.lifetimeSpentUsd,
     })
     .from(dataforseoSpendSnapshots)
-    .where(lt(dataforseoSpendSnapshots.date, monthStart))
-    .orderBy(desc(dataforseoSpendSnapshots.date))
+    .where(gte(dataforseoSpendSnapshots.date, monthStart))
+    .orderBy(asc(dataforseoSpendSnapshots.date))
     .limit(1);
 
-  if (baseline.length === 0) {
+  // Anchor always exists at this point — we just upserted today's row
+  // and today is by definition in the current month. The empty check
+  // is purely defensive against an unlikely race.
+  if (anchor.length === 0) {
     return {
-      spentUsd: null,
-      baselineUsd: null,
-      baselineDate: null,
-      state: "seeding",
+      spentUsd: 0,
+      anchorUsd: currentLifetime,
+      anchorDate: today,
+      state: "ready",
     };
   }
 
-  const baselineUsd = Number(baseline[0].lifetimeSpentUsd);
-  const spent = Math.max(0, currentLifetime - baselineUsd);
+  const anchorUsd = Number(anchor[0].lifetimeSpentUsd);
+  const spent = Math.max(0, currentLifetime - anchorUsd);
   return {
     spentUsd: Math.round(spent * 100) / 100,
-    baselineUsd,
-    baselineDate: baseline[0].date,
+    anchorUsd,
+    anchorDate: anchor[0].date,
     state: "ready",
   };
 }

@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 
 type Payload = {
   spentUsd: number | null;
-  baselineUsd: number | null;
-  baselineDate: string | null;
-  state: "ready" | "seeding" | "error";
+  anchorUsd: number | null;
+  anchorDate: string | null;
+  state: "ready" | "error";
   sinceIso: string;
   asOfIso: string;
 };
@@ -45,16 +45,12 @@ export function SeoApiSpendIndicator() {
       }).format(data!.spentUsd!)
     : "—";
 
-  // Hover tooltip explains why we're showing "—" when seeding, or shows
-  // the baseline that the MTD was diffed against when ready.
+  // Hover tooltip shows when the month's anchor was captured.
   const title = (() => {
     if (errored) return "SEO API spend lookup failed";
     if (!data) return "Loading SEO API spend";
-    if (data.state === "seeding") {
-      return "Collecting baseline data — month-to-date will be accurate next month.";
-    }
     if (data.state === "error") return "DataForSEO unreachable";
-    return `Month-to-date since ${data.baselineDate ?? data.sinceIso}, as of ${new Date(data.asOfIso).toLocaleString()}`;
+    return `Month-to-date since ${data.anchorDate ?? data.sinceIso}, as of ${new Date(data.asOfIso).toLocaleString()}`;
   })();
 
   return (

@@ -21,7 +21,7 @@ const cachedFetch = unstable_cache(
       asOfIso: now.toISOString(),
     };
   },
-  ["seo-api-spend-mtd-v2"],
+  ["seo-api-spend-mtd-v3"],
   { revalidate: 900, tags: ["seo-api-spend"] },
 );
 
