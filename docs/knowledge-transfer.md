@@ -73,7 +73,7 @@ Vercel hosts the Next.js app and runs the scheduled cron jobs. The Vercel projec
 
   - Production deploys on push to the production branch.
   - Preview deploys on every other branch (useful for review).
-  - The six cron jobs declared in vercel.json (poll-reviews, daily-metrics, serp-scan, ppc-google-ads-sync, ppc-callrail-sync, ppc-email-report).
+  - The seven cron jobs declared in vercel.json (poll-reviews, daily-metrics, serp-scan, ppc-google-ads-sync, ppc-callrail-sync, ppc-email-report, dataforseo-spend-snapshot).
   - Serverless function execution for every API route under /api/\*.
 
 Environment variables for every external service are configured under Vercel, Project, Settings, Environment Variables. See section 9 for the full list.
@@ -118,6 +118,10 @@ The database schema is defined in code at src/lib/db/schema.ts (Drizzle ORM). Th
   - **ppc\_callrail\_daily** fact table. One row per (PPC client × date) of CallRail rollups: total calls and signed cases.
   - **ppc\_sync\_jobs** audit log for sync runs. Tracks kind (google\_ads / callrail), status, timing, error message, and triggered-by (scheduled / manual).
   - **ppc\_report\_recipients** the distribution list for the daily PDF email. Edited from the /settings page in the app.
+
+**Operations / observability**
+
+  - **dataforseo\_spend\_snapshots** one row per UTC day, storing DataForSEO's lifetime spend (money.total − money.balance from /v3/appendix/user_data). Written daily by the dataforseo-spend-snapshot cron. Powers the "SEO API spend" indicator in the sidebar — MTD = current lifetime − earliest snapshot in the current month.
 
 ### **Migrations**
 
@@ -323,6 +327,7 @@ Vercel runs six scheduled jobs against the deployed app. They're declared in ver
 | /api/cron/ppc-google-ads-sync | 30 9 \* \* \* | 09:30 UTC daily (5:30 AM EDT / 4:30 AM EST). For every active PPC client with Google Ads linked, pulls yesterday's per-campaign metrics via GAQL and upserts into ppc\_campaigns + ppc\_ads\_daily. New campaigns are auto-discovered. |
 | /api/cron/ppc-callrail-sync | 40 9 \* \* \* | 09:40 UTC daily (5:40 AM EDT / 4:40 AM EST). For every active PPC client with CallRail linked, pulls yesterday's calls, applies the per-client signed-case rule (tag + tracking-number-name filter), and upserts into ppc\_callrail\_daily. |
 | /api/cron/ppc-email-report | 0 10 \* \* \* | 10:00 UTC daily (6:00 AM EDT / 5:00 AM EST). Pulls the month-to-date PPC report, renders the PDF, dispatches via Resend to every address in ppc\_report\_recipients. Skips (no send) when no PPC client has data for the period. **Note:** locked to EDT — during EST (winter) the report lands at 5:00 AM ET. Shift the UTC times by one hour at the DST changeovers if you want a stable 6:00 AM ET arrival year-round. |
+| /api/cron/dataforseo-spend-snapshot | 5 0 \* \* \* | 00:05 UTC daily. Calls /v3/appendix/user_data and captures today's lifetime DataForSEO spend into dataforseo\_spend\_snapshots (idempotent: only inserts if today's row is missing). The first snapshot of each month becomes that month's MTD anchor, displayed in the "SEO API spend" indicator in the sidebar. Guarantees an accurate anchor even when nobody opens the LVP on the 1st of the month. |
 | /api/cron/serp-scan | 0 9 \* \* 4 | Thursdays 09:00 UTC. For every active tracked keyword, runs a DataForSEO organic SERP scan geo-targeted to its city, parses our ranking from the result, writes to serp\_rankings. Powers the Search rankings card. |
 
 # **11. Day-to-Day Operations**
