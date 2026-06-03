@@ -180,7 +180,7 @@ export function HeroSnapshotCard({
           )}
         </div>
 
-        <div className="grid w-full grid-cols-2 gap-3 lg:w-[28rem] lg:grid-cols-4">
+        <div className="grid w-full grid-cols-2 gap-3 lg:w-[28rem]">
           <StatTile
             label="Days since review"
             value={
