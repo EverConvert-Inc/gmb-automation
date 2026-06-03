@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
-import { getMonthlyDataForSeoSpendUsd } from "@/lib/dataforseo";
+import {
+  getMonthlyDataForSeoSpendUsd,
+  getRawMonthlyTransactions,
+} from "@/lib/dataforseo";
 
 export const runtime = "nodejs";
 
@@ -24,7 +27,19 @@ const cachedFetch = unstable_cache(
   { revalidate: 900, tags: ["seo-api-spend"] },
 );
 
-export async function GET() {
+export async function GET(req: Request) {
+  // ?debug=1 returns the raw DataForSEO transactions response so we can
+  // see the shape and tighten the parser when the indicator shows "—".
+  // Auth comes from the Supabase middleware that already protects
+  // /api/* — no extra gating needed.
+  const url = new URL(req.url);
+  if (url.searchParams.get("debug") === "1") {
+    const raw = await getRawMonthlyTransactions();
+    return NextResponse.json(raw, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+
   const payload = await cachedFetch();
   return NextResponse.json(payload, {
     headers: {

@@ -469,3 +469,52 @@ export async function getMonthlyDataForSeoSpendUsd(): Promise<number | null> {
     return null;
   }
 }
+
+// Debug helper: returns the raw DataForSEO transactions response so we
+// can inspect the shape and tighten the parser when it can't extract a
+// number. Same auth + timeout as the spend lookup. Not used by the
+// indicator itself — exposed via /api/seo-api-spend?debug=1.
+export async function getRawMonthlyTransactions(): Promise<unknown> {
+  const login = process.env.DATAFORSEO_LOGIN;
+  const password = process.env.DATAFORSEO_PASSWORD;
+  if (!login || !password) {
+    return { error: "missing DATAFORSEO_LOGIN or DATAFORSEO_PASSWORD" };
+  }
+  const now = new Date();
+  const monthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
+  );
+  try {
+    const res = await fetch(TRANSACTIONS_LIST_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader(),
+      },
+      body: JSON.stringify([
+        {
+          datetime_from: fmtDataForSeoDatetime(monthStart),
+          datetime_to: fmtDataForSeoDatetime(now),
+          limit: 1000,
+        },
+      ]),
+      signal: AbortSignal.timeout(8000),
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+    return {
+      status: res.status,
+      ok: res.ok,
+      sentDatetimeFrom: fmtDataForSeoDatetime(monthStart),
+      sentDatetimeTo: fmtDataForSeoDatetime(now),
+      body: parsed,
+    };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
