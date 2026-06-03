@@ -4,14 +4,16 @@ import { useEffect, useState } from "react";
 
 type Payload = {
   spentUsd: number | null;
+  baselineUsd: number | null;
+  baselineDate: string | null;
+  state: "ready" | "seeding" | "error";
   sinceIso: string;
   asOfIso: string;
 };
 
-// Month-to-date spend against the SEO API (DataForSEO under the hood, but
-// the operator-facing label is generic). Fetches once on mount with a
-// silent retry path — failures degrade to "—" so a flaky billing call
-// doesn't break the sidebar.
+// Month-to-date spend against the SEO API (DataForSEO under the hood,
+// label is intentionally generic). Fetches once on mount, falls back to
+// "—" on error or while we're still seeding the first month's baseline.
 export function SeoApiSpendIndicator() {
   const [data, setData] = useState<Payload | null>(null);
   const [errored, setErrored] = useState(false);
@@ -34,14 +36,26 @@ export function SeoApiSpendIndicator() {
     };
   }, []);
 
-  const displayValue =
-    errored || data === null || data.spentUsd === null
-      ? "—"
-      : new Intl.NumberFormat(undefined, {
-          style: "currency",
-          currency: "USD",
-          maximumFractionDigits: 2,
-        }).format(data.spentUsd);
+  const ready = !errored && data?.state === "ready" && data.spentUsd !== null;
+  const displayValue = ready
+    ? new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 2,
+      }).format(data!.spentUsd!)
+    : "—";
+
+  // Hover tooltip explains why we're showing "—" when seeding, or shows
+  // the baseline that the MTD was diffed against when ready.
+  const title = (() => {
+    if (errored) return "SEO API spend lookup failed";
+    if (!data) return "Loading SEO API spend";
+    if (data.state === "seeding") {
+      return "Collecting baseline data — month-to-date will be accurate next month.";
+    }
+    if (data.state === "error") return "DataForSEO unreachable";
+    return `Month-to-date since ${data.baselineDate ?? data.sinceIso}, as of ${new Date(data.asOfIso).toLocaleString()}`;
+  })();
 
   return (
     <div className="flex flex-col leading-tight">
@@ -50,11 +64,7 @@ export function SeoApiSpendIndicator() {
       </span>
       <span
         className="text-xs font-medium tabular-nums text-white/80"
-        title={
-          data?.asOfIso
-            ? `Month-to-date as of ${new Date(data.asOfIso).toLocaleString()}`
-            : "Month-to-date"
-        }
+        title={title}
       >
         {displayValue}
         <span className="ml-1 text-[9px] uppercase text-white/40">MTD</span>

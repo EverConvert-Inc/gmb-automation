@@ -375,190 +375,73 @@ export function stripCityFromKeyword(keyword: string, city: string): string {
   return keyword;
 }
 
-// --- Monthly API-spend lookup ------------------------------------------------
+const USER_DATA_URL = "https://api.dataforseo.com/v3/appendix/user_data";
 
-const TRANSACTIONS_LIST_URL =
-  "https://api.dataforseo.com/v3/appendix/transactions/list";
+export type DataForSeoMoneySnapshot = {
+  totalUsd: number;
+  balanceUsd: number;
+  lifetimeSpentUsd: number;
+};
 
-// Format a Date as DataForSEO's expected "YYYY-MM-DD HH:MM:SS +00:00".
-function fmtDataForSeoDatetime(d: Date): string {
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mi = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = String(d.getUTCSeconds()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +00:00`;
-}
-
-// Sum the absolute value of all spend transactions in the current calendar
-// month (UTC). Returns null on any error so the indicator can render a
-// graceful "—" without breaking the sidebar.
-//
-// Defensive about response shape — DataForSEO's transactions response is
-// nested deeper than most endpoints (`tasks[].result[].items[]` in some
-// docs, or `tasks[].result[]` directly). We walk both shapes and pick out
-// anything that looks like a numeric amount + a recognisable
-// debit/credit indicator.
-export async function getMonthlyDataForSeoSpendUsd(): Promise<number | null> {
+// Pull money.total and money.balance from /v3/appendix/user_data and
+// derive lifetime spend. DataForSEO doesn't expose a "spent this month"
+// field, so anything monthly requires diffing two of these over time.
+// Returns null on any failure so callers can render a graceful "—".
+export async function getDataForSeoMoneySnapshot(): Promise<DataForSeoMoneySnapshot | null> {
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
   if (!login || !password) return null;
 
-  const now = new Date();
-  const monthStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
-  );
-
   try {
-    const res = await fetch(TRANSACTIONS_LIST_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authHeader(),
-      },
-      body: JSON.stringify([
-        {
-          datetime_from: fmtDataForSeoDatetime(monthStart),
-          datetime_to: fmtDataForSeoDatetime(now),
-          limit: 1000,
-        },
-      ]),
-      // Don't let a slow billing call hang the sidebar render.
+    const res = await fetch(USER_DATA_URL, {
+      method: "GET",
+      headers: { Authorization: authHeader() },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as unknown;
-
-    // Walk the nested response, collect every leaf object that looks like
-    // a transaction, sum the spend.
-    const txns: Array<{ amount: number; type?: string }> = [];
-    function walk(node: unknown) {
-      if (!node) return;
-      if (Array.isArray(node)) {
-        for (const item of node) walk(item);
-        return;
-      }
-      if (typeof node === "object") {
-        const obj = node as Record<string, unknown>;
-        if (typeof obj.amount === "number") {
-          txns.push({
-            amount: obj.amount,
-            type: typeof obj.type === "string" ? obj.type : undefined,
-          });
-        }
-        for (const v of Object.values(obj)) walk(v);
-      }
-    }
-    walk(data);
-
-    let spent = 0;
-    for (const t of txns) {
-      // DataForSEO reports spend as negative `amount` and refills as
-      // positive. Some endpoints flip the sign — fall back to the `type`
-      // field when present (operation types like "task_post", "money_add").
-      if (t.type === "money_add" || t.type === "refill") continue;
-      if (t.amount < 0) {
-        spent += Math.abs(t.amount);
-      } else if (t.type && /task|charge|spend|debit/i.test(t.type)) {
-        spent += t.amount;
-      }
-    }
-    return Math.round(spent * 100) / 100;
+    const data = (await res.json()) as {
+      tasks?: Array<{
+        result?: Array<{ money?: { total?: number; balance?: number } }>;
+      }>;
+    };
+    const money = data.tasks?.[0]?.result?.[0]?.money;
+    if (!money) return null;
+    const total = typeof money.total === "number" ? money.total : 0;
+    const balance = typeof money.balance === "number" ? money.balance : 0;
+    return {
+      totalUsd: total,
+      balanceUsd: balance,
+      lifetimeSpentUsd: Math.max(0, total - balance),
+    };
   } catch {
     return null;
   }
 }
 
-// Debug helper: probes DataForSEO endpoints to find the working
-// monthly-spend source. We previously assumed
-// /v3/appendix/transactions/list — that 404s, so try the candidates
-// most likely to exist. Returns one result per probe so the operator can
-// see which paths respond.
-export async function getRawMonthlyTransactions(): Promise<unknown> {
+// Debug pass-through for /api/seo-api-spend?debug=1. Returns the raw
+// /v3/appendix/user_data response so we can inspect the shape directly.
+export async function getRawUserData(): Promise<unknown> {
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
   if (!login || !password) {
     return { error: "missing DATAFORSEO_LOGIN or DATAFORSEO_PASSWORD" };
   }
-  const now = new Date();
-  const monthStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
-  );
-  const dateFromIso = fmtDataForSeoDatetime(monthStart);
-  const dateToIso = fmtDataForSeoDatetime(now);
-
-  type Probe = {
-    label: string;
-    url: string;
-    method: "GET" | "POST";
-    body?: unknown;
-  };
-  const probes: Probe[] = [
-    {
-      label: "user_data (GET)",
-      url: "https://api.dataforseo.com/v3/appendix/user_data",
+  try {
+    const res = await fetch(USER_DATA_URL, {
       method: "GET",
-    },
-    {
-      label: "transactions_list (POST, underscore)",
-      url: "https://api.dataforseo.com/v3/appendix/transactions_list",
-      method: "POST",
-      body: [{ datetime_from: dateFromIso, datetime_to: dateToIso, limit: 1000 }],
-    },
-    {
-      label: "user/transactions (POST)",
-      url: "https://api.dataforseo.com/v3/appendix/user/transactions",
-      method: "POST",
-      body: [{ datetime_from: dateFromIso, datetime_to: dateToIso, limit: 1000 }],
-    },
-    {
-      label: "errors (POST, sanity check that an existing endpoint shape works)",
-      url: "https://api.dataforseo.com/v3/appendix/errors",
-      method: "POST",
-      body: [{ datetime_from: dateFromIso, datetime_to: dateToIso, limit: 5 }],
-    },
-  ];
-
-  const results: Array<Record<string, unknown>> = [];
-  for (const p of probes) {
+      headers: { Authorization: authHeader() },
+      signal: AbortSignal.timeout(8000),
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
     try {
-      const res = await fetch(p.url, {
-        method: p.method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: authHeader(),
-        },
-        body: p.body !== undefined ? JSON.stringify(p.body) : undefined,
-        signal: AbortSignal.timeout(8000),
-      });
-      const text = await res.text();
-      let parsed: unknown = null;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = text;
-      }
-      results.push({
-        label: p.label,
-        url: p.url,
-        method: p.method,
-        status: res.status,
-        ok: res.ok,
-        body: parsed,
-      });
-    } catch (err) {
-      results.push({
-        label: p.label,
-        url: p.url,
-        method: p.method,
-        error: (err as Error).message,
-      });
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
     }
+    return { status: res.status, ok: res.ok, body: parsed };
+  } catch (err) {
+    return { error: (err as Error).message };
   }
-  return {
-    sentDatetimeFrom: dateFromIso,
-    sentDatetimeTo: dateToIso,
-    probes: results,
-  };
 }
+

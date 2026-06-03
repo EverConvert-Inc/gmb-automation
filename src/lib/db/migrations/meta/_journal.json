@@ -85,6 +85,13 @@
       "when": 1780408235181,
       "tag": "0011_ppc_report_recipients",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1780502639600,
+      "tag": "0012_dataforseo_spend_snapshots",
+      "breakpoints": true
     }
   ]
 }

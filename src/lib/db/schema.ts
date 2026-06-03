@@ -478,3 +478,19 @@ export const ppcReportRecipients = pgTable("ppc_report_recipients", {
 });
 
 export type PpcReportRecipient = typeof ppcReportRecipients.$inferSelect;
+
+// Daily-ish snapshot of DataForSEO's lifetime spend (computed as
+// money.total - money.balance). Used by the sidebar's "SEO API spend"
+// indicator to derive a month-to-date number from a baseline taken
+// before the first of the current month. Written lazily on every cache
+// miss of the indicator API.
+export const dataforseoSpendSnapshots = pgTable("dataforseo_spend_snapshots", {
+  date: date("date").primaryKey(),
+  lifetimeSpentUsd: numeric("lifetime_spent_usd").notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type DataforseoSpendSnapshot =
+  typeof dataforseoSpendSnapshots.$inferSelect;
