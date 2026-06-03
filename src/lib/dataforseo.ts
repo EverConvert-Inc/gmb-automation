@@ -374,3 +374,98 @@ export function stripCityFromKeyword(keyword: string, city: string): string {
   }
   return keyword;
 }
+
+// --- Monthly API-spend lookup ------------------------------------------------
+
+const TRANSACTIONS_LIST_URL =
+  "https://api.dataforseo.com/v3/appendix/transactions/list";
+
+// Format a Date as DataForSEO's expected "YYYY-MM-DD HH:MM:SS +00:00".
+function fmtDataForSeoDatetime(d: Date): string {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +00:00`;
+}
+
+// Sum the absolute value of all spend transactions in the current calendar
+// month (UTC). Returns null on any error so the indicator can render a
+// graceful "—" without breaking the sidebar.
+//
+// Defensive about response shape — DataForSEO's transactions response is
+// nested deeper than most endpoints (`tasks[].result[].items[]` in some
+// docs, or `tasks[].result[]` directly). We walk both shapes and pick out
+// anything that looks like a numeric amount + a recognisable
+// debit/credit indicator.
+export async function getMonthlyDataForSeoSpendUsd(): Promise<number | null> {
+  const login = process.env.DATAFORSEO_LOGIN;
+  const password = process.env.DATAFORSEO_PASSWORD;
+  if (!login || !password) return null;
+
+  const now = new Date();
+  const monthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
+  );
+
+  try {
+    const res = await fetch(TRANSACTIONS_LIST_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader(),
+      },
+      body: JSON.stringify([
+        {
+          datetime_from: fmtDataForSeoDatetime(monthStart),
+          datetime_to: fmtDataForSeoDatetime(now),
+          limit: 1000,
+        },
+      ]),
+      // Don't let a slow billing call hang the sidebar render.
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as unknown;
+
+    // Walk the nested response, collect every leaf object that looks like
+    // a transaction, sum the spend.
+    const txns: Array<{ amount: number; type?: string }> = [];
+    function walk(node: unknown) {
+      if (!node) return;
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item);
+        return;
+      }
+      if (typeof node === "object") {
+        const obj = node as Record<string, unknown>;
+        if (typeof obj.amount === "number") {
+          txns.push({
+            amount: obj.amount,
+            type: typeof obj.type === "string" ? obj.type : undefined,
+          });
+        }
+        for (const v of Object.values(obj)) walk(v);
+      }
+    }
+    walk(data);
+
+    let spent = 0;
+    for (const t of txns) {
+      // DataForSEO reports spend as negative `amount` and refills as
+      // positive. Some endpoints flip the sign — fall back to the `type`
+      // field when present (operation types like "task_post", "money_add").
+      if (t.type === "money_add" || t.type === "refill") continue;
+      if (t.amount < 0) {
+        spent += Math.abs(t.amount);
+      } else if (t.type && /task|charge|spend|debit/i.test(t.type)) {
+        spent += t.amount;
+      }
+    }
+    return Math.round(spent * 100) / 100;
+  } catch {
+    return null;
+  }
+}

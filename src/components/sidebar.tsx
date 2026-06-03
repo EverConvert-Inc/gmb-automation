@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { Activity, Map, Megaphone, Search, Settings, X } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { SeoApiSpendIndicator } from "@/components/seo-api-spend-indicator";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
@@ -73,9 +74,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
         </div>
         {navLinks}
         <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/10 px-3 py-3">
-          <span className="text-[10px] uppercase tracking-wide text-white/40">
-            Local Visibility Platform
-          </span>
+          <SeoApiSpendIndicator />
           <ThemeToggle />
         </div>
       </aside>
@@ -115,7 +114,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
           </button>
         </div>
         {navLinks}
-        <div className="mt-auto flex items-center justify-end border-t border-white/10 px-3 py-3">
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/10 px-3 py-3">
+          <SeoApiSpendIndicator />
           <ThemeToggle />
         </div>
       </aside>
