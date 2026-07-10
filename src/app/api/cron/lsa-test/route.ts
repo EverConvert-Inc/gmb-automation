@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const TEST_ACCOUNT_EMAIL = "accounts@everconvert.com";
-const TEST_CUSTOMER_ID = "6633117348";
+const TEST_CUSTOMER_ID = "7596762098";
 
 function checkCronAuth(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
