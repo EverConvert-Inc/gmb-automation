@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { inspect } from "node:util";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { oauthCredentials } from "@/lib/db/schema";
@@ -61,14 +62,37 @@ export async function GET(req: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(JSON.stringify(err, Object.getOwnPropertyNames(err as object)));
-    } catch {
-      raw = undefined;
-    }
+
+    // google-ads-api throws a GoogleAdsFailure whose `.errors[]` entries
+    // carry the real detail (error_code, message, trigger, location) —
+    // often via getters, which JSON.stringify silently drops. Pull known
+    // fields by direct property access (which invokes getters normally)
+    // instead of trying to serialize the object generically.
+    const rawErrors = (err as { errors?: unknown[] })?.errors;
+    const errors = Array.isArray(rawErrors)
+      ? rawErrors.map((item) => {
+          const e = (item ?? {}) as Record<string, unknown>;
+          return {
+            error_code: e.error_code ?? e.errorCode ?? null,
+            message: e.message ?? null,
+            trigger: e.trigger ?? null,
+            location: e.location ?? null,
+            details: e.details ?? null,
+          };
+        })
+      : null;
+
+    // Full dump as a fallback in case the shape above is wrong or
+    // incomplete — `getters: true` forces util.inspect to evaluate getter
+    // properties instead of just printing "[Getter]".
+    const inspected = inspect(err, {
+      depth: null,
+      getters: true,
+      showHidden: true,
+    });
+
     return NextResponse.json(
-      { customerId: TEST_CUSTOMER_ID, error: message, raw },
+      { customerId: TEST_CUSTOMER_ID, error: message, errors, inspected },
       { status: 500 },
     );
   }
