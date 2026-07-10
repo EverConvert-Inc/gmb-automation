@@ -11,6 +11,7 @@ export const maxDuration = 300;
 
 const TEST_ACCOUNT_EMAIL = "accounts@everconvert.com";
 const TEST_CUSTOMER_ID = "7596762098";
+const TEST_LOGIN_CUSTOMER_ID = "6633117348";
 
 function checkCronAuth(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
@@ -46,7 +47,7 @@ export async function GET(req: Request) {
     }
 
     const refreshToken = decryptString(cred.refreshTokenEncrypted);
-    const customer = getCustomer(refreshToken, TEST_CUSTOMER_ID);
+    const customer = getCustomer(refreshToken, TEST_CUSTOMER_ID, TEST_LOGIN_CUSTOMER_ID);
 
     const rows = await customer.query(`
       SELECT local_services_lead.id, local_services_lead.lead_type,

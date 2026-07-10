@@ -68,14 +68,19 @@ export async function listAccessibleCustomers(
   }));
 }
 
-export function getCustomer(refreshToken: string, customerId: string): Customer {
+export function getCustomer(
+  refreshToken: string,
+  customerId: string,
+  loginCustomerId?: string,
+): Customer {
   const env = loadEnv();
   const api = newApi(env);
+  const resolvedLoginCustomerId = loginCustomerId ?? env.loginCustomerId;
   return api.Customer({
     customer_id: normalizeCustomerId(customerId),
     refresh_token: refreshToken,
-    login_customer_id: env.loginCustomerId
-      ? normalizeCustomerId(env.loginCustomerId)
+    login_customer_id: resolvedLoginCustomerId
+      ? normalizeCustomerId(resolvedLoginCustomerId)
       : undefined,
   });
 }
