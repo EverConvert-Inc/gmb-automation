@@ -236,3 +236,112 @@ export async function pullDailyMetrics(
     };
   });
 }
+
+export type LsaCostDailyRow = {
+  date: string; // YYYY-MM-DD
+  costMicros: bigint;
+};
+
+// Pulls daily cost across every LOCAL_SERVICES campaign on the account,
+// summed per day (lsa_leads_daily is one row per client per date, not per
+// campaign — mirrors pullDailyMetrics's date-window pattern but collapses
+// campaigns since the LSA report doesn't break out cost by campaign).
+export async function pullLocalServicesCost(
+  refreshToken: string,
+  customerId: string,
+  loginCustomerId: string | undefined,
+  fromDate: string,
+  toDate: string,
+): Promise<LsaCostDailyRow[]> {
+  const customer = getCustomer(refreshToken, customerId, loginCustomerId);
+  const rows = await customer.query(`
+    SELECT campaign.id, campaign.advertising_channel_type, segments.date, metrics.cost_micros
+    FROM campaign
+    WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES'
+      AND segments.date BETWEEN '${fromDate}' AND '${toDate}'
+  `);
+
+  const byDate = new Map<string, bigint>();
+  for (const r of rows) {
+    const segments = r.segments ?? {};
+    const metrics = r.metrics ?? {};
+    const date = String(segments.date ?? "");
+    if (!date) continue;
+    byDate.set(date, (byDate.get(date) ?? 0n) + BigInt(metrics.cost_micros ?? 0));
+  }
+
+  return Array.from(byDate.entries())
+    .map(([date, costMicros]) => ({ date, costMicros }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export type LsaLeadsDailyRow = {
+  date: string; // YYYY-MM-DD
+  phoneCallCount: number;
+  messageCount: number;
+  bookingCount: number;
+  // Counts keyed by LocalServicesLeadStatus name (NEW, ACTIVE, BOOKED,
+  // DECLINED, EXPIRED, DISABLED, CONSUMER_DECLINED, WIPED_OUT).
+  statusBreakdown: Record<string, number>;
+};
+
+// Pulls local_services_lead rows for the window and buckets them by the
+// lead's creation day (mirrors callrail.ts's day-bucketing from
+// call.start_time). creation_date_time is a full datetime string, not a
+// segments.date column, so the BETWEEN bounds include an explicit
+// time-of-day range — only DURING LAST_30_DAYS was confirmed live via the
+// lsa-test diagnostic; this BETWEEN form follows GAQL's documented
+// comparison operators but hasn't itself been exercised against a real
+// backfill yet, so it's worth double-checking if a backfilled range comes
+// back short.
+export async function pullLocalServicesLeads(
+  refreshToken: string,
+  customerId: string,
+  loginCustomerId: string | undefined,
+  fromDate: string,
+  toDate: string,
+): Promise<LsaLeadsDailyRow[]> {
+  const customer = getCustomer(refreshToken, customerId, loginCustomerId);
+  const rows = await customer.query(`
+    SELECT local_services_lead.id, local_services_lead.lead_type,
+           local_services_lead.lead_status, local_services_lead.creation_date_time
+    FROM local_services_lead
+    WHERE local_services_lead.creation_date_time BETWEEN '${fromDate} 00:00:00' AND '${toDate} 23:59:59'
+  `);
+
+  const byDate = new Map<string, LsaLeadsDailyRow>();
+  for (const r of rows) {
+    const lead = (r as { local_services_lead?: Record<string, unknown> }).local_services_lead ?? {};
+    const createdAt = String(lead.creation_date_time ?? "");
+    const date = createdAt.slice(0, 10);
+    if (!date) continue;
+
+    const bucket = byDate.get(date) ?? {
+      date,
+      phoneCallCount: 0,
+      messageCount: 0,
+      bookingCount: 0,
+      statusBreakdown: {},
+    };
+
+    const typeName =
+      typeof lead.lead_type === "number"
+        ? enums.LocalServicesLeadType[lead.lead_type]
+        : String(lead.lead_type ?? "");
+    if (typeName === "PHONE_CALL") bucket.phoneCallCount += 1;
+    else if (typeName === "MESSAGE") bucket.messageCount += 1;
+    else if (typeName === "BOOKING") bucket.bookingCount += 1;
+
+    const statusName =
+      typeof lead.lead_status === "number"
+        ? enums.LocalServicesLeadStatus[lead.lead_status]
+        : String(lead.lead_status ?? "");
+    if (statusName) {
+      bucket.statusBreakdown[statusName] = (bucket.statusBreakdown[statusName] ?? 0) + 1;
+    }
+
+    byDate.set(date, bucket);
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
