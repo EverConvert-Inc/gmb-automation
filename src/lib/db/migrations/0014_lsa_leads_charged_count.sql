@@ -1,0 +1,1 @@
+ALTER TABLE "lsa_leads_daily" ADD COLUMN "charged_count" integer DEFAULT 0 NOT NULL;

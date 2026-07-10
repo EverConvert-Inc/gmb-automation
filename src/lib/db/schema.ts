@@ -539,6 +539,11 @@ export const lsaLeadsDaily = pgTable(
     phoneCallCount: integer("phone_call_count").notNull().default(0),
     messageCount: integer("message_count").notNull().default(0),
     bookingCount: integer("booking_count").notNull().default(0),
+    // Leads Google actually charged for that day, per local_services_lead's
+    // lead_charged field — distinct from lead_status, since a lead can be
+    // credited/refunded by Google after the fact. Captured for future
+    // cost-reconciliation; not yet subtracted from cost_micros anywhere.
+    chargedCount: integer("charged_count").notNull().default(0),
     // Counts per LocalServicesLeadStatus name (NEW, ACTIVE, BOOKED,
     // DECLINED, EXPIRED, DISABLED, CONSUMER_DECLINED, WIPED_OUT). jsonb
     // rather than one column per status — the set is wide and this is

@@ -280,6 +280,11 @@ export type LsaLeadsDailyRow = {
   phoneCallCount: number;
   messageCount: number;
   bookingCount: number;
+  // Leads Google actually charged for, per lead_charged. Distinct from
+  // lead_status — a lead can be credited/refunded after being charged.
+  // Captured for future cost reconciliation; not applied to cost anywhere
+  // yet.
+  chargedCount: number;
   // Counts keyed by LocalServicesLeadStatus name (NEW, ACTIVE, BOOKED,
   // DECLINED, EXPIRED, DISABLED, CONSUMER_DECLINED, WIPED_OUT).
   statusBreakdown: Record<string, number>;
@@ -304,7 +309,8 @@ export async function pullLocalServicesLeads(
   const customer = getCustomer(refreshToken, customerId, loginCustomerId);
   const rows = await customer.query(`
     SELECT local_services_lead.id, local_services_lead.lead_type,
-           local_services_lead.lead_status, local_services_lead.creation_date_time
+           local_services_lead.lead_status, local_services_lead.lead_charged,
+           local_services_lead.creation_date_time
     FROM local_services_lead
     WHERE local_services_lead.creation_date_time BETWEEN '${fromDate} 00:00:00' AND '${toDate} 23:59:59'
   `);
@@ -321,6 +327,7 @@ export async function pullLocalServicesLeads(
       phoneCallCount: 0,
       messageCount: 0,
       bookingCount: 0,
+      chargedCount: 0,
       statusBreakdown: {},
     };
 
@@ -331,6 +338,8 @@ export async function pullLocalServicesLeads(
     if (typeName === "PHONE_CALL") bucket.phoneCallCount += 1;
     else if (typeName === "MESSAGE") bucket.messageCount += 1;
     else if (typeName === "BOOKING") bucket.bookingCount += 1;
+
+    if (lead.lead_charged === true) bucket.chargedCount += 1;
 
     const statusName =
       typeof lead.lead_status === "number"

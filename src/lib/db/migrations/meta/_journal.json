@@ -99,6 +99,13 @@
       "when": 1783711097772,
       "tag": "0013_lsa_clients",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783715106975,
+      "tag": "0014_lsa_leads_charged_count",
+      "breakpoints": true
     }
   ]
 }
