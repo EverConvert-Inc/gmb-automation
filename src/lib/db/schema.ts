@@ -479,6 +479,114 @@ export const ppcReportRecipients = pgTable("ppc_report_recipients", {
 
 export type PpcReportRecipient = typeof ppcReportRecipients.$inferSelect;
 
+// ---------------------------------------------------------------------------
+// LSA reporting (Local Services Ads leads + Google Ads cost + CallRail)
+// ---------------------------------------------------------------------------
+
+export const lsaClients = pgTable(
+  "lsa_clients",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    isActive: boolean("is_active").notNull().default(true),
+    googleAdsCustomerId: text("google_ads_customer_id"),
+    googleAdsOauthTokenId: uuid("google_ads_oauth_token_id").references(
+      () => oauthCredentials.id,
+      { onDelete: "set null" },
+    ),
+    // Per-client login-customer-id override. LSA MCCs are separate accounts
+    // from PPC's MCC, so the single global GOOGLE_ADS_LOGIN_CUSTOMER_ID env
+    // var PPC relies on isn't sufficient here — each LSA client's Google
+    // Ads customer sits under its own manager account.
+    loginCustomerId: text("login_customer_id"),
+    googleAdsDiscoveredCustomersJson: jsonb("google_ads_discovered_customers_json"),
+    callrailCompanyId: text("callrail_company_id"),
+    signedCaseTag: text("signed_case_tag").notNull().default("Signed"),
+    // Same mechanism as ppc_clients.signed_case_name_filters, defaulted to
+    // the LSA tracking-number naming convention instead of PPC's.
+    signedCaseNameFilters: text("signed_case_name_filters")
+      .array()
+      .notNull()
+      .default(sql`ARRAY['LSA']::text[]`),
+    lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
+    lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
+    lastSyncError: text("last_sync_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    activeIdx: index("lsa_clients_active_idx").on(t.isActive),
+  }),
+);
+
+export type LsaClient = typeof lsaClients.$inferSelect;
+
+// One row per (lsa_client, date), merging leads + cost + CallRail in a
+// single write from the sync itself — unlike the PPC tables (ppc_ads_daily /
+// ppc_campaigns / ppc_callrail_daily), which are joined at report-query
+// time and can silently drop a client that has CallRail data but no Ads
+// activity in the window. Folding all three sources into one row here
+// avoids that failure mode entirely: the report reads one table, no join.
+export const lsaLeadsDaily = pgTable(
+  "lsa_leads_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    phoneCallCount: integer("phone_call_count").notNull().default(0),
+    messageCount: integer("message_count").notNull().default(0),
+    bookingCount: integer("booking_count").notNull().default(0),
+    // Counts per LocalServicesLeadStatus name (NEW, ACTIVE, BOOKED,
+    // DECLINED, EXPIRED, DISABLED, CONSUMER_DECLINED, WIPED_OUT). jsonb
+    // rather than one column per status — the set is wide and this is
+    // supplementary detail, not something the report's KPIs are driven by.
+    leadStatusBreakdown: jsonb("lead_status_breakdown")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    costMicros: bigint("cost_micros", { mode: "bigint" }).notNull().default(sql`0`),
+    signedCases: integer("signed_cases").notNull().default(0),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("lsa_leads_daily_unique").on(t.lsaClientId, t.date),
+    clientDateIdx: index("lsa_leads_daily_client_date_idx").on(t.lsaClientId, t.date),
+  }),
+);
+
+export type LsaLeadsDaily = typeof lsaLeadsDaily.$inferSelect;
+
+export const lsaSyncJobs = pgTable("lsa_sync_jobs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Null for "sync all" cron runs; populated for per-client "sync now".
+  lsaClientId: uuid("lsa_client_id").references(() => lsaClients.id, {
+    onDelete: "cascade",
+  }),
+  kind: text("kind").notNull(), // 'google_ads' | 'callrail'
+  status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  errorMessage: text("error_message"),
+  triggeredBy: text("triggered_by").notNull().default("scheduled"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type LsaSyncJob = typeof lsaSyncJobs.$inferSelect;
+
+export const lsaReportRecipients = pgTable("lsa_report_recipients", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type LsaReportRecipient = typeof lsaReportRecipients.$inferSelect;
+
 // Daily-ish snapshot of DataForSEO's lifetime spend (computed as
 // money.total - money.balance). Used by the sidebar's "SEO API spend"
 // indicator to derive a month-to-date number from a baseline taken
