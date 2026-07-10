@@ -68,7 +68,7 @@ export async function listAccessibleCustomers(
   }));
 }
 
-function getCustomer(refreshToken: string, customerId: string): Customer {
+export function getCustomer(refreshToken: string, customerId: string): Customer {
   const env = loadEnv();
   const api = newApi(env);
   return api.Customer({
