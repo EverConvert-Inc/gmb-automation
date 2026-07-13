@@ -14,6 +14,7 @@ import { StatTile } from "@/components/ui/stat-tile";
 import { DeltaPill } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { LsaReportTable } from "@/components/lsa-report-table";
+import { EmailLsaReportButton } from "@/components/email-lsa-report-button";
 import { getLsaReport, listLsaClients } from "@/lib/queries-lsa";
 
 export const dynamic = "force-dynamic";
@@ -111,6 +112,7 @@ export default async function LsaReportPage({
           </h1>
         </div>
         <div className="flex flex-wrap items-start gap-2">
+          <EmailLsaReportButton from={from} to={to} />
           <Link href="/lsa/clients" className={buttonClasses("outline")}>
             <SettingsIcon className="mr-2 h-4 w-4" /> Manage LSA clients
           </Link>

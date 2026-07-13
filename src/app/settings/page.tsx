@@ -3,8 +3,9 @@ import { asc } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignOutButton } from "@/components/sign-out-button";
 import { PpcReportRecipientsCard } from "@/components/ppc-report-recipients-card";
+import { LsaReportRecipientsCard } from "@/components/lsa-report-recipients-card";
 import { db } from "@/lib/db/client";
-import { ppcReportRecipients } from "@/lib/db/schema";
+import { ppcReportRecipients, lsaReportRecipients } from "@/lib/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -21,10 +22,16 @@ export default async function SettingsPage() {
     // Supabase not configured locally; render without identity.
   }
 
-  const recipients = await db.query.ppcReportRecipients.findMany({
-    orderBy: asc(ppcReportRecipients.email),
-    columns: { id: true, email: true },
-  });
+  const [recipients, lsaRecipients] = await Promise.all([
+    db.query.ppcReportRecipients.findMany({
+      orderBy: asc(ppcReportRecipients.email),
+      columns: { id: true, email: true },
+    }),
+    db.query.lsaReportRecipients.findMany({
+      orderBy: asc(lsaReportRecipients.email),
+      columns: { id: true, email: true },
+    }),
+  ]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -44,6 +51,7 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
       <PpcReportRecipientsCard initial={recipients} />
+      <LsaReportRecipientsCard initial={lsaRecipients} />
     </div>
   );
 }
