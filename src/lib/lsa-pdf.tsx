@@ -244,9 +244,9 @@ export function LsaReportDocument({
   opts: RenderOpts;
 }) {
   const generatedAt = opts.generatedAt ?? new Date();
-  const clients = [...report.rows].sort((a, b) =>
-    a.lsaClientName.localeCompare(b.lsaClientName),
-  );
+  // report.rows already arrives sorted (signed cases descending) from
+  // getLsaReport() — no re-sort needed here.
+  const clients = report.rows;
 
   return (
     <Document
@@ -279,9 +279,9 @@ export function LsaReportDocument({
             d={delta(report.kpis.messageCount, report.kpisPrior.messageCount)}
           />
           <KpiBox
-            label="Bookings"
-            value={fmtNumber(report.kpis.bookingCount)}
-            d={delta(report.kpis.bookingCount, report.kpisPrior.bookingCount)}
+            label="Signed"
+            value={fmtNumber(report.kpis.signedCases)}
+            d={delta(report.kpis.signedCases, report.kpisPrior.signedCases)}
           />
           <KpiBox
             label="Cost"
@@ -302,7 +302,6 @@ export function LsaReportDocument({
               <Text style={[styles.cellName, styles.th]}>Client</Text>
               <Text style={[styles.cellNum, styles.th]}>Phone calls</Text>
               <Text style={[styles.cellNum, styles.th]}>Messages</Text>
-              <Text style={[styles.cellNum, styles.th]}>Bookings</Text>
               <Text style={[styles.cellNum, styles.th]}>Cost</Text>
               <Text style={[styles.cellNum, styles.th]}>Signed</Text>
             </View>
@@ -316,9 +315,6 @@ export function LsaReportDocument({
                 </Text>
                 <Text style={[styles.cellNum, styles.td]}>
                   {fmtNumber(c.messageCount)}
-                </Text>
-                <Text style={[styles.cellNum, styles.td]}>
-                  {fmtNumber(c.bookingCount)}
                 </Text>
                 <Text style={[styles.cellNum, styles.td]}>
                   {fmtMicros(c.costMicros)}

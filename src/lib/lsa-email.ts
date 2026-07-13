@@ -85,7 +85,7 @@ function renderEmailHtml({
   const kpiCells = [
     { label: "Phone calls", value: fmtNumber(k.phoneCallCount) },
     { label: "Messages", value: fmtNumber(k.messageCount) },
-    { label: "Bookings", value: fmtNumber(k.bookingCount) },
+    { label: "Signed", value: fmtNumber(k.signedCases) },
     { label: "Cost", value: fmtMicros(k.costMicros) },
   ];
   const kpiRow = kpiCells
@@ -157,7 +157,7 @@ function renderEmailText({
     ``,
     `Phone calls  ${fmtNumber(k.phoneCallCount)}`,
     `Messages     ${fmtNumber(k.messageCount)}`,
-    `Bookings     ${fmtNumber(k.bookingCount)}`,
+    `Signed       ${fmtNumber(k.signedCases)}`,
     `Cost         ${fmtMicros(k.costMicros)}`,
     ``,
     `Full per-client breakdown across all LSA clients is attached as a PDF.`,

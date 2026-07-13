@@ -202,7 +202,15 @@ export async function getLsaReport({
       costMicros: r.costMicros ? BigInt(r.costMicros) : 0n,
       signedCases: r.signedCases ?? 0,
     }))
-    .sort((a, b) => a.lsaClientName.localeCompare(b.lsaClientName));
+    // Signed cases descending — clients with the most signed cases lead
+    // the report. Name is only a tiebreaker for equal (often zero) counts,
+    // so ties don't fall back to whatever order Postgres happened to
+    // return.
+    .sort(
+      (a, b) =>
+        b.signedCases - a.signedCases ||
+        a.lsaClientName.localeCompare(b.lsaClientName),
+    );
 
   const byDay: LsaByDayPoint[] = byDayRows.map((r) => ({
     lsaClientId: r.lsaClientId,

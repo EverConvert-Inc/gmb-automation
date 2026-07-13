@@ -69,8 +69,8 @@ function SortHeader({
 // no per-campaign breakdown to drill into (lsa_leads_daily is already a
 // per-client-per-day rollup, not per-campaign).
 export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
-  const [sortKey, setSortKey] = useState<SortKey>("client");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortKey, setSortKey] = useState<SortKey>("signedCases");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   function onSort(field: SortKey) {
     if (field === sortKey) {
