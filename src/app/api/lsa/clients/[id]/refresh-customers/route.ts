@@ -40,7 +40,9 @@ export async function POST(
   const refreshToken = decryptString(cred.refreshTokenEncrypted);
   try {
     const customers = await Promise.race([
-      discoverGoogleAdsCustomers(refreshToken),
+      discoverGoogleAdsCustomers(refreshToken, {
+        extraManagerId: process.env.GOOGLE_ADS_LSA_MANAGER_ID,
+      }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Timed out after 25s")), 25000),
       ),

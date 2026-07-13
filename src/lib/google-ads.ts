@@ -97,8 +97,20 @@ export type DiscoveredCustomer = {
 // We also expand any manager (MCC) accounts via customer_client to surface
 // their children — typical agency setup is one MCC with many child clients
 // and we don't want the operator to have to know each child's id.
+//
+// opts.extraManagerId is an opt-in escape hatch for managers that never
+// show up in listAccessibleCustomers() at all — e.g. a separate LSA MCC
+// the refresh token can still reach via an explicit login_customer_id
+// override (see getCustomer), but that Google never lists as directly
+// accessible to this OAuth user. The loop below only expands managers it
+// finds inside `accessible`, so it would never surface such a manager's
+// children on its own. Only pass this when you actually want that extra
+// probe — existing callers that don't pass it (PPC's discovery) are
+// completely unaffected, regardless of whether the underlying env var is
+// set anywhere in the deployment.
 export async function discoverGoogleAdsCustomers(
   refreshToken: string,
+  opts?: { extraManagerId?: string },
 ): Promise<DiscoveredCustomer[]> {
   const accessible = await listAccessibleCustomers(refreshToken);
   // Map by id so MCC expansion doesn't introduce duplicates.
@@ -168,6 +180,53 @@ export async function discoverGoogleAdsCustomers(
       }
     }),
   );
+
+  if (opts?.extraManagerId) {
+    try {
+      // customer_id and login_customer_id both set to the manager itself —
+      // the standard pattern for querying a manager's own customer_client
+      // list when that manager isn't otherwise directly accessible to this
+      // refresh token (mirrors how getCustomer() lets a per-client
+      // login_customer_id reach a customer the token can't see directly).
+      const managerCustomer = getCustomer(
+        refreshToken,
+        opts.extraManagerId,
+        opts.extraManagerId,
+      );
+      const childRows = (await managerCustomer.query(`
+        SELECT
+          customer_client.id,
+          customer_client.descriptive_name,
+          customer_client.level,
+          customer_client.manager
+        FROM customer_client
+        WHERE customer_client.level <= 1
+      `)) as Array<{
+        customer_client?: {
+          id?: string | number | null;
+          descriptive_name?: string | null;
+          manager?: boolean | null;
+        };
+      }>;
+      for (const r of childRows) {
+        const cc = r.customer_client;
+        if (!cc?.id) continue;
+        const id = normalizeCustomerId(String(cc.id));
+        if (id === normalizeCustomerId(opts.extraManagerId)) continue; // skip the manager itself
+        if (cc.manager) continue; // skip nested managers
+        // Don't overwrite an entry already resolved via the accessible-
+        // customers path above — that one may carry a better name.
+        if (!byId.has(id)) {
+          byId.set(id, { id, name: cc.descriptive_name ?? null });
+        }
+      }
+    } catch {
+      // Same fail-soft rationale as the per-customer expansion above — a
+      // misconfigured or unreachable manager id shouldn't take down
+      // discovery for every other customer.
+    }
+  }
+
   return Array.from(byId.values()).sort((a, b) => {
     const an = a.name ?? "";
     const bn = b.name ?? "";
