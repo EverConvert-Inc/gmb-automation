@@ -31,6 +31,14 @@ export type LsaClientListItem = {
   name: string;
   slug: string;
   isActive: boolean;
+  googleAdsLinked: boolean;
+  googleAdsCustomerId: string | null;
+  callrailLinked: boolean;
+  callrailCompanyId: string | null;
+  signedCaseTag: string;
+  lastAdsSyncAt: Date | null;
+  lastCallrailSyncAt: Date | null;
+  lastSyncError: string | null;
 };
 
 export async function listLsaClients(): Promise<LsaClientListItem[]> {
@@ -42,7 +50,60 @@ export async function listLsaClients(): Promise<LsaClientListItem[]> {
     name: r.name,
     slug: r.slug,
     isActive: r.isActive,
+    googleAdsLinked:
+      r.googleAdsOauthTokenId !== null && r.googleAdsCustomerId !== null,
+    googleAdsCustomerId: r.googleAdsCustomerId,
+    callrailLinked: r.callrailCompanyId !== null,
+    callrailCompanyId: r.callrailCompanyId,
+    signedCaseTag: r.signedCaseTag,
+    lastAdsSyncAt: r.lastAdsSyncAt,
+    lastCallrailSyncAt: r.lastCallrailSyncAt,
+    lastSyncError: r.lastSyncError,
   }));
+}
+
+// customerId / companyId → names of OTHER LSA clients already linked.
+// Powers the "Already linked to: X" hint in the admin card's comboboxes,
+// same as getLinkedAdsCustomerMap/getLinkedCallrailCompanyMap in
+// queries.ts for PPC.
+export async function getLinkedLsaAdsCustomerMap(
+  excludeClientId?: string,
+): Promise<Record<string, string[]>> {
+  const rows = await db
+    .select({
+      customerId: lsaClients.googleAdsCustomerId,
+      name: lsaClients.name,
+      id: lsaClients.id,
+    })
+    .from(lsaClients)
+    .where(sql`${lsaClients.googleAdsCustomerId} is not null`);
+  const map: Record<string, string[]> = {};
+  for (const r of rows) {
+    if (!r.customerId) continue;
+    if (excludeClientId && r.id === excludeClientId) continue;
+    (map[r.customerId] ??= []).push(r.name);
+  }
+  return map;
+}
+
+export async function getLinkedLsaCallrailCompanyMap(
+  excludeClientId?: string,
+): Promise<Record<string, string[]>> {
+  const rows = await db
+    .select({
+      companyId: lsaClients.callrailCompanyId,
+      name: lsaClients.name,
+      id: lsaClients.id,
+    })
+    .from(lsaClients)
+    .where(sql`${lsaClients.callrailCompanyId} is not null`);
+  const map: Record<string, string[]> = {};
+  for (const r of rows) {
+    if (!r.companyId) continue;
+    if (excludeClientId && r.id === excludeClientId) continue;
+    (map[r.companyId] ??= []).push(r.name);
+  }
+  return map;
 }
 
 async function aggregateLsaKpis(from: string, to: string): Promise<LsaKpis> {
