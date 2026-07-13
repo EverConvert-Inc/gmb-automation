@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
-  CalendarCheck,
+  BadgeCheck,
   CircleDollarSign,
   MessageSquare,
   PhoneCall,
@@ -14,6 +14,7 @@ import { StatTile } from "@/components/ui/stat-tile";
 import { DeltaPill } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { LsaReportTable } from "@/components/lsa-report-table";
+import { LsaPhoneCallsChart } from "@/components/lsa-phone-calls-chart";
 import { EmailLsaReportButton } from "@/components/email-lsa-report-button";
 import { getLsaReport, listLsaClients } from "@/lib/queries-lsa";
 
@@ -151,15 +152,15 @@ export default async function LsaReportPage({
           tone="brand"
         />
         <StatTile
-          label="Bookings"
-          value={new Intl.NumberFormat().format(report.kpis.bookingCount)}
+          label="Signed"
+          value={new Intl.NumberFormat().format(report.kpis.signedCases)}
           sublabel={
             <DeltaPill
-              current={report.kpis.bookingCount}
-              prior={report.kpisPrior.bookingCount}
+              current={report.kpis.signedCases}
+              prior={report.kpisPrior.signedCases}
             />
           }
-          icon={<CalendarCheck className="h-4 w-4" />}
+          icon={<BadgeCheck className="h-4 w-4" />}
           tone="brand"
         />
         <StatTile
@@ -175,6 +176,14 @@ export default async function LsaReportPage({
           icon={<CircleDollarSign className="h-4 w-4" />}
         />
       </div>
+
+      <SectionCard
+        icon={<PhoneCall className="h-4 w-4" />}
+        title="Phone calls by day"
+        eyebrow="Pacing"
+      >
+        <LsaPhoneCallsChart byDay={report.byDay} from={from} to={to} />
+      </SectionCard>
 
       <SectionCard
         icon={<PhoneCall className="h-4 w-4" />}

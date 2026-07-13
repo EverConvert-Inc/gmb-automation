@@ -20,10 +20,18 @@ export type LsaClientRow = {
   signedCases: number;
 };
 
+export type LsaByDayPoint = {
+  lsaClientId: string;
+  lsaClientName: string;
+  date: string; // YYYY-MM-DD
+  phoneCallCount: number;
+};
+
 export type LsaReport = {
   kpis: LsaKpis;
   kpisPrior: LsaKpis;
   rows: LsaClientRow[];
+  byDay: LsaByDayPoint[];
 };
 
 export type LsaClientListItem = {
@@ -151,7 +159,7 @@ export async function getLsaReport({
     .slice(0, 10);
   const priorTo = new Date(fromMs - msPerDay).toISOString().slice(0, 10);
 
-  const [kpis, kpisPrior, clientRows] = await Promise.all([
+  const [kpis, kpisPrior, clientRows, byDayRows] = await Promise.all([
     aggregateLsaKpis(from, to),
     aggregateLsaKpis(priorFrom, priorTo),
     db
@@ -168,6 +176,20 @@ export async function getLsaReport({
       .innerJoin(lsaClients, eq(lsaClients.id, lsaLeadsDaily.lsaClientId))
       .where(and(gte(lsaLeadsDaily.date, from), sql`${lsaLeadsDaily.date} <= ${to}`))
       .groupBy(lsaClients.id, lsaClients.name),
+    // Phone calls by day, per client — powers the "Phone calls by day"
+    // chart. Same shape as getPpcReport's byDayRows.
+    db
+      .select({
+        lsaClientId: lsaClients.id,
+        lsaClientName: lsaClients.name,
+        date: lsaLeadsDaily.date,
+        phoneCallCount: sql<number | null>`sum(${lsaLeadsDaily.phoneCallCount})::int`,
+      })
+      .from(lsaLeadsDaily)
+      .innerJoin(lsaClients, eq(lsaClients.id, lsaLeadsDaily.lsaClientId))
+      .where(and(gte(lsaLeadsDaily.date, from), sql`${lsaLeadsDaily.date} <= ${to}`))
+      .groupBy(lsaClients.id, lsaClients.name, lsaLeadsDaily.date)
+      .orderBy(lsaLeadsDaily.date),
   ]);
 
   const rows: LsaClientRow[] = clientRows
@@ -182,5 +204,12 @@ export async function getLsaReport({
     }))
     .sort((a, b) => a.lsaClientName.localeCompare(b.lsaClientName));
 
-  return { kpis, kpisPrior, rows };
+  const byDay: LsaByDayPoint[] = byDayRows.map((r) => ({
+    lsaClientId: r.lsaClientId,
+    lsaClientName: r.lsaClientName,
+    date: r.date,
+    phoneCallCount: r.phoneCallCount ?? 0,
+  }));
+
+  return { kpis, kpisPrior, rows, byDay };
 }

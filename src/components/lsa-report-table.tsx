@@ -7,7 +7,6 @@ type SortKey =
   | "client"
   | "phoneCallCount"
   | "messageCount"
-  | "bookingCount"
   | "cost"
   | "signedCases";
 
@@ -92,8 +91,6 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
           return compareNumbers(a.phoneCallCount, b.phoneCallCount, sortDir);
         case "messageCount":
           return compareNumbers(a.messageCount, b.messageCount, sortDir);
-        case "bookingCount":
-          return compareNumbers(a.bookingCount, b.bookingCount, sortDir);
         case "cost":
           return compareNumbers(Number(a.costMicros), Number(b.costMicros), sortDir);
         case "signedCases":
@@ -139,10 +136,6 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
               <div className="text-right font-medium">
                 {fmtNumber(r.messageCount)}
               </div>
-              <div className="text-muted-foreground">Bookings</div>
-              <div className="text-right font-medium">
-                {fmtNumber(r.bookingCount)}
-              </div>
               <div className="text-muted-foreground">Cost</div>
               <div className="text-right font-medium">{fmtMicros(r.costMicros)}</div>
             </div>
@@ -179,14 +172,6 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
                 onSort={onSort}
               />
               <SortHeader
-                label="Bookings"
-                align="right"
-                field="bookingCount"
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={onSort}
-              />
-              <SortHeader
                 label="Cost"
                 align="right"
                 field="cost"
@@ -213,9 +198,6 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
                 </td>
                 <td className="px-3 py-2 text-right align-middle tabular-nums">
                   {fmtNumber(r.messageCount)}
-                </td>
-                <td className="px-3 py-2 text-right align-middle tabular-nums">
-                  {fmtNumber(r.bookingCount)}
                 </td>
                 <td className="px-3 py-2 text-right align-middle tabular-nums">
                   {fmtMicros(r.costMicros)}

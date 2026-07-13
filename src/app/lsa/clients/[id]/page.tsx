@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { LsaClientAdminCard } from "@/components/lsa-client-admin-card";
 import { db } from "@/lib/db/client";
 import { lsaClients } from "@/lib/db/schema";
@@ -87,6 +87,33 @@ export default async function LsaClientDetailPage({
       where: eq(lsaClients.id, row.id),
     });
     if (refreshed) row = refreshed;
+  }
+
+  // Auto-fill login_customer_id from the most-recently-used value across
+  // other LSA clients when this client doesn't have one yet. In practice
+  // every LSA client currently shares the same MCC, so this saves
+  // re-typing "663-311-7348" on every new client — same rationale as the
+  // OAuth auto-attach above, just for a plain field instead of a
+  // discovery-backed one. Still editable afterward; this only sets a
+  // starting value, it doesn't lock anything.
+  if (!row.loginCustomerId) {
+    const donor = await db.query.lsaClients.findFirst({
+      where: and(
+        ne(lsaClients.id, row.id),
+        sql`${lsaClients.loginCustomerId} is not null`,
+      ),
+      orderBy: (cols, ops) => ops.desc(cols.updatedAt),
+    });
+    if (donor?.loginCustomerId) {
+      await db
+        .update(lsaClients)
+        .set({ loginCustomerId: donor.loginCustomerId, updatedAt: new Date() })
+        .where(eq(lsaClients.id, row.id));
+      const refreshed = await db.query.lsaClients.findFirst({
+        where: eq(lsaClients.id, row.id),
+      });
+      if (refreshed) row = refreshed;
+    }
   }
 
   return (
