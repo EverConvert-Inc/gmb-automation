@@ -80,7 +80,7 @@ export function PpcOptimizationAlertRecipientsCard({
         <CardDescription>
           Email addresses that receive an alert when a PPC campaign&rsquo;s
           optimization score drops below 80%. Separate from the daily PPC
-          report list — typically the ads team, not execs.
+          report list.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

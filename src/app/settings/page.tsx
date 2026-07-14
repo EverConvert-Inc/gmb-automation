@@ -82,7 +82,7 @@ export default async function SettingsPage() {
             Alert recipients
           </h2>
           <p className="text-sm text-muted-foreground">
-            Ads-team-facing alerts on campaign health.
+            Alerts on campaign health.
           </p>
         </div>
         <PpcOptimizationAlertRecipientsCard
