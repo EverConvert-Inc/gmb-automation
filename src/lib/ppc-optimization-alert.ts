@@ -23,11 +23,11 @@ async function loadRecipients(): Promise<string[]> {
   return rows.map((r) => r.email);
 }
 
-// Queries every active, Ads-linked PPC client's non-LOCAL_SERVICES
-// campaigns for optimization_score, flagging anything real (not null —
-// unscored campaigns are paused/inactive, not "0%") and below the
-// threshold. Mirrors syncAllGoogleAds's per-client try/catch in
-// ppc-sync.ts — one client's API failure shouldn't stop the sweep.
+// Queries every active, Ads-linked PPC client's non-LOCAL_SERVICES,
+// ENABLED campaigns for optimization_score, flagging anything real (not
+// null — a null score means unscored, not "0%") and below the threshold.
+// Mirrors syncAllGoogleAds's per-client try/catch in ppc-sync.ts — one
+// client's API failure shouldn't stop the sweep.
 export async function getFlaggedCampaigns(): Promise<FlaggedCampaign[]> {
   const clients = await db.query.ppcClients.findMany({
     where: and(
@@ -56,9 +56,10 @@ export async function getFlaggedCampaigns(): Promise<FlaggedCampaign[]> {
       const customer = getCustomer(refreshToken, client.googleAdsCustomerId);
 
       const rows = await customer.query(`
-        SELECT campaign.id, campaign.name, campaign.optimization_score, metrics.optimization_score_url
+        SELECT campaign.id, campaign.name, campaign.status, campaign.optimization_score, metrics.optimization_score_url
         FROM campaign
         WHERE campaign.advertising_channel_type != 'LOCAL_SERVICES'
+          AND campaign.status = 'ENABLED'
       `);
 
       for (const r of rows) {

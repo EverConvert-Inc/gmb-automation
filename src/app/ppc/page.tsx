@@ -17,6 +17,7 @@ import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { PpcPhoneCallsChart } from "@/components/ppc-phone-calls-chart";
 import { PpcReportTable } from "@/components/ppc-report-table";
 import { EmailPpcReportButton } from "@/components/email-ppc-report-button";
+import { EmailOptimizationAlertButton } from "@/components/email-optimization-alert-button";
 import { getPpcReport, listPpcClients } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -120,6 +121,7 @@ export default async function PpcReportPage({
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <EmailPpcReportButton from={from} to={to} />
+          <EmailOptimizationAlertButton />
           <Link
             href="/ppc/clients"
             className={buttonClasses("outline")}
