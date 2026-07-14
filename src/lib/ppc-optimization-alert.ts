@@ -1,7 +1,11 @@
 import { Resend } from "resend";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { oauthCredentials, ppcClients, ppcReportRecipients } from "./db/schema";
+import {
+  oauthCredentials,
+  ppcClients,
+  ppcOptimizationAlertRecipients,
+} from "./db/schema";
 import { decryptString } from "./crypto";
 import { getCustomer } from "./google-ads";
 
@@ -15,9 +19,12 @@ export type FlaggedCampaign = {
   optimizationScoreUrl: string | null;
 };
 
+// Distinct from ppc-email.ts's loadRecipients() — this alert has its own
+// distribution list (ppc_optimization_alert_recipients), separate from
+// ppc_report_recipients, since the audiences differ (ads team vs execs).
 async function loadRecipients(): Promise<string[]> {
-  const rows = await db.query.ppcReportRecipients.findMany({
-    orderBy: asc(ppcReportRecipients.email),
+  const rows = await db.query.ppcOptimizationAlertRecipients.findMany({
+    orderBy: asc(ppcOptimizationAlertRecipients.email),
     columns: { email: true },
   });
   return rows.map((r) => r.email);
@@ -188,7 +195,7 @@ export async function sendPpcOptimizationAlert(
 
   if (recipients.length === 0) {
     throw new Error(
-      "No PPC report recipients configured — add at least one address on the Settings page",
+      "No PPC optimization alert recipients configured — add at least one address on the Settings page",
     );
   }
   if (!fromEmail) {

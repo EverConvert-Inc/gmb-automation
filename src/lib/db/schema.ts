@@ -479,6 +479,23 @@ export const ppcReportRecipients = pgTable("ppc_report_recipients", {
 
 export type PpcReportRecipient = typeof ppcReportRecipients.$inferSelect;
 
+// Separate distribution list from ppcReportRecipients — the daily PPC PDF
+// report is exec-facing, while the optimization score alert is ads-team
+// facing, so the two lists don't have to be the same people.
+export const ppcOptimizationAlertRecipients = pgTable(
+  "ppc_optimization_alert_recipients",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    email: text("email").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+export type PpcOptimizationAlertRecipient =
+  typeof ppcOptimizationAlertRecipients.$inferSelect;
+
 // ---------------------------------------------------------------------------
 // LSA reporting (Local Services Ads leads + Google Ads cost + CallRail)
 // ---------------------------------------------------------------------------
