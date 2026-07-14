@@ -60,7 +60,6 @@ export async function GET(req: Request) {
              campaign.optimization_score, metrics.optimization_score_url
       FROM campaign
       WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES'
-        AND segments.date DURING LAST_30_DAYS
     `);
 
     return NextResponse.json({
