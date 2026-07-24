@@ -1,0 +1,1 @@
+ALTER TABLE "lsa_leads_daily" ADD COLUMN "first_time_calls" integer DEFAULT 0 NOT NULL;

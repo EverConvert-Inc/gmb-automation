@@ -624,6 +624,12 @@ export const lsaLeadsDaily = pgTable(
     tagCategoryBreakdown: jsonb("tag_category_breakdown")
       .notNull()
       .default(sql`'{}'::jsonb`),
+    // CallRail's first_call flag, counted per day — same field
+    // pullCallsForCompany already returns for PPC (nested inside
+    // tag_category_breakdown's channel split there); LSA has no channel
+    // split, so it gets its own plain column, same as every other numeric
+    // metric on this table.
+    firstTimeCalls: integer("first_time_calls").notNull().default(0),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

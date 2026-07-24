@@ -78,6 +78,7 @@ type DayBucket = {
   // Flat, blended tag category counts for the Ads Conversion Tracker x
   // CallRail report — LSA has no channel split (always channel "LSA").
   tagCategoryBreakdown: Record<string, number>;
+  firstTimeCalls: number;
   adsFetched: boolean;
   callrailFetched: boolean;
 };
@@ -93,6 +94,7 @@ function emptyBucket(date: string): DayBucket {
     costMicros: 0n,
     signedCases: 0,
     tagCategoryBreakdown: {},
+    firstTimeCalls: 0,
     adsFetched: false,
     callrailFetched: false,
   };
@@ -234,6 +236,7 @@ export async function syncLsaForClient(
         const b = bucket(r.date);
         b.signedCases = r.signedCases;
         b.tagCategoryBreakdown = r.tagCategoryBreakdown;
+        b.firstTimeCalls = r.firstTimeCalls;
         b.callrailFetched = true;
       }
 
@@ -267,6 +270,7 @@ export async function syncLsaForClient(
     if (row.callrailFetched) {
       updateSet.signedCases = row.signedCases;
       updateSet.tagCategoryBreakdown = row.tagCategoryBreakdown;
+      updateSet.firstTimeCalls = row.firstTimeCalls;
     }
 
     await db
@@ -282,6 +286,7 @@ export async function syncLsaForClient(
         costMicros: row.costMicros,
         signedCases: row.signedCases,
         tagCategoryBreakdown: row.tagCategoryBreakdown,
+        firstTimeCalls: row.firstTimeCalls,
       })
       .onConflictDoUpdate({
         target: [lsaLeadsDaily.lsaClientId, lsaLeadsDaily.date],
