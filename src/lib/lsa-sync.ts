@@ -1,6 +1,12 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { lsaClients, lsaLeadsDaily, lsaSyncJobs, oauthCredentials } from "./db/schema";
+import {
+  lsaCallrailTagCategories,
+  lsaClients,
+  lsaLeadsDaily,
+  lsaSyncJobs,
+  oauthCredentials,
+} from "./db/schema";
 import { decryptString } from "./crypto";
 import { pullLocalServicesCost, pullLocalServicesLeads } from "./google-ads";
 import { pullCallsForCompany } from "./callrail";
@@ -69,6 +75,9 @@ type DayBucket = {
   statusBreakdown: Record<string, number>;
   costMicros: bigint;
   signedCases: number;
+  // Flat, blended tag category counts for the Ads Conversion Tracker x
+  // CallRail report — LSA has no channel split (always channel "LSA").
+  tagCategoryBreakdown: Record<string, number>;
   adsFetched: boolean;
   callrailFetched: boolean;
 };
@@ -83,6 +92,7 @@ function emptyBucket(date: string): DayBucket {
     statusBreakdown: {},
     costMicros: 0n,
     signedCases: 0,
+    tagCategoryBreakdown: {},
     adsFetched: false,
     callrailFetched: false,
   };
@@ -209,16 +219,21 @@ export async function syncLsaForClient(
   if (client.callrailCompanyId) {
     callrailJobId = await startJob(lsaClientId, "callrail", triggeredBy);
     try {
+      const tagCategories = await db.query.lsaCallrailTagCategories.findMany({
+        where: eq(lsaCallrailTagCategories.lsaClientId, lsaClientId),
+      });
       const rows = await pullCallsForCompany(
         client.callrailCompanyId,
         opts.fromDate,
         opts.toDate,
         client.signedCaseTag,
         client.signedCaseNameFilters,
+        tagCategories,
       );
       for (const r of rows) {
         const b = bucket(r.date);
         b.signedCases = r.signedCases;
+        b.tagCategoryBreakdown = r.tagCategoryBreakdown;
         b.callrailFetched = true;
       }
 
@@ -251,6 +266,7 @@ export async function syncLsaForClient(
     }
     if (row.callrailFetched) {
       updateSet.signedCases = row.signedCases;
+      updateSet.tagCategoryBreakdown = row.tagCategoryBreakdown;
     }
 
     await db
@@ -265,6 +281,7 @@ export async function syncLsaForClient(
         leadStatusBreakdown: row.statusBreakdown,
         costMicros: row.costMicros,
         signedCases: row.signedCases,
+        tagCategoryBreakdown: row.tagCategoryBreakdown,
       })
       .onConflictDoUpdate({
         target: [lsaLeadsDaily.lsaClientId, lsaLeadsDaily.date],

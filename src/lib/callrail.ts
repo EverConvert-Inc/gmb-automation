@@ -36,6 +36,12 @@ type CallRailCall = {
   // text with formatting; we read both as fallbacks.
   source_name?: string | null;
   formatted_tracking_source?: string | null;
+  // Whether this is the caller's first-ever call — surfaced in CallRail's
+  // own UI as the "First-Time Conversations" Call Log filter. Unverified
+  // against a live response as of writing; if this field name turns out to
+  // be wrong, CallRail's `fields` param 400s loudly (same as `tracker` did
+  // during LSA development) rather than silently returning wrong data.
+  first_call?: boolean | null;
 };
 
 // CallRail's "account" is the agency. Most setups have one. We list and
@@ -74,16 +80,49 @@ export async function listCompanies(): Promise<CallRailCompany[]> {
   return all;
 }
 
+export type CallrailTagCategoryConfig = {
+  label: string;
+  callrailTagName: string;
+};
+
+export type CallrailChannelBucket = {
+  totalCalls: number;
+  firstTimeCalls: number;
+  tagCategoryBreakdown: Record<string, number>;
+};
+
 export type CallrailDailyTotals = {
   date: string; // YYYY-MM-DD
   totalCalls: number;
   signedCases: number;
+  firstTimeCalls: number;
+  // Flat, blended across all calls that day — keyed by tagCategories[].label.
+  // What LSA (no channel split) stores as-is.
+  tagCategoryBreakdown: Record<string, number>;
+  // Populated only when gmbNameFilters is passed (PPC callers). Keyed by
+  // "PPC" | "GMB". Null when gmbNameFilters is omitted (LSA callers) —
+  // there's no channel ambiguity to split there.
+  channelBreakdown: Record<string, CallrailChannelBucket> | null;
 };
 
 // Walks every call in the window and groups by (day in UTC). Signed cases =
 // count of calls that (a) carry the configured tag (case-insensitive) and
 // (b) come in on a tracking number whose name contains any of the configured
 // substring filters (case-insensitive). An empty filter list disables (b).
+// This signed-case computation is completely unchanged from before —
+// tagCategories/gmbNameFilters below are additive, for the separate Ads
+// Conversion Tracker x CallRail report only.
+//
+// tagCategories buckets each call's tags[] against the client's configured
+// categories (independent of the signed-case tag/filter above — a call can
+// land in multiple categories if it carries multiple matching tags).
+//
+// gmbNameFilters, when passed, additionally classifies each call by tracker/
+// source name into "GMB" (name contains one of these substrings) or "PPC"
+// (everything else) and populates channelBreakdown. Omit it (LSA callers)
+// to skip channel classification entirely — lsa_leads_daily has no channel
+// ambiguity to represent.
+//
 // We page through all results — CallRail caps per_page at 250. CallRail v3
 // doesn't expose a `/companies/{id}/calls.json` endpoint; we use the
 // account-scoped `/calls.json` and filter by company_id.
@@ -93,6 +132,8 @@ export async function pullCallsForCompany(
   toDate: string,
   signedTag: string,
   nameFilters: string[],
+  tagCategories: CallrailTagCategoryConfig[] = [],
+  gmbNameFilters?: string[],
 ): Promise<CallrailDailyTotals[]> {
   const accountId = await resolveAccountId();
   const calls: CallRailCall[] = [];
@@ -111,7 +152,7 @@ export async function pullCallsForCompany(
     // formatted, kept as a fallback.
     url.searchParams.set(
       "fields",
-      "tags,duration,source_name,formatted_tracking_source",
+      "tags,duration,source_name,formatted_tracking_source,first_call",
     );
     const res = await fetch(url.toString(), { headers: authHeaders() });
     if (!res.ok) {
@@ -132,6 +173,18 @@ export async function pullCallsForCompany(
   const filtersLower = nameFilters
     .map((f) => f.trim().toLowerCase())
     .filter(Boolean);
+  const gmbFiltersLower = gmbNameFilters
+    ?.map((f) => f.trim().toLowerCase())
+    .filter(Boolean);
+  const categories = tagCategories.map((c) => ({
+    label: c.label,
+    tag: c.callrailTagName.trim().toLowerCase(),
+  }));
+
+  function newChannelBucket(): CallrailChannelBucket {
+    return { totalCalls: 0, firstTimeCalls: 0, tagCategoryBreakdown: {} };
+  }
+
   const byDate = new Map<string, CallrailDailyTotals>();
   for (const call of calls) {
     const date = call.start_time.slice(0, 10);
@@ -139,12 +192,21 @@ export async function pullCallsForCompany(
       date,
       totalCalls: 0,
       signedCases: 0,
+      firstTimeCalls: 0,
+      tagCategoryBreakdown: {},
+      channelBreakdown: gmbFiltersLower ? {} : null,
     };
     bucket.totalCalls += 1;
+    if (call.first_call === true) bucket.firstTimeCalls += 1;
+
     const tagNames = (call.tags ?? []).map((t) =>
       typeof t === "string" ? t : t.name,
     );
-    const hasTag = tagNames.some((t) => t.toLowerCase() === wantTag);
+    const tagNamesLower = tagNames.map((t) => t.toLowerCase());
+
+    // Signed-case computation — unchanged from before tagCategories/
+    // gmbNameFilters existed.
+    const hasTag = tagNamesLower.some((t) => t === wantTag);
     if (hasTag) {
       const trackerName = (
         call.source_name ??
@@ -156,6 +218,40 @@ export async function pullCallsForCompany(
         filtersLower.some((f) => trackerName.includes(f));
       if (nameMatches) bucket.signedCases += 1;
     }
+
+    // Tag category rollup — independent of the signed-case tag/filter
+    // above. A call can land in multiple categories if it carries
+    // multiple matching tags.
+    const matchedCategoryLabels = categories
+      .filter((c) => tagNamesLower.includes(c.tag))
+      .map((c) => c.label);
+    for (const label of matchedCategoryLabels) {
+      bucket.tagCategoryBreakdown[label] =
+        (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
+    }
+
+    // Channel classification — only when the caller (PPC) asked for it.
+    if (bucket.channelBreakdown) {
+      const trackerName = (
+        call.source_name ??
+        call.formatted_tracking_source ??
+        ""
+      ).toLowerCase();
+      const isGmb =
+        !!gmbFiltersLower?.length &&
+        gmbFiltersLower.some((f) => trackerName.includes(f));
+      const channel = isGmb ? "GMB" : "PPC";
+      const channelBucket =
+        bucket.channelBreakdown[channel] ?? newChannelBucket();
+      channelBucket.totalCalls += 1;
+      if (call.first_call === true) channelBucket.firstTimeCalls += 1;
+      for (const label of matchedCategoryLabels) {
+        channelBucket.tagCategoryBreakdown[label] =
+          (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
+      }
+      bucket.channelBreakdown[channel] = channelBucket;
+    }
+
     byDate.set(date, bucket);
   }
   return Array.from(byDate.values()).sort((a, b) =>

@@ -3,6 +3,7 @@ import { db } from "./db/client";
 import {
   oauthCredentials,
   ppcAdsDaily,
+  ppcCallrailTagCategories,
   ppcCampaigns,
   ppcCallrailDaily,
   ppcClients,
@@ -207,15 +208,24 @@ export async function syncCallrailForClient(
       throw new Error("PPC client is not linked to CallRail");
     }
 
+    const tagCategories = await db.query.ppcCallrailTagCategories.findMany({
+      where: eq(ppcCallrailTagCategories.ppcClientId, ppcClientId),
+    });
+
     const rows = await pullCallsForCompany(
       client.callrailCompanyId,
       opts.fromDate,
       opts.toDate,
       client.signedCaseTag,
       client.signedCaseNameFilters,
+      tagCategories,
+      client.gmbCallrailNameFilters,
     );
 
     for (const r of rows) {
+      // channelBreakdown is always populated here — gmbCallrailNameFilters
+      // is always passed above — so this is what powers the Ads
+      // Conversion Tracker x CallRail report's PPC/GMB split.
       await db
         .insert(ppcCallrailDaily)
         .values({
@@ -223,12 +233,14 @@ export async function syncCallrailForClient(
           date: r.date,
           totalCalls: r.totalCalls,
           signedCases: r.signedCases,
+          tagCategoryBreakdown: r.channelBreakdown ?? {},
         })
         .onConflictDoUpdate({
           target: [ppcCallrailDaily.ppcClientId, ppcCallrailDaily.date],
           set: {
             totalCalls: r.totalCalls,
             signedCases: r.signedCases,
+            tagCategoryBreakdown: r.channelBreakdown ?? {},
             ingestedAt: new Date(),
           },
         });
