@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { lsaClients } from "@/lib/db/schema";
+import { lsaCallrailTagCategories, lsaClients } from "@/lib/db/schema";
+import { DEFAULT_CALLRAIL_TAG_CATEGORIES } from "@/lib/callrail-tag-categories";
 
 export const runtime = "nodejs";
 
@@ -46,5 +47,11 @@ export async function POST(req: Request) {
     .insert(lsaClients)
     .values({ name: parsed.name, slug: parsed.slug })
     .returning();
+  await db.insert(lsaCallrailTagCategories).values(
+    DEFAULT_CALLRAIL_TAG_CATEGORIES.map((c) => ({
+      lsaClientId: row.id,
+      ...c,
+    })),
+  );
   return NextResponse.json(row, { status: 201 });
 }
