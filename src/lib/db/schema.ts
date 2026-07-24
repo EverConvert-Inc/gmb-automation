@@ -348,6 +348,16 @@ export const ppcClients = pgTable(
       .array()
       .notNull()
       .default(sql`ARRAY['PPC', 'Ads', 'GMB']::text[]`),
+    // Channel split for the Ads Conversion Tracker x CallRail report only —
+    // independent of signedCaseNameFilters above, which stays untouched. A
+    // call whose tracker/source name contains one of these substrings is
+    // reported as channel "GMB"; every other call under this client's
+    // CallRail company is reported as channel "PPC". Empty array = every
+    // call classified as PPC (no GMB split configured yet).
+    gmbCallrailNameFilters: text("gmb_callrail_name_filters")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
@@ -424,6 +434,13 @@ export const ppcCallrailDaily = pgTable(
     date: date("date").notNull(),
     totalCalls: integer("total_calls").notNull().default(0),
     signedCases: integer("signed_cases").notNull().default(0),
+    // Per-day counts keyed by this client's configured tag category label
+    // (ppc_callrail_tag_categories), e.g. { "Signed": 3, "Spam": 1 }. Powers
+    // the Ads Conversion Tracker x CallRail report. jsonb rather than fixed
+    // columns since categories are freely editable per client.
+    tagCategoryBreakdown: jsonb("tag_category_breakdown")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     ingestedAt: timestamp("ingested_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -468,6 +485,36 @@ export type PpcCampaign = typeof ppcCampaigns.$inferSelect;
 export type PpcAdsDaily = typeof ppcAdsDaily.$inferSelect;
 export type PpcCallrailDaily = typeof ppcCallrailDaily.$inferSelect;
 export type PpcSyncJob = typeof ppcSyncJobs.$inferSelect;
+
+// Editable per-client tag categories for the Ads Conversion Tracker x
+// CallRail report — team can add/edit/remove these without a code change.
+// No uniqueness constraint on (ppcClientId, callrailTagName): a client may
+// freely rename or duplicate a category from the admin UI.
+export const ppcCallrailTagCategories = pgTable(
+  "ppc_callrail_tag_categories",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    // The literal CallRail tag name to match against a call's tags[].
+    callrailTagName: text("callrail_tag_name").notNull(),
+    rollup: text("rollup").notNull(), // "real" | "junk"
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    clientIdx: index("ppc_callrail_tag_categories_client_idx").on(
+      t.ppcClientId,
+    ),
+  }),
+);
+
+export type PpcCallrailTagCategory =
+  typeof ppcCallrailTagCategories.$inferSelect;
 
 export const ppcReportRecipients = pgTable("ppc_report_recipients", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -570,6 +617,13 @@ export const lsaLeadsDaily = pgTable(
       .default(sql`'{}'::jsonb`),
     costMicros: bigint("cost_micros", { mode: "bigint" }).notNull().default(sql`0`),
     signedCases: integer("signed_cases").notNull().default(0),
+    // Per-day counts keyed by this client's configured tag category label
+    // (lsa_callrail_tag_categories) — same purpose as ppc_callrail_daily's
+    // column of the same name, for the Ads Conversion Tracker x CallRail
+    // report.
+    tagCategoryBreakdown: jsonb("tag_category_breakdown")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -579,6 +633,32 @@ export const lsaLeadsDaily = pgTable(
 );
 
 export type LsaLeadsDaily = typeof lsaLeadsDaily.$inferSelect;
+
+// Mirrors ppcCallrailTagCategories — see its comment for the rationale.
+export const lsaCallrailTagCategories = pgTable(
+  "lsa_callrail_tag_categories",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    callrailTagName: text("callrail_tag_name").notNull(),
+    rollup: text("rollup").notNull(), // "real" | "junk"
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    clientIdx: index("lsa_callrail_tag_categories_client_idx").on(
+      t.lsaClientId,
+    ),
+  }),
+);
+
+export type LsaCallrailTagCategory =
+  typeof lsaCallrailTagCategories.$inferSelect;
 
 export const lsaSyncJobs = pgTable("lsa_sync_jobs", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
