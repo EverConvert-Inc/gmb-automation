@@ -185,6 +185,10 @@ export async function pullCallsForCompany(
     return { totalCalls: 0, firstTimeCalls: 0, tagCategoryBreakdown: {} };
   }
 
+  function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
+    return filters.some((f) => trackerName.includes(f));
+  }
+
   const byDate = new Map<string, CallrailDailyTotals>();
   for (const call of calls) {
     const date = call.start_time.slice(0, 10);
@@ -197,59 +201,73 @@ export async function pullCallsForCompany(
       channelBreakdown: gmbFiltersLower ? {} : null,
     };
     bucket.totalCalls += 1;
-    if (call.first_call === true) bucket.firstTimeCalls += 1;
 
+    const trackerName = (
+      call.source_name ??
+      call.formatted_tracking_source ??
+      ""
+    ).toLowerCase();
     const tagNames = (call.tags ?? []).map((t) =>
       typeof t === "string" ? t : t.name,
     );
     const tagNamesLower = tagNames.map((t) => t.toLowerCase());
 
     // Signed-case computation — unchanged from before tagCategories/
-    // gmbNameFilters existed.
+    // gmbNameFilters existed. Empty filtersLower still means "no
+    // restriction" here — this gate's behavior is untouched.
     const hasTag = tagNamesLower.some((t) => t === wantTag);
     if (hasTag) {
-      const trackerName = (
-        call.source_name ??
-        call.formatted_tracking_source ??
-        ""
-      ).toLowerCase();
       const nameMatches =
-        filtersLower.length === 0 ||
-        filtersLower.some((f) => trackerName.includes(f));
+        filtersLower.length === 0 || matchesAnyFilter(trackerName, filtersLower);
       if (nameMatches) bucket.signedCases += 1;
     }
 
-    // Tag category rollup — independent of the signed-case tag/filter
-    // above. A call can land in multiple categories if it carries
-    // multiple matching tags.
     const matchedCategoryLabels = categories
       .filter((c) => tagNamesLower.includes(c.tag))
       .map((c) => c.label);
-    for (const label of matchedCategoryLabels) {
-      bucket.tagCategoryBreakdown[label] =
-        (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
+
+    // Ads Conversion Tracker x CallRail metrics (tag category rollup,
+    // first-time calls, channel split) — pullCallsForCompany queries by
+    // company_id only, so `calls` includes every call under the whole
+    // CallRail company, not just calls on this client's tracked numbers.
+    // Unlike signedCases above, these metrics are gated on the call
+    // actually matching a configured tracker-name filter, and an EMPTY
+    // filter list means "exclude everything" here (not "no
+    // restriction") — a client with no filters configured yet gets an
+    // honestly-empty report instead of silently absorbing every call in
+    // the CallRail company.
+    const isRelevantForReport = matchesAnyFilter(trackerName, filtersLower);
+    if (isRelevantForReport) {
+      if (call.first_call === true) bucket.firstTimeCalls += 1;
+      for (const label of matchedCategoryLabels) {
+        bucket.tagCategoryBreakdown[label] =
+          (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
+      }
     }
 
     // Channel classification — only when the caller (PPC) asked for it.
+    // Same "must actually match a filter" gate as above: GMB filters win
+    // first, then the PPC-side filters checked above; a call matching
+    // neither is out of scope entirely, not silently counted as PPC.
     if (bucket.channelBreakdown) {
-      const trackerName = (
-        call.source_name ??
-        call.formatted_tracking_source ??
-        ""
-      ).toLowerCase();
       const isGmb =
-        !!gmbFiltersLower?.length &&
-        gmbFiltersLower.some((f) => trackerName.includes(f));
-      const channel = isGmb ? "GMB" : "PPC";
-      const channelBucket =
-        bucket.channelBreakdown[channel] ?? newChannelBucket();
-      channelBucket.totalCalls += 1;
-      if (call.first_call === true) channelBucket.firstTimeCalls += 1;
-      for (const label of matchedCategoryLabels) {
-        channelBucket.tagCategoryBreakdown[label] =
-          (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
+        !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
+      const channel: "GMB" | "PPC" | null = isGmb
+        ? "GMB"
+        : isRelevantForReport
+          ? "PPC"
+          : null;
+      if (channel) {
+        const channelBucket =
+          bucket.channelBreakdown[channel] ?? newChannelBucket();
+        channelBucket.totalCalls += 1;
+        if (call.first_call === true) channelBucket.firstTimeCalls += 1;
+        for (const label of matchedCategoryLabels) {
+          channelBucket.tagCategoryBreakdown[label] =
+            (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
+        }
+        bucket.channelBreakdown[channel] = channelBucket;
       }
-      bucket.channelBreakdown[channel] = channelBucket;
     }
 
     byDate.set(date, bucket);
