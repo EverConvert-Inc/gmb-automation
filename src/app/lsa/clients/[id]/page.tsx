@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { LsaClientAdminCard } from "@/components/lsa-client-admin-card";
+import { LsaCallrailTagCategoriesCard } from "@/components/lsa-callrail-tag-categories-card";
 import { db } from "@/lib/db/client";
-import { lsaClients } from "@/lib/db/schema";
+import { lsaCallrailTagCategories, lsaClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
 import { listExistingAdsCredentials } from "@/lib/queries";
 import {
@@ -116,6 +117,16 @@ export default async function LsaClientDetailPage({
     }
   }
 
+  // rollup is stored as plain text (no DB-level enum); narrowed here since
+  // the API routes are the only writers and always validate it against
+  // z.enum(["real", "junk"]) before insert/update.
+  const tagCategories = (
+    await db.query.lsaCallrailTagCategories.findMany({
+      where: eq(lsaCallrailTagCategories.lsaClientId, id),
+      orderBy: asc(lsaCallrailTagCategories.sortOrder),
+    })
+  ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
+
   return (
     <div className="space-y-6">
       <div>
@@ -156,6 +167,8 @@ export default async function LsaClientDetailPage({
         linkedAdsCustomerMap={linkedAdsCustomerMap}
         linkedCallrailCompanyMap={linkedCallrailCompanyMap}
       />
+
+      <LsaCallrailTagCategoriesCard clientId={row.id} initial={tagCategories} />
     </div>
   );
 }

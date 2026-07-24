@@ -31,6 +31,7 @@ export type PpcClientAdminProps = {
   callrailCompanyId: string | null;
   signedCaseTag: string;
   signedCaseNameFilters: string[];
+  gmbCallrailNameFilters: string[];
   lastAdsSyncAt: Date | null;
   lastCallrailSyncAt: Date | null;
   lastSyncError: string | null;
@@ -137,6 +138,13 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
   // Dirty-state indicator for the tag + filters Save button so the operator
   // sees they have unsaved changes (the comboboxes auto-save, these don't).
   const [tagFiltersDirty, setTagFiltersDirty] = useState(false);
+  // Independent of signedCaseTag/signedCaseNameFilters above — this only
+  // feeds the Ads Conversion Tracker x CallRail report's PPC/GMB channel
+  // split, not the signed-case count.
+  const [gmbFiltersDraft, setGmbFiltersDraft] = useState(
+    props.gmbCallrailNameFilters.join(", "),
+  );
+  const [gmbFiltersDirty, setGmbFiltersDirty] = useState(false);
   const [companyDraft, setCompanyDraft] = useState(props.callrailCompanyId ?? "");
 
   // Auto-save the CallRail company on selection, and — if there's no prior
@@ -671,6 +679,54 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
                 {props.lastCallrailSyncAt
                   ? `Last synced ${relTime(props.lastCallrailSyncAt)}`
                   : "Awaiting first sync."}
+              </span>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="gmbNameFilters">
+              GMB tracker name filters (Call Quality report)
+            </Label>
+            <Input
+              id="gmbNameFilters"
+              value={gmbFiltersDraft}
+              onChange={(e) => {
+                setGmbFiltersDraft(e.target.value);
+                setGmbFiltersDirty(true);
+              }}
+              placeholder="GMB"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Comma-separated substrings. In the Ads Conversion Tracker x
+              CallRail report, a call whose tracking number&apos;s name
+              contains one of these (case-insensitive) is classified as
+              channel &ldquo;GMB&rdquo;; every other call on this client is
+              classified as &ldquo;PPC&rdquo;. Independent of the signed-case
+              tag/filters above — leave blank to classify every call as PPC.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const filters = gmbFiltersDraft
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                saveField(
+                  { gmbCallrailNameFilters: filters },
+                  "GMB filters saved",
+                )
+                  .then(() => setGmbFiltersDirty(false))
+                  .catch((e) => toast.error((e as Error).message));
+              }}
+              disabled={pending || !gmbFiltersDirty}
+            >
+              {gmbFiltersDirty ? "Save GMB filters" : "Saved"}
+            </Button>
+            {gmbFiltersDirty && (
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                Unsaved changes
               </span>
             )}
           </div>

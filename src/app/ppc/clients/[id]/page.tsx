@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { Banner } from "@/components/ui/banner";
 import { PpcClientAdminCard } from "@/components/ppc-client-admin-card";
+import { PpcCallrailTagCategoriesCard } from "@/components/ppc-callrail-tag-categories-card";
 import { db } from "@/lib/db/client";
-import { ppcClients } from "@/lib/db/schema";
+import { ppcCallrailTagCategories, ppcClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
 import {
   getLinkedAdsCustomerMap,
@@ -66,6 +67,16 @@ export default async function PpcClientDetailPage({
     getLinkedAdsCustomerMap(id),
     getLinkedCallrailCompanyMap(id),
   ]);
+
+  // rollup is stored as plain text (no DB-level enum); narrowed here since
+  // the API routes are the only writers and always validate it against
+  // z.enum(["real", "junk"]) before insert/update.
+  const tagCategories = (
+    await db.query.ppcCallrailTagCategories.findMany({
+      where: eq(ppcCallrailTagCategories.ppcClientId, id),
+      orderBy: asc(ppcCallrailTagCategories.sortOrder),
+    })
+  ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
 
   // Auto-attach the most-recently-used Google Ads credential when a PPC
   // client is loaded with nothing connected yet. Saves the operator a
@@ -177,6 +188,7 @@ export default async function PpcClientDetailPage({
         callrailCompanyId={row.callrailCompanyId}
         signedCaseTag={row.signedCaseTag}
         signedCaseNameFilters={row.signedCaseNameFilters}
+        gmbCallrailNameFilters={row.gmbCallrailNameFilters}
         lastAdsSyncAt={row.lastAdsSyncAt}
         lastCallrailSyncAt={row.lastCallrailSyncAt}
         lastSyncError={row.lastSyncError}
@@ -186,6 +198,8 @@ export default async function PpcClientDetailPage({
         linkedAdsCustomerMap={linkedAdsCustomerMap}
         linkedCallrailCompanyMap={linkedCallrailCompanyMap}
       />
+
+      <PpcCallrailTagCategoriesCard clientId={row.id} initial={tagCategories} />
     </div>
   );
 }
