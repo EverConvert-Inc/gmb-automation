@@ -3,6 +3,7 @@ import { Building2, Megaphone, PhoneCall } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { CallQualityChannelSection } from "@/components/call-quality-channel-section";
+import { CallQualitySyncNowButton } from "@/components/call-quality-sync-now-button";
 import { getCallQualityByClientReport } from "@/lib/queries-call-quality";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,9 @@ export default async function CallQualityPage({
           <h1 className="font-display text-3xl font-bold tracking-tight">
             Call Quality
           </h1>
+        </div>
+        <div className="flex flex-wrap items-start gap-2">
+          <CallQualitySyncNowButton from={from} to={to} />
         </div>
       </header>
 

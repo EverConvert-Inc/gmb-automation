@@ -305,18 +305,23 @@ export async function syncAllGoogleAds(opts: SyncOpts): Promise<{
       sql`${ppcClients.googleAdsCustomerId} is not null`,
     ),
   });
+  // Clients sync concurrently (not one-at-a-time) so a wide date range
+  // (e.g. a multi-month backfill) fans out instead of summing per-client
+  // durations — needed to fit within a single serverless request.
+  const settled = await Promise.allSettled(
+    candidates.map((c) => syncGoogleAdsForClient(c.id, opts)),
+  );
   let synced = 0;
   let errored = 0;
   const errors: Array<{ ppcClientId: string; message: string }> = [];
-  for (const c of candidates) {
-    try {
-      await syncGoogleAdsForClient(c.id, opts);
+  settled.forEach((s, i) => {
+    if (s.status === "fulfilled") {
       synced += 1;
-    } catch (e) {
+    } else {
       errored += 1;
-      errors.push({ ppcClientId: c.id, message: (e as Error).message });
+      errors.push({ ppcClientId: candidates[i].id, message: (s.reason as Error).message });
     }
-  }
+  });
   return { synced, errored, errors };
 }
 
@@ -331,17 +336,22 @@ export async function syncAllCallrail(opts: SyncOpts): Promise<{
       sql`${ppcClients.callrailCompanyId} is not null`,
     ),
   });
+  // Clients sync concurrently (not one-at-a-time) so a wide date range
+  // (e.g. a multi-month backfill) fans out instead of summing per-client
+  // durations — needed to fit within a single serverless request.
+  const settled = await Promise.allSettled(
+    candidates.map((c) => syncCallrailForClient(c.id, opts)),
+  );
   let synced = 0;
   let errored = 0;
   const errors: Array<{ ppcClientId: string; message: string }> = [];
-  for (const c of candidates) {
-    try {
-      await syncCallrailForClient(c.id, opts);
+  settled.forEach((s, i) => {
+    if (s.status === "fulfilled") {
       synced += 1;
-    } catch (e) {
+    } else {
       errored += 1;
-      errors.push({ ppcClientId: c.id, message: (e as Error).message });
+      errors.push({ ppcClientId: candidates[i].id, message: (s.reason as Error).message });
     }
-  }
+  });
   return { synced, errored, errors };
 }

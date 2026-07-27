@@ -332,26 +332,33 @@ export async function syncAllLsaClients(opts: SyncOpts): Promise<{
       sql`(${lsaClients.googleAdsCustomerId} is not null or ${lsaClients.callrailCompanyId} is not null)`,
     ),
   });
+  // Clients sync concurrently (not one-at-a-time) so a wide date range
+  // (e.g. a multi-month backfill) fans out instead of summing per-client
+  // durations — needed to fit within a single serverless request.
+  const settled = await Promise.allSettled(
+    candidates.map((c) => syncLsaForClient(c.id, opts)),
+  );
   let synced = 0;
   let errored = 0;
   const errors: Array<{ lsaClientId: string; message: string }> = [];
   const partialErrors: Array<{ lsaClientId: string; message: string }> = [];
-  for (const c of candidates) {
-    try {
-      const result = await syncLsaForClient(c.id, opts);
+  settled.forEach((s, i) => {
+    const c = candidates[i];
+    if (s.status === "fulfilled") {
       synced += 1;
+      const result = s.value;
       if (result.adsError) {
         partialErrors.push({ lsaClientId: c.id, message: `google_ads: ${result.adsError}` });
       }
       if (result.callrailError) {
         partialErrors.push({ lsaClientId: c.id, message: `callrail: ${result.callrailError}` });
       }
-    } catch (e) {
+    } else {
       errored += 1;
-      const message = (e as Error).message;
+      const message = (s.reason as Error).message;
       console.error(`[lsa-sync] client ${c.id} failed entirely:`, message);
       errors.push({ lsaClientId: c.id, message });
     }
-  }
+  });
   return { synced, errored, errors, partialErrors };
 }
