@@ -134,6 +134,13 @@
       "when": 1785156813315,
       "tag": "0018_wrong_number_tag_category",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785157930612,
+      "tag": "0019_opportunity_tag_category",
+      "breakpoints": true
     }
   ]
 }

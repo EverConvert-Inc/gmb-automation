@@ -1,8 +1,8 @@
-// The 6 tags the team currently uses in real CallRail tagging practice.
-// Seeded for every existing PPC/LSA client by migration 0016 (original 5)
-// and 0018 (Wrong Number, added later); new clients get the same defaults
-// from the client-creation API routes. Editable per client afterward —
-// this is just the starting point, not a fixed list.
+// The 7 tags the team currently uses in real CallRail tagging practice.
+// Seeded for every existing PPC/LSA client by migration 0016 (original 5),
+// 0018 (Wrong Number), and 0019 (Opportunity); new clients get the same
+// defaults from the client-creation API routes. Editable per client
+// afterward — this is just the starting point, not a fixed list.
 export const DEFAULT_CALLRAIL_TAG_CATEGORIES: Array<{
   label: string;
   callrailTagName: string;
@@ -29,5 +29,11 @@ export const DEFAULT_CALLRAIL_TAG_CATEGORIES: Array<{
     callrailTagName: "Wrong Number",
     rollup: "junk",
     sortOrder: 5,
+  },
+  {
+    label: "Opportunity",
+    callrailTagName: "Opportunity",
+    rollup: "real",
+    sortOrder: 6,
   },
 ];
