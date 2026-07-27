@@ -277,6 +277,7 @@ export async function pullCallsForCompany(
       tagNamesLower.includes(c.tag),
     );
     const matchedCategoryLabels = matchedCategories.map((c) => c.label);
+    const isFirstTime = call.first_call === true;
 
     // Ads Conversion Tracker x CallRail metrics (tag category rollup,
     // first-time calls, channel split) — pullCallsForCompany queries by
@@ -290,13 +291,22 @@ export async function pullCallsForCompany(
     // the CallRail company.
     const isRelevantForReport = matchesAnyFilter(trackerName, filtersLower);
     if (isRelevantForReport) {
-      if (call.first_call === true) bucket.firstTimeCalls += 1;
-      for (const label of matchedCategoryLabels) {
-        bucket.tagCategoryBreakdown[label] =
-          (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
+      if (isFirstTime) bucket.firstTimeCalls += 1;
+      // Tag category rollup is scoped to first-time calls only, same
+      // population as firstTimeCalls itself — otherwise Real/Junk/
+      // Unclassified are counted over a different (larger, repeat-caller-
+      // inclusive) population than firstTimeCalls, and can exceed it,
+      // which is exactly the confusing "two unrelated stats" behavior
+      // this scoping fixes. A repeat caller's tagged call still counts
+      // toward totalCalls/signedCases above, just not toward these.
+      if (isFirstTime) {
+        for (const label of matchedCategoryLabels) {
+          bucket.tagCategoryBreakdown[label] =
+            (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
+        }
+        const rollup = resolveCallRollup(matchedCategories);
+        if (rollup) bucket.rollupCounts[rollup] += 1;
       }
-      const rollup = resolveCallRollup(matchedCategories);
-      if (rollup) bucket.rollupCounts[rollup] += 1;
     }
 
     // Channel classification — only when the caller asked for it (PPC
@@ -317,13 +327,16 @@ export async function pullCallsForCompany(
         const channelBucket =
           bucket.channelBreakdown[channel] ?? newChannelBucket();
         channelBucket.totalCalls += 1;
-        if (call.first_call === true) channelBucket.firstTimeCalls += 1;
-        for (const label of matchedCategoryLabels) {
-          channelBucket.tagCategoryBreakdown[label] =
-            (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
+        if (isFirstTime) channelBucket.firstTimeCalls += 1;
+        // Same first-time-only scoping as the flat block above.
+        if (isFirstTime) {
+          for (const label of matchedCategoryLabels) {
+            channelBucket.tagCategoryBreakdown[label] =
+              (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
+          }
+          const rollup = resolveCallRollup(matchedCategories);
+          if (rollup) channelBucket.rollupCounts[rollup] += 1;
         }
-        const rollup = resolveCallRollup(matchedCategories);
-        if (rollup) channelBucket.rollupCounts[rollup] += 1;
         bucket.channelBreakdown[channel] = channelBucket;
       }
     }
