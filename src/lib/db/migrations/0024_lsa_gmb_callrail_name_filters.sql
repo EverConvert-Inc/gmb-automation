@@ -1,0 +1,1 @@
+ALTER TABLE "lsa_clients" ADD COLUMN "gmb_callrail_name_filters" text[] DEFAULT ARRAY[]::text[] NOT NULL;

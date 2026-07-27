@@ -158,6 +158,10 @@ export async function pullCallsForCompany(
   nameFilters: string[],
   tagCategories: CallrailTagCategoryConfig[] = [],
   gmbNameFilters?: string[],
+  // The non-GMB channel bucket's label. Defaults to "PPC" (the original,
+  // only caller); LSA passes "LSA" so its own calls land under that label
+  // instead of being mislabeled "PPC" when it also does GMB splitting.
+  ownChannel: "PPC" | "LSA" = "PPC",
 ): Promise<CallrailDailyTotals[]> {
   const accountId = await resolveAccountId();
   const calls: CallRailCall[] = [];
@@ -295,17 +299,19 @@ export async function pullCallsForCompany(
       if (rollup) bucket.rollupCounts[rollup] += 1;
     }
 
-    // Channel classification — only when the caller (PPC) asked for it.
-    // Same "must actually match a filter" gate as above: GMB filters win
-    // first, then the PPC-side filters checked above; a call matching
-    // neither is out of scope entirely, not silently counted as PPC.
+    // Channel classification — only when the caller asked for it (PPC
+    // always does; LSA does only when it owns GMB for this company — see
+    // lsa-sync.ts). Same "must actually match a filter" gate as above: GMB
+    // filters win first, then the caller's own-channel filters checked
+    // above; a call matching neither is out of scope entirely, not
+    // silently counted under the caller's own channel.
     if (bucket.channelBreakdown) {
       const isGmb =
         !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
-      const channel: "GMB" | "PPC" | null = isGmb
+      const channel: "GMB" | "PPC" | "LSA" | null = isGmb
         ? "GMB"
         : isRelevantForReport
-          ? "PPC"
+          ? ownChannel
           : null;
       if (channel) {
         const channelBucket =

@@ -32,6 +32,7 @@ export type LsaClientAdminProps = {
   callrailCompanyId: string | null;
   signedCaseTag: string;
   signedCaseNameFilters: string[];
+  gmbCallrailNameFilters: string[];
   lastAdsSyncAt: Date | null;
   lastCallrailSyncAt: Date | null;
   lastSyncError: string | null;
@@ -80,6 +81,14 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
     props.signedCaseNameFilters.join(", "),
   );
   const [tagFiltersDirty, setTagFiltersDirty] = useState(false);
+  // Independent of signedCaseTag/signedCaseNameFilters above — this only
+  // feeds the Ads Conversion Tracker x CallRail report's LSA/GMB channel
+  // split (and only when this client's CallRail company has no matching
+  // PPC record — see lsa-sync.ts), not the signed-case count.
+  const [gmbFiltersDraft, setGmbFiltersDraft] = useState(
+    props.gmbCallrailNameFilters.join(", "),
+  );
+  const [gmbFiltersDirty, setGmbFiltersDirty] = useState(false);
   const [companyDraft, setCompanyDraft] = useState(props.callrailCompanyId ?? "");
 
   async function saveField(body: Record<string, unknown>, successMsg: string) {
@@ -657,6 +666,58 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
                 {props.lastCallrailSyncAt
                   ? `Last synced ${relTime(props.lastCallrailSyncAt)}`
                   : "Awaiting first sync."}
+              </span>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="gmbNameFilters">
+              GMB tracker name filters (Call Quality report)
+            </Label>
+            <Input
+              id="gmbNameFilters"
+              value={gmbFiltersDraft}
+              onChange={(e) => {
+                setGmbFiltersDraft(e.target.value);
+                setGmbFiltersDirty(true);
+              }}
+              placeholder="GMB"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Comma-separated substrings. In the Ads Conversion Tracker x
+              CallRail report, a call whose tracking number&apos;s name
+              contains one of these (case-insensitive) is classified as
+              channel &ldquo;GMB&rdquo;; every other call on this client is
+              classified as &ldquo;LSA&rdquo;. Only takes effect when this
+              client&apos;s CallRail company has no matching PPC
+              client — otherwise GMB classification stays owned by that PPC
+              client to avoid double-counting the same calls under both.
+              Independent of the signed-case tag/filters above — leave blank
+              to classify every call as LSA.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const filters = gmbFiltersDraft
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                saveField(
+                  { gmbCallrailNameFilters: filters },
+                  "GMB filters saved",
+                )
+                  .then(() => setGmbFiltersDirty(false))
+                  .catch((e) => toast.error((e as Error).message));
+              }}
+              disabled={pending || !gmbFiltersDirty}
+            >
+              {gmbFiltersDirty ? "Save GMB filters" : "Saved"}
+            </Button>
+            {gmbFiltersDirty && (
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                Unsaved changes
               </span>
             )}
           </div>

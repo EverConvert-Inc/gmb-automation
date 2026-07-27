@@ -585,6 +585,17 @@ export const lsaClients = pgTable(
       .array()
       .notNull()
       .default(sql`ARRAY['LSA']::text[]`),
+    // Same mechanism as ppc_clients.gmb_callrail_name_filters — channel
+    // split for the Ads Conversion Tracker x CallRail report only,
+    // independent of signedCaseNameFilters above. Only actually applied at
+    // sync time when this LSA client's CallRail company has no matching
+    // ppc_clients row (see lsa-sync.ts) — when a PPC counterpart shares the
+    // same company, GMB classification stays owned by the PPC side to
+    // avoid double-counting the same calls under both channels.
+    gmbCallrailNameFilters: text("gmb_callrail_name_filters")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),

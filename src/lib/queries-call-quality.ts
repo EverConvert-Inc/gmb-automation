@@ -68,6 +68,51 @@ function addRollupCounts(
   acc.unclassified += counts?.unclassified ?? 0;
 }
 
+type FlatRollup = { real?: number; junk?: number; unclassified?: number };
+type FlatTagBreakdown = Record<string, number>;
+
+// lsa_leads_daily.tagCategoryBreakdown/rollupBreakdown are flat (today's
+// shape, and forever for any LSA client whose CallRail company has a
+// matching ppc_clients row — GMB stays owned by that side) OR
+// channel-nested like ppc_callrail_daily's (keyed "LSA"/"GMB", for
+// LSA-only clients with gmbCallrailNameFilters configured — see
+// lsa-sync.ts). Detected by value type, not key names: a nested
+// rollupBreakdown's values are objects, a flat one's are numbers. Historical
+// rows written before GMB splitting existed for that client are flat and
+// get read as "all LSA" until resynced — same zero-dip tradeoff already
+// accepted for the original rollup_breakdown backfill.
+function normalizeLsaBreakdown(
+  tagCategoryBreakdown: unknown,
+  rollupBreakdown: unknown,
+): Record<string, { tagCategoryBreakdown: FlatTagBreakdown; rollupBreakdown: FlatRollup }> {
+  const rollupObj = (rollupBreakdown ?? {}) as Record<string, unknown>;
+  const tagObj = (tagCategoryBreakdown ?? {}) as Record<string, unknown>;
+  const firstRollupValue = Object.values(rollupObj)[0];
+  const isNested = typeof firstRollupValue === "object" && firstRollupValue !== null;
+
+  if (!isNested) {
+    return {
+      LSA: {
+        tagCategoryBreakdown: tagObj as FlatTagBreakdown,
+        rollupBreakdown: rollupObj as FlatRollup,
+      },
+    };
+  }
+
+  const channels = new Set([...Object.keys(tagObj), ...Object.keys(rollupObj)]);
+  const result: Record<
+    string,
+    { tagCategoryBreakdown: FlatTagBreakdown; rollupBreakdown: FlatRollup }
+  > = {};
+  for (const channel of channels) {
+    result[channel] = {
+      tagCategoryBreakdown: (tagObj[channel] ?? {}) as FlatTagBreakdown,
+      rollupBreakdown: (rollupObj[channel] ?? {}) as FlatRollup,
+    };
+  }
+  return result;
+}
+
 export type CallQualityChannelTotals = {
   channel: CallQualityChannel;
   firstTimeCalls: number;
@@ -293,8 +338,13 @@ export async function getCallQualityReport({
     summaryAcc.conversions += conversions;
   }
 
-  // LSA — flat breakdown, own cost + chargedCount already merged onto
-  // lsa_leads_daily by lsa-sync.ts.
+  // LSA — cost/chargedCount/firstTimeCalls are blended totals (not split
+  // by channel — see lsa-sync.ts) and always attributed to the LSA report
+  // channel in full, even for a client whose tag/rollup breakdown below
+  // does carve out a GMB share. tagCategoryBreakdown/rollupBreakdown are
+  // normalized since they can be flat or channel-nested (see
+  // normalizeLsaBreakdown) — "LSA" is always present; "GMB" only appears
+  // for a client with no matching PPC record.
   for (const row of lsaDailyRows) {
     const period = periodKey(row.date, granularity);
     const periodAcc = getPeriodAcc(period, "LSA");
@@ -305,17 +355,19 @@ export async function getCallQualityReport({
     summaryAcc.costMicros += row.costMicros;
     periodAcc.chargedCount += row.chargedCount;
     summaryAcc.chargedCount += row.chargedCount;
-    for (const [label, count] of Object.entries(
-      (row.tagCategoryBreakdown ?? {}) as Record<string, number>,
-    )) {
-      addLabelCounts(periodAcc, label, count);
-      addLabelCounts(summaryAcc, label, count);
+
+    const byChannel = normalizeLsaBreakdown(row.tagCategoryBreakdown, row.rollupBreakdown);
+    for (const [channel, data] of Object.entries(byChannel)) {
+      const reportChannel = channel as CallQualityChannel;
+      const chPeriodAcc = reportChannel === "LSA" ? periodAcc : getPeriodAcc(period, reportChannel);
+      const chSummaryAcc = reportChannel === "LSA" ? summaryAcc : summaryAccs[reportChannel];
+      for (const [label, count] of Object.entries(data.tagCategoryBreakdown)) {
+        addLabelCounts(chPeriodAcc, label, count);
+        addLabelCounts(chSummaryAcc, label, count);
+      }
+      addRollupCounts(chPeriodAcc, data.rollupBreakdown);
+      addRollupCounts(chSummaryAcc, data.rollupBreakdown);
     }
-    const rollupCounts = row.rollupBreakdown as
-      | { real?: number; junk?: number; unclassified?: number }
-      | null;
-    addRollupCounts(periodAcc, rollupCounts ?? undefined);
-    addRollupCounts(summaryAcc, rollupCounts ?? undefined);
   }
 
   const rows: CallQualityPeriodRow[] = Array.from(periodAccs.entries())
@@ -352,9 +404,12 @@ export type CallQualityClientRow = CallQualityChannelTotals & {
 };
 
 export type CallQualityByClientReport = {
-  // GMB rows are the same ppc_clients roster as PPC — there's no
-  // separate "GMB client" entity, just that client's GMB-classified
-  // calls (see gmb_callrail_name_filters on ppc_clients).
+  // GMB rows are keyed by whichever client actually owns GMB
+  // classification for that CallRail company — the ppc_clients roster for
+  // the common case (a shared company), or the lsa_clients roster for an
+  // LSA-only client with its own gmbCallrailNameFilters configured (see
+  // lsa-sync.ts). Never both for the same company — that would
+  // double-count the same calls under two channel rows.
   clients: Record<CallQualityChannel, CallQualityClientRow[]>;
   summary: Record<CallQualityChannel, CallQualityChannelTotals>;
 };
@@ -528,7 +583,9 @@ export async function getCallQualityByClientReport({
 
   for (const row of lsaDailyRows) {
     // Same exclusion as above — client since deactivated or unlinked from
-    // CallRail.
+    // CallRail. Checked against the LSA roster regardless of which report
+    // channel this row's data ends up in below (a GMB row for this client
+    // has nothing else to be seeded against).
     if (!clientAccs.LSA.has(row.lsaClientId)) continue;
     const clientAcc = getClientAcc("LSA", row.lsaClientId);
     const summaryAcc = summaryAccs.LSA;
@@ -538,17 +595,27 @@ export async function getCallQualityByClientReport({
     summaryAcc.costMicros += row.costMicros;
     clientAcc.chargedCount += row.chargedCount;
     summaryAcc.chargedCount += row.chargedCount;
-    for (const [label, count] of Object.entries(
-      (row.tagCategoryBreakdown ?? {}) as Record<string, number>,
-    )) {
-      addLabelCounts(clientAcc, label, count);
-      addLabelCounts(summaryAcc, label, count);
+
+    // tagCategoryBreakdown/rollupBreakdown are normalized since they can be
+    // flat or channel-nested (see normalizeLsaBreakdown) — "LSA" is always
+    // present; "GMB" only appears for a client with no matching PPC
+    // record, in which case this is that client's only route into the
+    // report's GMB channel (getClientAcc lazily creates its row here —
+    // GMB isn't pre-seeded from the LSA roster the way PPC's GMB rows are,
+    // since a shared-company LSA client must never get one).
+    const byChannel = normalizeLsaBreakdown(row.tagCategoryBreakdown, row.rollupBreakdown);
+    for (const [channel, data] of Object.entries(byChannel)) {
+      const reportChannel = channel as CallQualityChannel;
+      const chClientAcc =
+        reportChannel === "LSA" ? clientAcc : getClientAcc(reportChannel, row.lsaClientId);
+      const chSummaryAcc = reportChannel === "LSA" ? summaryAcc : summaryAccs[reportChannel];
+      for (const [label, count] of Object.entries(data.tagCategoryBreakdown)) {
+        addLabelCounts(chClientAcc, label, count);
+        addLabelCounts(chSummaryAcc, label, count);
+      }
+      addRollupCounts(chClientAcc, data.rollupBreakdown);
+      addRollupCounts(chSummaryAcc, data.rollupBreakdown);
     }
-    const rollupCounts = row.rollupBreakdown as
-      | { real?: number; junk?: number; unclassified?: number }
-      | null;
-    addRollupCounts(clientAcc, rollupCounts ?? undefined);
-    addRollupCounts(summaryAcc, rollupCounts ?? undefined);
   }
 
   function buildClientRows(channel: CallQualityChannel): CallQualityClientRow[] {

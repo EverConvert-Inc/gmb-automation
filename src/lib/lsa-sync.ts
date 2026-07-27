@@ -6,6 +6,7 @@ import {
   lsaLeadsDaily,
   lsaSyncJobs,
   oauthCredentials,
+  ppcClients,
 } from "./db/schema";
 import { decryptString } from "./crypto";
 import { pullLocalServicesCost, pullLocalServicesLeads } from "./google-ads";
@@ -76,11 +77,15 @@ type DayBucket = {
   costMicros: bigint;
   signedCases: number;
   // Flat, blended tag category counts for the Ads Conversion Tracker x
-  // CallRail report — LSA has no channel split (always channel "LSA").
-  tagCategoryBreakdown: Record<string, number>;
+  // CallRail report — flat when this client's CallRail company has a
+  // matching PPC record (GMB stays owned by that side, no split here),
+  // channel-nested (keyed "LSA"/"GMB") when it doesn't. See the
+  // hasMatchingPpcClient check in the CallRail sync block below.
+  tagCategoryBreakdown: Record<string, unknown>;
   // Per-call real/junk/unclassified counts (capped at 1 per call) — see
-  // CallrailRollupCounts in callrail.ts.
-  rollupCounts: { real: number; junk: number; unclassified: number };
+  // CallrailRollupCounts in callrail.ts. Same flat-vs-nested split as
+  // tagCategoryBreakdown above.
+  rollupCounts: Record<string, unknown>;
   firstTimeCalls: number;
   adsFetched: boolean;
   callrailFetched: boolean;
@@ -234,6 +239,31 @@ export async function syncLsaForClient(
           where: eq(lsaCallrailTagCategories.lsaClientId, lsaClientId),
         })
       ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
+
+      // GMB classification is only ever done from one side of a shared
+      // CallRail company — if a ppc_clients row shares this company_id,
+      // PPC already classifies GMB for it, and doing it here too would
+      // double-count the same calls under both channels (confirmed: every
+      // client sharing a company has disjoint, single-channel tracker
+      // names, so this is purely about not re-deriving the same GMB calls
+      // twice, not about tracker-name ambiguity). Only pass gmbNameFilters
+      // — and only then does channelBreakdown/the nested storage shape
+      // apply — when no such PPC row exists.
+      const hasMatchingPpcClient = !!(
+        await db.query.ppcClients.findFirst({
+          where: eq(ppcClients.callrailCompanyId, client.callrailCompanyId),
+          columns: { id: true },
+        })
+      );
+      // Also gated on an actual filter being configured — a client with no
+      // PPC match but an empty gmbCallrailNameFilters (not yet set up)
+      // keeps today's flat storage shape rather than switching to a
+      // channel-nested one containing only "LSA", with nothing to gain.
+      const gmbNameFilters =
+        hasMatchingPpcClient || client.gmbCallrailNameFilters.length === 0
+          ? undefined
+          : client.gmbCallrailNameFilters;
+
       const rows = await pullCallsForCompany(
         client.callrailCompanyId,
         opts.fromDate,
@@ -241,12 +271,32 @@ export async function syncLsaForClient(
         client.signedCaseTag,
         client.signedCaseNameFilters,
         tagCategories,
+        gmbNameFilters,
+        "LSA",
       );
       for (const r of rows) {
         const b = bucket(r.date);
         b.signedCases = r.signedCases;
-        b.tagCategoryBreakdown = r.tagCategoryBreakdown;
-        b.rollupCounts = r.rollupCounts;
+        if (r.channelBreakdown) {
+          // No matching PPC record — this client owns its own GMB split.
+          // Store channel-nested, mirroring ppc_callrail_daily's shape.
+          b.tagCategoryBreakdown = Object.fromEntries(
+            Object.entries(r.channelBreakdown).map(([channel, cb]) => [
+              channel,
+              cb.tagCategoryBreakdown,
+            ]),
+          );
+          b.rollupCounts = Object.fromEntries(
+            Object.entries(r.channelBreakdown).map(([channel, cb]) => [
+              channel,
+              cb.rollupCounts,
+            ]),
+          );
+        } else {
+          // Shared-company client — unchanged, flat shape.
+          b.tagCategoryBreakdown = r.tagCategoryBreakdown;
+          b.rollupCounts = r.rollupCounts;
+        }
         b.firstTimeCalls = r.firstTimeCalls;
         b.callrailFetched = true;
       }

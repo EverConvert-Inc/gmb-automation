@@ -158,6 +158,7 @@ export default async function LsaClientDetailPage({
         callrailCompanyId={row.callrailCompanyId}
         signedCaseTag={row.signedCaseTag}
         signedCaseNameFilters={row.signedCaseNameFilters}
+        gmbCallrailNameFilters={row.gmbCallrailNameFilters}
         lastAdsSyncAt={row.lastAdsSyncAt}
         lastCallrailSyncAt={row.lastCallrailSyncAt}
         lastSyncError={row.lastSyncError}

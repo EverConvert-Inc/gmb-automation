@@ -18,6 +18,7 @@ const PatchBody = z
     callrailCompanyId: z.string().nullable().optional(),
     signedCaseTag: z.string().min(1).optional(),
     signedCaseNameFilters: z.array(z.string().min(1)).optional(),
+    gmbCallrailNameFilters: z.array(z.string().min(1)).optional(),
   })
   .strict();
 
