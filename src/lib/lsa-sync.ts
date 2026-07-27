@@ -86,7 +86,10 @@ type DayBucket = {
   // CallrailRollupCounts in callrail.ts. Same flat-vs-nested split as
   // tagCategoryBreakdown above.
   rollupCounts: Record<string, unknown>;
-  firstTimeCalls: number;
+  // CallRail's first_call flag, counted per day. Same flat-vs-nested split
+  // as tagCategoryBreakdown/rollupCounts above — a flat number (today's
+  // shape) or a per-channel object (keyed "LSA"/"GMB").
+  firstTimeCalls: unknown;
   adsFetched: boolean;
   callrailFetched: boolean;
 };
@@ -292,12 +295,18 @@ export async function syncLsaForClient(
               cb.rollupCounts,
             ]),
           );
+          b.firstTimeCalls = Object.fromEntries(
+            Object.entries(r.channelBreakdown).map(([channel, cb]) => [
+              channel,
+              cb.firstTimeCalls,
+            ]),
+          );
         } else {
           // Shared-company client — unchanged, flat shape.
           b.tagCategoryBreakdown = r.tagCategoryBreakdown;
           b.rollupCounts = r.rollupCounts;
+          b.firstTimeCalls = r.firstTimeCalls;
         }
-        b.firstTimeCalls = r.firstTimeCalls;
         b.callrailFetched = true;
       }
 

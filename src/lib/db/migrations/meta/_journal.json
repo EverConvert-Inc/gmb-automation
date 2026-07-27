@@ -183,6 +183,13 @@
       "when": 1785174652500,
       "tag": "0025_backfill_lsa_gmb_callrail_name_filters",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785174652501,
+      "tag": "0026_lsa_first_time_calls_jsonb",
+      "breakpoints": true
     }
   ]
 }

@@ -643,22 +643,28 @@ export const lsaLeadsDaily = pgTable(
     // Per-day counts keyed by this client's configured tag category label
     // (lsa_callrail_tag_categories) — same purpose as ppc_callrail_daily's
     // column of the same name, for the Ads Conversion Tracker x CallRail
-    // report. Per-label, not per-call — see rollup_breakdown below.
+    // report. Per-label, not per-call — see rollup_breakdown below. Flat
+    // (today's shape, and forever for a client whose CallRail company has
+    // a matching ppc_clients row — GMB stays owned by that side) or
+    // channel-nested (keyed "LSA"/"GMB", for an LSA-only client with
+    // gmb_callrail_name_filters configured — see lsa-sync.ts).
     tagCategoryBreakdown: jsonb("tag_category_breakdown")
       .notNull()
       .default(sql`'{}'::jsonb`),
     // Per-day, per-call real/junk/unclassified counts — same purpose as
-    // ppc_callrail_daily's column of the same name; LSA has no channel
-    // split so this is flat: {real, junk, unclassified}.
+    // ppc_callrail_daily's column of the same name. Same flat-or-nested
+    // duality as tag_category_breakdown above.
     rollupBreakdown: jsonb("rollup_breakdown")
       .notNull()
       .default(sql`'{}'::jsonb`),
     // CallRail's first_call flag, counted per day — same field
     // pullCallsForCompany already returns for PPC (nested inside
-    // tag_category_breakdown's channel split there); LSA has no channel
-    // split, so it gets its own plain column, same as every other numeric
-    // metric on this table.
-    firstTimeCalls: integer("first_time_calls").notNull().default(0),
+    // tag_category_breakdown's channel split there). jsonb rather than a
+    // plain integer for the same reason as tag_category_breakdown/
+    // rollup_breakdown above: a flat JSON number (today's shape, and
+    // forever for a shared-company client) or a channel-nested object
+    // (keyed "LSA"/"GMB", for an LSA-only client with its own GMB split).
+    firstTimeCalls: jsonb("first_time_calls").notNull().default(sql`'0'::jsonb`),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
