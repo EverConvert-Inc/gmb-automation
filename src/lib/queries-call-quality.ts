@@ -99,11 +99,18 @@ function normalizeLsaBreakdown(
   const isNested = typeof firstRollupValue === "object" && firstRollupValue !== null;
 
   if (!isNested) {
+    // typeof check, not `?? 0` — a day where a client with GMB splitting
+    // enabled had calls but none matched either channel writes an empty
+    // channelBreakdown ({}), which is truthy and gets misdetected as flat
+    // right here. `?? 0` only guards null/undefined, so that stray {}
+    // would otherwise pass through as firstTimeCalls, corrupting every
+    // downstream sum it touches (silently coerced to the string
+    // "0[object Object]" once added to a number, which formats as NaN).
     return {
       LSA: {
         tagCategoryBreakdown: tagObj as FlatTagBreakdown,
         rollupBreakdown: rollupObj as FlatRollup,
-        firstTimeCalls: (firstTimeCalls as number | null) ?? 0,
+        firstTimeCalls: typeof firstTimeCalls === "number" ? firstTimeCalls : 0,
       },
     };
   }
@@ -116,10 +123,11 @@ function normalizeLsaBreakdown(
   ]);
   const result: Record<string, LsaChannelData> = {};
   for (const channel of channels) {
+    const channelFtc = ftcObj[channel];
     result[channel] = {
       tagCategoryBreakdown: (tagObj[channel] ?? {}) as FlatTagBreakdown,
       rollupBreakdown: (rollupObj[channel] ?? {}) as FlatRollup,
-      firstTimeCalls: ftcObj[channel] ?? 0,
+      firstTimeCalls: typeof channelFtc === "number" ? channelFtc : 0,
     };
   }
   return result;

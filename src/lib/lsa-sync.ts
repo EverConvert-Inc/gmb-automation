@@ -280,7 +280,13 @@ export async function syncLsaForClient(
       for (const r of rows) {
         const b = bucket(r.date);
         b.signedCases = r.signedCases;
-        if (r.channelBreakdown) {
+        // A day where this client had calls but none matched either the
+        // LSA or GMB filter leaves channelBreakdown genuinely empty ({}) —
+        // still truthy, so also checking its key count here to fall
+        // through to the flat branch below instead of writing three
+        // ambiguous empty objects (which the reader would otherwise have
+        // to reconstruct a zero value from, rather than a clean 0/{}).
+        if (r.channelBreakdown && Object.keys(r.channelBreakdown).length > 0) {
           // No matching PPC record — this client owns its own GMB split.
           // Store channel-nested, mirroring ppc_callrail_daily's shape.
           b.tagCategoryBreakdown = Object.fromEntries(
