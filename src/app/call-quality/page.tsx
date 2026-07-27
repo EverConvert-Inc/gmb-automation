@@ -2,12 +2,8 @@ import type { Metadata } from "next";
 import { Building2, Megaphone, PhoneCall } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
-import { CallQualityGranularityToggle } from "@/components/call-quality-granularity-toggle";
 import { CallQualityChannelSection } from "@/components/call-quality-channel-section";
-import {
-  getCallQualityReport,
-  type CallQualityGranularity,
-} from "@/lib/queries-call-quality";
+import { getCallQualityByClientReport } from "@/lib/queries-call-quality";
 
 export const dynamic = "force-dynamic";
 
@@ -33,22 +29,13 @@ function firstOfMonthIso(): string {
 export default async function CallQualityPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; granularity?: string }>;
+  searchParams: Promise<{ from?: string; to?: string }>;
 }) {
-  const { from: fromParam, to: toParam, granularity: granularityParam } =
-    await searchParams;
+  const { from: fromParam, to: toParam } = await searchParams;
   const from = fromParam || firstOfMonthIso();
   const to = toParam || yesterdayIso();
-  const granularity: CallQualityGranularity =
-    granularityParam === "week" ? "week" : "day";
 
-  const report = await getCallQualityReport({ from, to, granularity });
-
-  const rowsByChannel = {
-    PPC: report.rows.filter((r) => r.channel === "PPC"),
-    LSA: report.rows.filter((r) => r.channel === "LSA"),
-    GMB: report.rows.filter((r) => r.channel === "GMB"),
-  };
+  const report = await getCallQualityByClientReport({ from, to });
 
   return (
     <div className="space-y-6">
@@ -64,9 +51,8 @@ export default async function CallQualityPage({
       </header>
 
       <Card>
-        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <CardContent className="p-4">
           <PpcDateRangeFilter from={from} to={to} />
-          <CallQualityGranularityToggle value={granularity} />
         </CardContent>
       </Card>
 
@@ -74,27 +60,21 @@ export default async function CallQualityPage({
         channel="PPC"
         icon={<Megaphone className="h-4 w-4" />}
         totals={report.summary.PPC}
-        rows={rowsByChannel.PPC}
-        allLabels={report.allLabels}
-        granularity={granularity}
+        clientRows={report.clients.PPC}
       />
 
       <CallQualityChannelSection
         channel="LSA"
         icon={<PhoneCall className="h-4 w-4" />}
         totals={report.summary.LSA}
-        rows={rowsByChannel.LSA}
-        allLabels={report.allLabels}
-        granularity={granularity}
+        clientRows={report.clients.LSA}
       />
 
       <CallQualityChannelSection
         channel="GMB"
         icon={<Building2 className="h-4 w-4" />}
         totals={report.summary.GMB}
-        rows={rowsByChannel.GMB}
-        allLabels={report.allLabels}
-        granularity={granularity}
+        clientRows={report.clients.GMB}
       />
     </div>
   );

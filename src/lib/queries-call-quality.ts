@@ -1,11 +1,13 @@
-import { and, gte, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   lsaCallrailTagCategories,
+  lsaClients,
   lsaLeadsDaily,
   ppcAdsDaily,
   ppcCallrailDaily,
   ppcCallrailTagCategories,
+  ppcClients,
 } from "./db/schema";
 
 export type CallQualityChannel = "PPC" | "LSA" | "GMB";
@@ -324,4 +326,236 @@ export async function getCallQualityReport({
   };
 
   return { granularity, rows, allLabels, summary };
+}
+
+export type CallQualityClientRow = CallQualityChannelTotals & {
+  clientId: string;
+  clientName: string;
+};
+
+export type CallQualityByClientReport = {
+  // GMB rows are the same ppc_clients roster as PPC — there's no
+  // separate "GMB client" entity, just that client's GMB-classified
+  // calls (see gmb_callrail_name_filters on ppc_clients).
+  clients: Record<CallQualityChannel, CallQualityClientRow[]>;
+  summary: Record<CallQualityChannel, CallQualityChannelTotals>;
+};
+
+// Per-client version of getCallQualityReport, aggregated over the whole
+// [from, to] range instead of broken out by day/week. Every active client
+// with a CallRail company linked appears (zero-filled if it had no
+// qualifying calls in range) — a client with unconfigured
+// signedCaseNameFilters/gmbCallrailNameFilters now correctly shows all
+// zeros rather than silently vanishing, which is useful for spotting a
+// misconfigured client.
+export async function getCallQualityByClientReport({
+  from,
+  to,
+}: {
+  from: string; // YYYY-MM-DD
+  to: string; // YYYY-MM-DD
+}): Promise<CallQualityByClientReport> {
+  const [
+    ppcClientRows,
+    lsaClientRows,
+    ppcDailyRows,
+    ppcTagCategoryRows,
+    lsaDailyRows,
+    lsaTagCategoryRows,
+    ppcAdsRows,
+  ] = await Promise.all([
+    db
+      .select({ id: ppcClients.id, name: ppcClients.name })
+      .from(ppcClients)
+      .where(
+        and(
+          eq(ppcClients.isActive, true),
+          sql`${ppcClients.callrailCompanyId} is not null`,
+        ),
+      ),
+    db
+      .select({ id: lsaClients.id, name: lsaClients.name })
+      .from(lsaClients)
+      .where(
+        and(
+          eq(lsaClients.isActive, true),
+          sql`${lsaClients.callrailCompanyId} is not null`,
+        ),
+      ),
+    db
+      .select({
+        ppcClientId: ppcCallrailDaily.ppcClientId,
+        tagCategoryBreakdown: ppcCallrailDaily.tagCategoryBreakdown,
+      })
+      .from(ppcCallrailDaily)
+      .where(
+        and(
+          gte(ppcCallrailDaily.date, from),
+          sql`${ppcCallrailDaily.date} <= ${to}`,
+        ),
+      ),
+    db
+      .select({
+        ppcClientId: ppcCallrailTagCategories.ppcClientId,
+        label: ppcCallrailTagCategories.label,
+        rollup: ppcCallrailTagCategories.rollup,
+      })
+      .from(ppcCallrailTagCategories),
+    db
+      .select({
+        lsaClientId: lsaLeadsDaily.lsaClientId,
+        tagCategoryBreakdown: lsaLeadsDaily.tagCategoryBreakdown,
+        costMicros: lsaLeadsDaily.costMicros,
+        chargedCount: lsaLeadsDaily.chargedCount,
+        firstTimeCalls: lsaLeadsDaily.firstTimeCalls,
+      })
+      .from(lsaLeadsDaily)
+      .where(
+        and(
+          gte(lsaLeadsDaily.date, from),
+          sql`${lsaLeadsDaily.date} <= ${to}`,
+        ),
+      ),
+    db
+      .select({
+        lsaClientId: lsaCallrailTagCategories.lsaClientId,
+        label: lsaCallrailTagCategories.label,
+        rollup: lsaCallrailTagCategories.rollup,
+      })
+      .from(lsaCallrailTagCategories),
+    // Summed per PPC client directly at the DB level — no day/week
+    // granularity needed here, just the range total.
+    db
+      .select({
+        ppcClientId: ppcAdsDaily.ppcClientId,
+        costMicros: sql<string>`sum(${ppcAdsDaily.costMicros})`,
+        conversions: sql<string>`sum(${ppcAdsDaily.conversions})`,
+      })
+      .from(ppcAdsDaily)
+      .where(
+        and(
+          gte(ppcAdsDaily.date, from),
+          sql`${ppcAdsDaily.date} <= ${to}`,
+        ),
+      )
+      .groupBy(ppcAdsDaily.ppcClientId),
+  ]);
+
+  const ppcRollupMap = new Map<string, "real" | "junk">();
+  for (const c of ppcTagCategoryRows) {
+    ppcRollupMap.set(`${c.ppcClientId}::${c.label}`, c.rollup as "real" | "junk");
+  }
+  const lsaRollupMap = new Map<string, "real" | "junk">();
+  for (const c of lsaTagCategoryRows) {
+    lsaRollupMap.set(`${c.lsaClientId}::${c.label}`, c.rollup as "real" | "junk");
+  }
+
+  const nameById = new Map<string, string>();
+  for (const c of ppcClientRows) nameById.set(c.id, c.name);
+  for (const c of lsaClientRows) nameById.set(c.id, c.name);
+
+  const clientAccs: Record<CallQualityChannel, Map<string, Accumulator>> = {
+    PPC: new Map(),
+    LSA: new Map(),
+    GMB: new Map(),
+  };
+  const summaryAccs: Record<CallQualityChannel, Accumulator> = {
+    PPC: emptyAcc(),
+    LSA: emptyAcc(),
+    GMB: emptyAcc(),
+  };
+
+  function getClientAcc(channel: CallQualityChannel, clientId: string): Accumulator {
+    const map = clientAccs[channel];
+    let acc = map.get(clientId);
+    if (!acc) {
+      acc = emptyAcc();
+      map.set(clientId, acc);
+    }
+    return acc;
+  }
+
+  // Seed every linked, active client with a zero-filled row up front, so
+  // one with no qualifying calls in range still shows up instead of
+  // silently vanishing.
+  for (const c of ppcClientRows) {
+    getClientAcc("PPC", c.id);
+    getClientAcc("GMB", c.id);
+  }
+  for (const c of lsaClientRows) {
+    getClientAcc("LSA", c.id);
+  }
+
+  for (const row of ppcDailyRows) {
+    const breakdown = (row.tagCategoryBreakdown ?? {}) as Record<
+      string,
+      { totalCalls?: number; firstTimeCalls?: number; tagCategoryBreakdown?: Record<string, number> }
+    >;
+    for (const channel of ["PPC", "GMB"] as const) {
+      const chData = breakdown[channel];
+      if (!chData) continue;
+      const clientAcc = getClientAcc(channel, row.ppcClientId);
+      const summaryAcc = summaryAccs[channel];
+      clientAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
+      summaryAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
+      for (const [label, count] of Object.entries(chData.tagCategoryBreakdown ?? {})) {
+        const rollup = ppcRollupMap.get(`${row.ppcClientId}::${label}`) ?? "unclassified";
+        addTagCount(clientAcc, label, count, rollup);
+        addTagCount(summaryAcc, label, count, rollup);
+      }
+    }
+  }
+
+  for (const row of ppcAdsRows) {
+    const clientAcc = getClientAcc("PPC", row.ppcClientId);
+    const summaryAcc = summaryAccs.PPC;
+    const costMicros = BigInt(row.costMicros ?? "0");
+    const conversions = Number(row.conversions ?? 0);
+    clientAcc.costMicros += costMicros;
+    clientAcc.conversions += conversions;
+    summaryAcc.costMicros += costMicros;
+    summaryAcc.conversions += conversions;
+  }
+
+  for (const row of lsaDailyRows) {
+    const clientAcc = getClientAcc("LSA", row.lsaClientId);
+    const summaryAcc = summaryAccs.LSA;
+    clientAcc.firstTimeCalls += row.firstTimeCalls;
+    summaryAcc.firstTimeCalls += row.firstTimeCalls;
+    clientAcc.costMicros += row.costMicros;
+    summaryAcc.costMicros += row.costMicros;
+    clientAcc.chargedCount += row.chargedCount;
+    summaryAcc.chargedCount += row.chargedCount;
+    for (const [label, count] of Object.entries(
+      (row.tagCategoryBreakdown ?? {}) as Record<string, number>,
+    )) {
+      const rollup = lsaRollupMap.get(`${row.lsaClientId}::${label}`) ?? "unclassified";
+      addTagCount(clientAcc, label, count, rollup);
+      addTagCount(summaryAcc, label, count, rollup);
+    }
+  }
+
+  function buildClientRows(channel: CallQualityChannel): CallQualityClientRow[] {
+    return Array.from(clientAccs[channel].entries())
+      .map(([clientId, acc]) => ({
+        clientId,
+        clientName: nameById.get(clientId) ?? "(unknown)",
+        ...finalize(channel, acc),
+      }))
+      .sort((a, b) => b.real - a.real || a.clientName.localeCompare(b.clientName));
+  }
+
+  const clients: Record<CallQualityChannel, CallQualityClientRow[]> = {
+    PPC: buildClientRows("PPC"),
+    LSA: buildClientRows("LSA"),
+    GMB: buildClientRows("GMB"),
+  };
+
+  const summary: Record<CallQualityChannel, CallQualityChannelTotals> = {
+    PPC: finalize("PPC", summaryAccs.PPC),
+    LSA: finalize("LSA", summaryAccs.LSA),
+    GMB: finalize("GMB", summaryAccs.GMB),
+  };
+
+  return { clients, summary };
 }
