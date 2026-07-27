@@ -74,31 +74,20 @@ export default async function SettingsPage() {
       <section className="space-y-3">
         <div>
           <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Report recipients
+            Report & alert recipients
           </h2>
           <p className="text-sm text-muted-foreground">
-            Exec-facing daily PDF reports.
+            Exec-facing daily PDF reports, plus alerts on campaign health.
           </p>
         </div>
         <div className="grid gap-6 md:grid-cols-2">
           <PpcReportRecipientsCard initial={recipients} />
           <LsaReportRecipientsCard initial={lsaRecipients} />
           <CallQualityReportRecipientsCard initial={callQualityRecipients} />
+          <PpcOptimizationAlertRecipientsCard
+            initial={optimizationAlertRecipients}
+          />
         </div>
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Alert recipients
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Alerts on campaign health.
-          </p>
-        </div>
-        <PpcOptimizationAlertRecipientsCard
-          initial={optimizationAlertRecipients}
-        />
       </section>
     </div>
   );
