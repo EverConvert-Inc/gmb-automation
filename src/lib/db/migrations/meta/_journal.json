@@ -204,6 +204,13 @@
       "when": 1785181695836,
       "tag": "0028_marketing_tag_category",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785184125172,
+      "tag": "0029_remove_signed_tag_category",
+      "breakpoints": true
     }
   ]
 }

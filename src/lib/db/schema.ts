@@ -435,7 +435,7 @@ export const ppcCallrailDaily = pgTable(
     totalCalls: integer("total_calls").notNull().default(0),
     signedCases: integer("signed_cases").notNull().default(0),
     // Per-day counts keyed by this client's configured tag category label
-    // (ppc_callrail_tag_categories), e.g. { "Signed": 3, "Spam": 1 }. Powers
+    // (ppc_callrail_tag_categories), e.g. { "Opportunity": 3, "Spam": 1 }. Powers
     // the Ads Conversion Tracker x CallRail report. jsonb rather than fixed
     // columns since categories are freely editable per client. A call can
     // land in multiple labels here if it carries multiple matching tags —
