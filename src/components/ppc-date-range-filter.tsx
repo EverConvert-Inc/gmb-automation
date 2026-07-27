@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Calendar } from "lucide-react";
@@ -36,16 +37,6 @@ function presets(): Preset[] {
         const to = latestDataDay();
         const from = new Date(to);
         from.setUTCDate(from.getUTCDate() - 6);
-        return [iso(from), iso(to)];
-      },
-    },
-    {
-      key: "last30",
-      label: "Last 30 days",
-      range: () => {
-        const to = latestDataDay();
-        const from = new Date(to);
-        from.setUTCDate(from.getUTCDate() - 29);
         return [iso(from), iso(to)];
       },
     },
@@ -126,27 +117,39 @@ export function PpcDateRangeFilter({
     router.push(`?${params.toString()}`);
   }
 
+  // Real navigable href, not just an onClick — a plain button+onClick only
+  // works once React has hydrated and attached the handler, so a click
+  // landing before that (very plausible on first page load) is silently
+  // dropped with no error or feedback. A real <a href> (via Link) works
+  // immediately via native browser navigation and upgrades to a client-side
+  // transition once hydrated.
+  function presetHref(nextFrom: string, nextTo: string): string {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("from", nextFrom);
+    params.set("to", nextTo);
+    return `?${params.toString()}`;
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <Calendar className="h-4 w-4 text-muted-foreground" aria-hidden />
       <div className="inline-flex flex-wrap gap-1">
-        {presetList.map((p) => (
-          <button
-            key={p.key}
-            type="button"
-            onClick={() => {
-              const [f, t] = p.range();
-              setRange(f, t);
-            }}
-            className={
-              activePresetKey === p.key
-                ? "rounded-full border border-brand bg-brand/10 px-2.5 py-1 font-medium text-foreground"
-                : "rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground hover:border-foreground/40 hover:text-foreground"
-            }
-          >
-            {p.label}
-          </button>
-        ))}
+        {presetList.map((p) => {
+          const [f, t] = p.range();
+          return (
+            <Link
+              key={p.key}
+              href={presetHref(f, t)}
+              className={
+                activePresetKey === p.key
+                  ? "rounded-full border border-brand bg-brand/10 px-2.5 py-1 font-medium text-foreground"
+                  : "rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+              }
+            >
+              {p.label}
+            </Link>
+          );
+        })}
       </div>
       <div className="ml-auto flex flex-wrap items-center gap-1">
         <input
