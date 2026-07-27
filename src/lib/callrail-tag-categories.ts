@@ -1,8 +1,9 @@
-// The 7 tags the team currently uses in real CallRail tagging practice.
+// The 9 tags the team currently uses in real CallRail tagging practice.
 // Seeded for every existing PPC/LSA client by migration 0016 (original 5),
-// 0018 (Wrong Number), and 0019 (Opportunity); new clients get the same
-// defaults from the client-creation API routes. Editable per client
-// afterward — this is just the starting point, not a fixed list.
+// 0018 (Wrong Number), 0019 (Opportunity), 0027 (Client), and 0028
+// (Marketing); new clients get the same defaults from the client-creation
+// API routes. Editable per client afterward — this is just the starting
+// point, not a fixed list.
 //
 // "Outside Practice Area"/"Outside Service Area" (no "of") match the
 // actual CallRail tag names in use — migration 0020 fixed an earlier
@@ -40,5 +41,17 @@ export const DEFAULT_CALLRAIL_TAG_CATEGORIES: Array<{
     callrailTagName: "Opportunity",
     rollup: "real",
     sortOrder: 6,
+  },
+  {
+    label: "Client",
+    callrailTagName: "Client",
+    rollup: "junk",
+    sortOrder: 7,
+  },
+  {
+    label: "Marketing",
+    callrailTagName: "Marketing",
+    rollup: "junk",
+    sortOrder: 8,
   },
 ];
