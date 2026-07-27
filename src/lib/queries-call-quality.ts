@@ -493,6 +493,12 @@ export async function getCallQualityByClientReport({
     for (const channel of ["PPC", "GMB"] as const) {
       const chData = breakdown[channel];
       if (!chData) continue;
+      // Client since deactivated or unlinked from CallRail — its historical
+      // daily rows are still in range, but it's no longer in the seeded
+      // (active + linked) set, so it shouldn't surface as a stray
+      // "(unknown)" row. Exclude from both the per-client and summary
+      // totals rather than reintroducing a name lookup for it.
+      if (!clientAccs[channel].has(row.ppcClientId)) continue;
       const clientAcc = getClientAcc(channel, row.ppcClientId);
       const summaryAcc = summaryAccs[channel];
       clientAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
@@ -507,6 +513,9 @@ export async function getCallQualityByClientReport({
   }
 
   for (const row of ppcAdsRows) {
+    // Same exclusion as above — Google Ads cost/conversions for a client
+    // no longer active/linked shouldn't surface here either.
+    if (!clientAccs.PPC.has(row.ppcClientId)) continue;
     const clientAcc = getClientAcc("PPC", row.ppcClientId);
     const summaryAcc = summaryAccs.PPC;
     const costMicros = BigInt(row.costMicros ?? "0");
@@ -518,6 +527,9 @@ export async function getCallQualityByClientReport({
   }
 
   for (const row of lsaDailyRows) {
+    // Same exclusion as above — client since deactivated or unlinked from
+    // CallRail.
+    if (!clientAccs.LSA.has(row.lsaClientId)) continue;
     const clientAcc = getClientAcc("LSA", row.lsaClientId);
     const summaryAcc = summaryAccs.LSA;
     clientAcc.firstTimeCalls += row.firstTimeCalls;
