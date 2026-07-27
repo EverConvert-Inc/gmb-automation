@@ -83,12 +83,34 @@ export async function listCompanies(): Promise<CallRailCompany[]> {
 export type CallrailTagCategoryConfig = {
   label: string;
   callrailTagName: string;
+  rollup: "real" | "junk";
+};
+
+// Per-call, not per-label — at most one of these increments per call,
+// unlike tagCategoryBreakdown which increments once per matching label.
+// A call with tags mapping to more than one rollup resolves by priority:
+// Junk > Real > Unclassified (a junk/spam flag disqualifies a call from
+// counting as Real regardless of what else is tagged on it).
+//
+// `unclassified` can't actually occur here: the `categories` this
+// function matches against always comes from the client's *current*
+// tag-category config, and every current row has a real/junk rollup by
+// construction — there's no "matched label with unknown rollup" at sync
+// time. `unclassified` only exists at report time, as a mismatch between
+// a label stored in historical data and a category since renamed/removed
+// from current config (see queries-call-quality.ts). Kept here for shape
+// consistency; it will always be 0.
+export type CallrailRollupCounts = {
+  real: number;
+  junk: number;
+  unclassified: number;
 };
 
 export type CallrailChannelBucket = {
   totalCalls: number;
   firstTimeCalls: number;
   tagCategoryBreakdown: Record<string, number>;
+  rollupCounts: CallrailRollupCounts;
 };
 
 export type CallrailDailyTotals = {
@@ -99,6 +121,8 @@ export type CallrailDailyTotals = {
   // Flat, blended across all calls that day — keyed by tagCategories[].label.
   // What LSA (no channel split) stores as-is.
   tagCategoryBreakdown: Record<string, number>;
+  // Flat counterpart to tagCategoryBreakdown — see CallrailRollupCounts.
+  rollupCounts: CallrailRollupCounts;
   // Populated only when gmbNameFilters is passed (PPC callers). Keyed by
   // "PPC" | "GMB". Null when gmbNameFilters is omitted (LSA callers) —
   // there's no channel ambiguity to split there.
@@ -179,14 +203,36 @@ export async function pullCallsForCompany(
   const categories = tagCategories.map((c) => ({
     label: c.label,
     tag: c.callrailTagName.trim().toLowerCase(),
+    rollup: c.rollup,
   }));
 
+  function newRollupCounts(): CallrailRollupCounts {
+    return { real: 0, junk: 0, unclassified: 0 };
+  }
+
   function newChannelBucket(): CallrailChannelBucket {
-    return { totalCalls: 0, firstTimeCalls: 0, tagCategoryBreakdown: {} };
+    return {
+      totalCalls: 0,
+      firstTimeCalls: 0,
+      tagCategoryBreakdown: {},
+      rollupCounts: newRollupCounts(),
+    };
   }
 
   function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
     return filters.some((f) => trackerName.includes(f));
+  }
+
+  // Junk > Real > Unclassified: a junk/spam tag disqualifies a call from
+  // counting as Real regardless of what else is tagged on it. Returns
+  // null (contributes to no rollup) when the call matched no configured
+  // category at all — same as today's behavior for uncategorized tags.
+  function resolveCallRollup(
+    matched: Array<{ rollup: "real" | "junk" }>,
+  ): "real" | "junk" | null {
+    if (matched.some((c) => c.rollup === "junk")) return "junk";
+    if (matched.some((c) => c.rollup === "real")) return "real";
+    return null;
   }
 
   const byDate = new Map<string, CallrailDailyTotals>();
@@ -198,6 +244,7 @@ export async function pullCallsForCompany(
       signedCases: 0,
       firstTimeCalls: 0,
       tagCategoryBreakdown: {},
+      rollupCounts: newRollupCounts(),
       channelBreakdown: gmbFiltersLower ? {} : null,
     };
     bucket.totalCalls += 1;
@@ -222,9 +269,10 @@ export async function pullCallsForCompany(
       if (nameMatches) bucket.signedCases += 1;
     }
 
-    const matchedCategoryLabels = categories
-      .filter((c) => tagNamesLower.includes(c.tag))
-      .map((c) => c.label);
+    const matchedCategories = categories.filter((c) =>
+      tagNamesLower.includes(c.tag),
+    );
+    const matchedCategoryLabels = matchedCategories.map((c) => c.label);
 
     // Ads Conversion Tracker x CallRail metrics (tag category rollup,
     // first-time calls, channel split) — pullCallsForCompany queries by
@@ -243,6 +291,8 @@ export async function pullCallsForCompany(
         bucket.tagCategoryBreakdown[label] =
           (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
       }
+      const rollup = resolveCallRollup(matchedCategories);
+      if (rollup) bucket.rollupCounts[rollup] += 1;
     }
 
     // Channel classification — only when the caller (PPC) asked for it.
@@ -266,6 +316,8 @@ export async function pullCallsForCompany(
           channelBucket.tagCategoryBreakdown[label] =
             (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
         }
+        const rollup = resolveCallRollup(matchedCategories);
+        if (rollup) channelBucket.rollupCounts[rollup] += 1;
         bucket.channelBreakdown[channel] = channelBucket;
       }
     }

@@ -43,14 +43,29 @@ function emptyAcc(): Accumulator {
   };
 }
 
-function addTagCount(
+// Per-label counts only — no rollup here. A call can carry multiple
+// matching tags, so these counts double-count a call across labels by
+// design (each category column should independently reflect "calls
+// carrying this tag"). Rollup totals are added separately via
+// addRollupCounts, sourced from the pre-deduped rollup_breakdown column
+// computed at sync time (see callrail.ts's CallrailRollupCounts) — never
+// derived from these per-label counts, which is what caused a call with
+// 2+ same-rollup tags to be counted twice in Real/Junk.
+function addLabelCounts(
   acc: Accumulator,
   label: string,
   count: number,
-  rollup: "real" | "junk" | "unclassified",
 ) {
   acc.tagCounts[label] = (acc.tagCounts[label] ?? 0) + count;
-  acc[rollup] += count;
+}
+
+function addRollupCounts(
+  acc: Accumulator,
+  counts: { real?: number; junk?: number; unclassified?: number } | undefined,
+) {
+  acc.real += counts?.real ?? 0;
+  acc.junk += counts?.junk ?? 0;
+  acc.unclassified += counts?.unclassified ?? 0;
 }
 
 export type CallQualityChannelTotals = {
@@ -148,6 +163,7 @@ export async function getCallQualityReport({
           ppcClientId: ppcCallrailDaily.ppcClientId,
           date: ppcCallrailDaily.date,
           tagCategoryBreakdown: ppcCallrailDaily.tagCategoryBreakdown,
+          rollupBreakdown: ppcCallrailDaily.rollupBreakdown,
         })
         .from(ppcCallrailDaily)
         .where(
@@ -156,11 +172,11 @@ export async function getCallQualityReport({
             sql`${ppcCallrailDaily.date} <= ${to}`,
           ),
         ),
+      // Only used for allLabels' column ordering (sortOrder) — rollup
+      // totals now come from rollup_breakdown, computed at sync time.
       db
         .select({
-          ppcClientId: ppcCallrailTagCategories.ppcClientId,
           label: ppcCallrailTagCategories.label,
-          rollup: ppcCallrailTagCategories.rollup,
           sortOrder: ppcCallrailTagCategories.sortOrder,
         })
         .from(ppcCallrailTagCategories),
@@ -169,6 +185,7 @@ export async function getCallQualityReport({
           lsaClientId: lsaLeadsDaily.lsaClientId,
           date: lsaLeadsDaily.date,
           tagCategoryBreakdown: lsaLeadsDaily.tagCategoryBreakdown,
+          rollupBreakdown: lsaLeadsDaily.rollupBreakdown,
           costMicros: lsaLeadsDaily.costMicros,
           chargedCount: lsaLeadsDaily.chargedCount,
           firstTimeCalls: lsaLeadsDaily.firstTimeCalls,
@@ -182,9 +199,7 @@ export async function getCallQualityReport({
         ),
       db
         .select({
-          lsaClientId: lsaCallrailTagCategories.lsaClientId,
           label: lsaCallrailTagCategories.label,
-          rollup: lsaCallrailTagCategories.rollup,
           sortOrder: lsaCallrailTagCategories.sortOrder,
         })
         .from(lsaCallrailTagCategories),
@@ -207,15 +222,6 @@ export async function getCallQualityReport({
         )
         .groupBy(ppcAdsDaily.date),
     ]);
-
-  const ppcRollupMap = new Map<string, "real" | "junk">();
-  for (const c of ppcTagCategoryRows) {
-    ppcRollupMap.set(`${c.ppcClientId}::${c.label}`, c.rollup as "real" | "junk");
-  }
-  const lsaRollupMap = new Map<string, "real" | "junk">();
-  for (const c of lsaTagCategoryRows) {
-    lsaRollupMap.set(`${c.lsaClientId}::${c.label}`, c.rollup as "real" | "junk");
-  }
 
   // Lowest sortOrder configured for a given label, across every client on
   // either side — just for stable column ordering in the report.
@@ -244,25 +250,33 @@ export async function getCallQualityReport({
     return acc;
   }
 
-  // PPC + GMB, from ppc_callrail_daily's channel-nested breakdown.
+  // PPC + GMB, from ppc_callrail_daily's channel-nested breakdowns.
+  // tagCategoryBreakdown (per-label, may double-count a call across
+  // labels) and rollupBreakdown (per-call, pre-deduped at sync time) are
+  // read independently — rollup totals never derive from label counts.
   for (const row of ppcDailyRows) {
     const period = periodKey(row.date, granularity);
     const breakdown = (row.tagCategoryBreakdown ?? {}) as Record<
       string,
       { totalCalls?: number; firstTimeCalls?: number; tagCategoryBreakdown?: Record<string, number> }
     >;
+    const rollupBreakdown = (row.rollupBreakdown ?? {}) as Record<
+      string,
+      { real?: number; junk?: number; unclassified?: number }
+    >;
     for (const channel of ["PPC", "GMB"] as const) {
       const chData = breakdown[channel];
-      if (!chData) continue;
+      if (!chData) continue; // no calls classified to this channel that day
       const periodAcc = getPeriodAcc(period, channel);
       const summaryAcc = summaryAccs[channel];
       periodAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
       summaryAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
       for (const [label, count] of Object.entries(chData.tagCategoryBreakdown ?? {})) {
-        const rollup = ppcRollupMap.get(`${row.ppcClientId}::${label}`) ?? "unclassified";
-        addTagCount(periodAcc, label, count, rollup);
-        addTagCount(summaryAcc, label, count, rollup);
+        addLabelCounts(periodAcc, label, count);
+        addLabelCounts(summaryAcc, label, count);
       }
+      addRollupCounts(periodAcc, rollupBreakdown[channel]);
+      addRollupCounts(summaryAcc, rollupBreakdown[channel]);
     }
   }
 
@@ -294,10 +308,14 @@ export async function getCallQualityReport({
     for (const [label, count] of Object.entries(
       (row.tagCategoryBreakdown ?? {}) as Record<string, number>,
     )) {
-      const rollup = lsaRollupMap.get(`${row.lsaClientId}::${label}`) ?? "unclassified";
-      addTagCount(periodAcc, label, count, rollup);
-      addTagCount(summaryAcc, label, count, rollup);
+      addLabelCounts(periodAcc, label, count);
+      addLabelCounts(summaryAcc, label, count);
     }
+    const rollupCounts = row.rollupBreakdown as
+      | { real?: number; junk?: number; unclassified?: number }
+      | null;
+    addRollupCounts(periodAcc, rollupCounts ?? undefined);
+    addRollupCounts(summaryAcc, rollupCounts ?? undefined);
   }
 
   const rows: CallQualityPeriodRow[] = Array.from(periodAccs.entries())
@@ -359,9 +377,7 @@ export async function getCallQualityByClientReport({
     ppcClientRows,
     lsaClientRows,
     ppcDailyRows,
-    ppcTagCategoryRows,
     lsaDailyRows,
-    lsaTagCategoryRows,
     ppcAdsRows,
   ] = await Promise.all([
     db
@@ -386,6 +402,7 @@ export async function getCallQualityByClientReport({
       .select({
         ppcClientId: ppcCallrailDaily.ppcClientId,
         tagCategoryBreakdown: ppcCallrailDaily.tagCategoryBreakdown,
+        rollupBreakdown: ppcCallrailDaily.rollupBreakdown,
       })
       .from(ppcCallrailDaily)
       .where(
@@ -396,15 +413,9 @@ export async function getCallQualityByClientReport({
       ),
     db
       .select({
-        ppcClientId: ppcCallrailTagCategories.ppcClientId,
-        label: ppcCallrailTagCategories.label,
-        rollup: ppcCallrailTagCategories.rollup,
-      })
-      .from(ppcCallrailTagCategories),
-    db
-      .select({
         lsaClientId: lsaLeadsDaily.lsaClientId,
         tagCategoryBreakdown: lsaLeadsDaily.tagCategoryBreakdown,
+        rollupBreakdown: lsaLeadsDaily.rollupBreakdown,
         costMicros: lsaLeadsDaily.costMicros,
         chargedCount: lsaLeadsDaily.chargedCount,
         firstTimeCalls: lsaLeadsDaily.firstTimeCalls,
@@ -416,13 +427,6 @@ export async function getCallQualityByClientReport({
           sql`${lsaLeadsDaily.date} <= ${to}`,
         ),
       ),
-    db
-      .select({
-        lsaClientId: lsaCallrailTagCategories.lsaClientId,
-        label: lsaCallrailTagCategories.label,
-        rollup: lsaCallrailTagCategories.rollup,
-      })
-      .from(lsaCallrailTagCategories),
     // Summed per PPC client directly at the DB level — no day/week
     // granularity needed here, just the range total.
     db
@@ -440,15 +444,6 @@ export async function getCallQualityByClientReport({
       )
       .groupBy(ppcAdsDaily.ppcClientId),
   ]);
-
-  const ppcRollupMap = new Map<string, "real" | "junk">();
-  for (const c of ppcTagCategoryRows) {
-    ppcRollupMap.set(`${c.ppcClientId}::${c.label}`, c.rollup as "real" | "junk");
-  }
-  const lsaRollupMap = new Map<string, "real" | "junk">();
-  for (const c of lsaTagCategoryRows) {
-    lsaRollupMap.set(`${c.lsaClientId}::${c.label}`, c.rollup as "real" | "junk");
-  }
 
   const nameById = new Map<string, string>();
   for (const c of ppcClientRows) nameById.set(c.id, c.name);
@@ -491,6 +486,10 @@ export async function getCallQualityByClientReport({
       string,
       { totalCalls?: number; firstTimeCalls?: number; tagCategoryBreakdown?: Record<string, number> }
     >;
+    const rollupBreakdown = (row.rollupBreakdown ?? {}) as Record<
+      string,
+      { real?: number; junk?: number; unclassified?: number }
+    >;
     for (const channel of ["PPC", "GMB"] as const) {
       const chData = breakdown[channel];
       if (!chData) continue;
@@ -499,10 +498,11 @@ export async function getCallQualityByClientReport({
       clientAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
       summaryAcc.firstTimeCalls += chData.firstTimeCalls ?? 0;
       for (const [label, count] of Object.entries(chData.tagCategoryBreakdown ?? {})) {
-        const rollup = ppcRollupMap.get(`${row.ppcClientId}::${label}`) ?? "unclassified";
-        addTagCount(clientAcc, label, count, rollup);
-        addTagCount(summaryAcc, label, count, rollup);
+        addLabelCounts(clientAcc, label, count);
+        addLabelCounts(summaryAcc, label, count);
       }
+      addRollupCounts(clientAcc, rollupBreakdown[channel]);
+      addRollupCounts(summaryAcc, rollupBreakdown[channel]);
     }
   }
 
@@ -529,10 +529,14 @@ export async function getCallQualityByClientReport({
     for (const [label, count] of Object.entries(
       (row.tagCategoryBreakdown ?? {}) as Record<string, number>,
     )) {
-      const rollup = lsaRollupMap.get(`${row.lsaClientId}::${label}`) ?? "unclassified";
-      addTagCount(clientAcc, label, count, rollup);
-      addTagCount(summaryAcc, label, count, rollup);
+      addLabelCounts(clientAcc, label, count);
+      addLabelCounts(summaryAcc, label, count);
     }
+    const rollupCounts = row.rollupBreakdown as
+      | { real?: number; junk?: number; unclassified?: number }
+      | null;
+    addRollupCounts(clientAcc, rollupCounts ?? undefined);
+    addRollupCounts(summaryAcc, rollupCounts ?? undefined);
   }
 
   function buildClientRows(channel: CallQualityChannel): CallQualityClientRow[] {

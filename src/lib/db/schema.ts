@@ -437,8 +437,20 @@ export const ppcCallrailDaily = pgTable(
     // Per-day counts keyed by this client's configured tag category label
     // (ppc_callrail_tag_categories), e.g. { "Signed": 3, "Spam": 1 }. Powers
     // the Ads Conversion Tracker x CallRail report. jsonb rather than fixed
-    // columns since categories are freely editable per client.
+    // columns since categories are freely editable per client. A call can
+    // land in multiple labels here if it carries multiple matching tags —
+    // this is a per-label breakdown, not a per-call rollup (see
+    // rollup_breakdown below for that).
     tagCategoryBreakdown: jsonb("tag_category_breakdown")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    // Per-day, per-call real/junk/unclassified counts — computed at sync
+    // time (callrail.ts), capped at 1 per call per rollup (Junk > Real >
+    // Unclassified priority when a call has tags mapping to more than one
+    // rollup), unlike tagCategoryBreakdown above which double-counts a
+    // call across every matching label. Channel-nested: { "PPC": {real,
+    // junk, unclassified}, "GMB": {...} }.
+    rollupBreakdown: jsonb("rollup_breakdown")
       .notNull()
       .default(sql`'{}'::jsonb`),
     ingestedAt: timestamp("ingested_at", { withTimezone: true })
@@ -620,8 +632,14 @@ export const lsaLeadsDaily = pgTable(
     // Per-day counts keyed by this client's configured tag category label
     // (lsa_callrail_tag_categories) — same purpose as ppc_callrail_daily's
     // column of the same name, for the Ads Conversion Tracker x CallRail
-    // report.
+    // report. Per-label, not per-call — see rollup_breakdown below.
     tagCategoryBreakdown: jsonb("tag_category_breakdown")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    // Per-day, per-call real/junk/unclassified counts — same purpose as
+    // ppc_callrail_daily's column of the same name; LSA has no channel
+    // split so this is flat: {real, junk, unclassified}.
+    rollupBreakdown: jsonb("rollup_breakdown")
       .notNull()
       .default(sql`'{}'::jsonb`),
     // CallRail's first_call flag, counted per day — same field

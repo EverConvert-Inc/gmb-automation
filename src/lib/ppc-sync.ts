@@ -208,9 +208,14 @@ export async function syncCallrailForClient(
       throw new Error("PPC client is not linked to CallRail");
     }
 
-    const tagCategories = await db.query.ppcCallrailTagCategories.findMany({
-      where: eq(ppcCallrailTagCategories.ppcClientId, ppcClientId),
-    });
+    // rollup is stored as plain text (no DB-level enum); narrowed here
+    // since the tag-category API routes are the only writers and always
+    // validate it against z.enum(["real", "junk"]) before insert/update.
+    const tagCategories = (
+      await db.query.ppcCallrailTagCategories.findMany({
+        where: eq(ppcCallrailTagCategories.ppcClientId, ppcClientId),
+      })
+    ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
 
     const rows = await pullCallsForCompany(
       client.callrailCompanyId,
@@ -225,7 +230,27 @@ export async function syncCallrailForClient(
     for (const r of rows) {
       // channelBreakdown is always populated here — gmbCallrailNameFilters
       // is always passed above — so this is what powers the Ads
-      // Conversion Tracker x CallRail report's PPC/GMB split.
+      // Conversion Tracker x CallRail report's PPC/GMB split. rollupCounts
+      // is split out into its own column (rollup_breakdown) rather than
+      // stored redundantly inside tag_category_breakdown too.
+      const channelBreakdown = r.channelBreakdown ?? {};
+      const tagCategoryBreakdown = Object.fromEntries(
+        Object.entries(channelBreakdown).map(([channel, cb]) => [
+          channel,
+          {
+            totalCalls: cb.totalCalls,
+            firstTimeCalls: cb.firstTimeCalls,
+            tagCategoryBreakdown: cb.tagCategoryBreakdown,
+          },
+        ]),
+      );
+      const rollupBreakdown = Object.fromEntries(
+        Object.entries(channelBreakdown).map(([channel, cb]) => [
+          channel,
+          cb.rollupCounts,
+        ]),
+      );
+
       await db
         .insert(ppcCallrailDaily)
         .values({
@@ -233,14 +258,16 @@ export async function syncCallrailForClient(
           date: r.date,
           totalCalls: r.totalCalls,
           signedCases: r.signedCases,
-          tagCategoryBreakdown: r.channelBreakdown ?? {},
+          tagCategoryBreakdown,
+          rollupBreakdown,
         })
         .onConflictDoUpdate({
           target: [ppcCallrailDaily.ppcClientId, ppcCallrailDaily.date],
           set: {
             totalCalls: r.totalCalls,
             signedCases: r.signedCases,
-            tagCategoryBreakdown: r.channelBreakdown ?? {},
+            tagCategoryBreakdown,
+            rollupBreakdown,
             ingestedAt: new Date(),
           },
         });

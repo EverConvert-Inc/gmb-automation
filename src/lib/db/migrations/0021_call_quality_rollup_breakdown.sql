@@ -1,0 +1,2 @@
+ALTER TABLE "lsa_leads_daily" ADD COLUMN "rollup_breakdown" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "ppc_callrail_daily" ADD COLUMN "rollup_breakdown" jsonb DEFAULT '{}'::jsonb NOT NULL;

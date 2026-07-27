@@ -78,6 +78,9 @@ type DayBucket = {
   // Flat, blended tag category counts for the Ads Conversion Tracker x
   // CallRail report — LSA has no channel split (always channel "LSA").
   tagCategoryBreakdown: Record<string, number>;
+  // Per-call real/junk/unclassified counts (capped at 1 per call) — see
+  // CallrailRollupCounts in callrail.ts.
+  rollupCounts: { real: number; junk: number; unclassified: number };
   firstTimeCalls: number;
   adsFetched: boolean;
   callrailFetched: boolean;
@@ -94,6 +97,7 @@ function emptyBucket(date: string): DayBucket {
     costMicros: 0n,
     signedCases: 0,
     tagCategoryBreakdown: {},
+    rollupCounts: { real: 0, junk: 0, unclassified: 0 },
     firstTimeCalls: 0,
     adsFetched: false,
     callrailFetched: false,
@@ -221,9 +225,15 @@ export async function syncLsaForClient(
   if (client.callrailCompanyId) {
     callrailJobId = await startJob(lsaClientId, "callrail", triggeredBy);
     try {
-      const tagCategories = await db.query.lsaCallrailTagCategories.findMany({
-        where: eq(lsaCallrailTagCategories.lsaClientId, lsaClientId),
-      });
+      // rollup is stored as plain text (no DB-level enum); narrowed here
+      // since the tag-category API routes are the only writers and
+      // always validate it against z.enum(["real", "junk"]) before
+      // insert/update.
+      const tagCategories = (
+        await db.query.lsaCallrailTagCategories.findMany({
+          where: eq(lsaCallrailTagCategories.lsaClientId, lsaClientId),
+        })
+      ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
       const rows = await pullCallsForCompany(
         client.callrailCompanyId,
         opts.fromDate,
@@ -236,6 +246,7 @@ export async function syncLsaForClient(
         const b = bucket(r.date);
         b.signedCases = r.signedCases;
         b.tagCategoryBreakdown = r.tagCategoryBreakdown;
+        b.rollupCounts = r.rollupCounts;
         b.firstTimeCalls = r.firstTimeCalls;
         b.callrailFetched = true;
       }
@@ -270,6 +281,7 @@ export async function syncLsaForClient(
     if (row.callrailFetched) {
       updateSet.signedCases = row.signedCases;
       updateSet.tagCategoryBreakdown = row.tagCategoryBreakdown;
+      updateSet.rollupBreakdown = row.rollupCounts;
       updateSet.firstTimeCalls = row.firstTimeCalls;
     }
 
@@ -286,6 +298,7 @@ export async function syncLsaForClient(
         costMicros: row.costMicros,
         signedCases: row.signedCases,
         tagCategoryBreakdown: row.tagCategoryBreakdown,
+        rollupBreakdown: row.rollupCounts,
         firstTimeCalls: row.firstTimeCalls,
       })
       .onConflictDoUpdate({
