@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -28,6 +29,7 @@ export function CallQualitySyncNowButton({
   from: string;
   to: string;
 }) {
+  const router = useRouter();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   async function sync() {
@@ -47,6 +49,10 @@ export function CallQualitySyncNowButton({
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
       setStatus({ kind: "done", ppc: body.ppc, lsa: body.lsa });
+      // The report below is server-rendered and only fetched once at page
+      // load — without this, a successful sync updates the database but
+      // the page keeps showing the pre-sync snapshot until a manual reload.
+      router.refresh();
     } catch (err) {
       setStatus({ kind: "error", message: (err as Error).message });
     }
