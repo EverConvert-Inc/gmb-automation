@@ -37,6 +37,10 @@
       "schedule": "5 10 * * *"
     },
     {
+      "path": "/api/cron/call-quality-email-report",
+      "schedule": "10 10 * * *"
+    },
+    {
       "path": "/api/cron/dataforseo-spend-snapshot",
       "schedule": "5 0 * * *"
     }

@@ -4,11 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignOutButton } from "@/components/sign-out-button";
 import { PpcReportRecipientsCard } from "@/components/ppc-report-recipients-card";
 import { LsaReportRecipientsCard } from "@/components/lsa-report-recipients-card";
+import { CallQualityReportRecipientsCard } from "@/components/call-quality-report-recipients-card";
 import { PpcOptimizationAlertRecipientsCard } from "@/components/ppc-optimization-alert-recipients-card";
 import { db } from "@/lib/db/client";
 import {
   ppcReportRecipients,
   lsaReportRecipients,
+  callQualityReportRecipients,
   ppcOptimizationAlertRecipients,
 } from "@/lib/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -27,21 +29,29 @@ export default async function SettingsPage() {
     // Supabase not configured locally; render without identity.
   }
 
-  const [recipients, lsaRecipients, optimizationAlertRecipients] =
-    await Promise.all([
-      db.query.ppcReportRecipients.findMany({
-        orderBy: asc(ppcReportRecipients.email),
-        columns: { id: true, email: true },
-      }),
-      db.query.lsaReportRecipients.findMany({
-        orderBy: asc(lsaReportRecipients.email),
-        columns: { id: true, email: true },
-      }),
-      db.query.ppcOptimizationAlertRecipients.findMany({
-        orderBy: asc(ppcOptimizationAlertRecipients.email),
-        columns: { id: true, email: true },
-      }),
-    ]);
+  const [
+    recipients,
+    lsaRecipients,
+    callQualityRecipients,
+    optimizationAlertRecipients,
+  ] = await Promise.all([
+    db.query.ppcReportRecipients.findMany({
+      orderBy: asc(ppcReportRecipients.email),
+      columns: { id: true, email: true },
+    }),
+    db.query.lsaReportRecipients.findMany({
+      orderBy: asc(lsaReportRecipients.email),
+      columns: { id: true, email: true },
+    }),
+    db.query.callQualityReportRecipients.findMany({
+      orderBy: asc(callQualityReportRecipients.email),
+      columns: { id: true, email: true },
+    }),
+    db.query.ppcOptimizationAlertRecipients.findMany({
+      orderBy: asc(ppcOptimizationAlertRecipients.email),
+      columns: { id: true, email: true },
+    }),
+  ]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -73,6 +83,7 @@ export default async function SettingsPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <PpcReportRecipientsCard initial={recipients} />
           <LsaReportRecipientsCard initial={lsaRecipients} />
+          <CallQualityReportRecipientsCard initial={callQualityRecipients} />
         </div>
       </section>
 

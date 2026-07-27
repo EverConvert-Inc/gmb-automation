@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { CallQualityChannelSection } from "@/components/call-quality-channel-section";
 import { CallQualitySyncNowButton } from "@/components/call-quality-sync-now-button";
+import { EmailCallQualityReportButton } from "@/components/email-call-quality-report-button";
 import { getCallQualityByClientReport } from "@/lib/queries-call-quality";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,7 @@ export default async function CallQualityPage({
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <CallQualitySyncNowButton from={from} to={to} />
+          <EmailCallQualityReportButton from={from} to={to} />
         </div>
       </header>
 

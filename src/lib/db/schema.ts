@@ -713,6 +713,23 @@ export const lsaReportRecipients = pgTable("lsa_report_recipients", {
 
 export type LsaReportRecipient = typeof lsaReportRecipients.$inferSelect;
 
+// Separate distribution list from ppcReportRecipients/lsaReportRecipients —
+// the cross-channel Call Quality PDF report has its own audience, same
+// pattern as those two.
+export const callQualityReportRecipients = pgTable(
+  "call_quality_report_recipients",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    email: text("email").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+export type CallQualityReportRecipient =
+  typeof callQualityReportRecipients.$inferSelect;
+
 // Daily-ish snapshot of DataForSEO's lifetime spend (computed as
 // money.total - money.balance). Used by the sidebar's "SEO API spend"
 // indicator to derive a month-to-date number from a baseline taken
