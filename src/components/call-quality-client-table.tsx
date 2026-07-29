@@ -88,7 +88,7 @@ function SortHeader({
 }
 
 // One row per client, aggregated over the selected date range. showCost
-// hides the Cost/Real CPL/Ads CPA columns entirely for GMB, which never
+// hides the Cost/Signed CPL/Ads CPA columns entirely for GMB, which never
 // carries a cost figure (organic, no ad spend).
 export function CallQualityClientTable({
   rows,
@@ -163,7 +163,7 @@ export function CallQualityClientTable({
               onSort={onSort}
             />
             <SortHeader
-              label="Real"
+              label="Signed"
               align="right"
               field="real"
               sortKey={sortKey}
@@ -197,7 +197,7 @@ export function CallQualityClientTable({
                   onSort={onSort}
                 />
                 <SortHeader
-                  label="Real CPL"
+                  label="Signed CPL"
                   align="right"
                   field="realCpl"
                   sortKey={sortKey}

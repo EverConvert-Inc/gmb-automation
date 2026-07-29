@@ -209,7 +209,7 @@ function KpiBox({
 // One page per channel — same shape as the web's CallQualityChannelSection
 // + CallQualityClientTable (KPI strip, then a flat per-client table; no
 // per-campaign nesting since Call Quality is a rollup, not a campaign
-// report). showCost hides Cost/Real CPL/Ads CPA for GMB, which never
+// report). showCost hides Cost/Signed CPL/Ads CPA for GMB, which never
 // carries a cost figure (organic, no ad spend). Unlike PPC/LSA's PDFs,
 // there's no prior-period delta here — getCallQualityByClientReport only
 // returns range totals, no comparison window.
@@ -252,7 +252,7 @@ function ChannelPage({
           value={fmtNumber(totals.firstTimeCalls)}
         />
         <KpiBox
-          label="Real"
+          label="Signed"
           value={fmtNumber(totals.real)}
           sublabel={`${fmtNumber(totals.junk)} junk, ${fmtNumber(totals.unclassified)} unclassified`}
         />
@@ -261,7 +261,7 @@ function ChannelPage({
           value={showCost ? fmtMicros(totals.costMicros) : "—"}
         />
         <KpiBox
-          label="Real cost / real lead"
+          label="Signed cost / signed lead"
           value={fmtUsdOrDash(totals.realCostPerRealLead)}
           sublabel={`Ads-reported CPA: ${fmtUsdOrDash(totals.adsReportedCpa)}`}
         />
@@ -276,13 +276,13 @@ function ChannelPage({
           <View style={styles.tableHeader} fixed>
             <Text style={[styles.cellName, styles.th]}>Client</Text>
             <Text style={[styles.cellNum, styles.th]}>First-time</Text>
-            <Text style={[styles.cellNum, styles.th]}>Real</Text>
+            <Text style={[styles.cellNum, styles.th]}>Signed</Text>
             <Text style={[styles.cellNum, styles.th]}>Junk</Text>
             <Text style={[styles.cellNum, styles.th]}>Unclassified</Text>
             {showCost && (
               <>
                 <Text style={[styles.cellNum, styles.th]}>Cost</Text>
-                <Text style={[styles.cellNum, styles.th]}>Real CPL</Text>
+                <Text style={[styles.cellNum, styles.th]}>Signed CPL</Text>
                 <Text style={[styles.cellNum, styles.th]}>Ads CPA</Text>
               </>
             )}

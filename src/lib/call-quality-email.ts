@@ -77,7 +77,7 @@ function fmtSubject(fromIso: string, toIso: string): string {
 
 // Inline-styled HTML so it renders consistently across mail clients
 // (Gmail strips <style> blocks but respects inline `style=` attributes).
-// One row per channel — Real/Junk/Unclassified plus first-time calls,
+// One row per channel — Signed/Junk/Unclassified plus first-time calls,
 // since (unlike PPC/LSA) there's no single unified KPI set across
 // PPC/LSA/GMB. Full per-client breakdown is in the attached PDF.
 function renderEmailHtml({
@@ -121,7 +121,7 @@ function renderEmailHtml({
               <tr>
                 <th align="left" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">Channel</th>
                 <th align="right" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">First-time</th>
-                <th align="right" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">Real</th>
+                <th align="right" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">Signed</th>
                 <th align="right" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">Junk</th>
                 <th align="right" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">Unclass.</th>
                 <th align="right" style="padding:6px 4px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;">Cost</th>
@@ -167,7 +167,7 @@ function renderEmailText({
   const lines = CHANNELS.map((channel) => {
     const t = report.summary[channel];
     const cost = channel === "GMB" ? "—" : fmtMicros(t.costMicros);
-    return `${channel.padEnd(5)} first-time ${fmtNumber(t.firstTimeCalls)}, real ${fmtNumber(t.real)}, junk ${fmtNumber(t.junk)}, unclassified ${fmtNumber(t.unclassified)}, cost ${cost}`;
+    return `${channel.padEnd(5)} first-time ${fmtNumber(t.firstTimeCalls)}, signed ${fmtNumber(t.real)}, junk ${fmtNumber(t.junk)}, unclassified ${fmtNumber(t.unclassified)}, cost ${cost}`;
   });
   return [
     `Call Quality report — ${range}`,

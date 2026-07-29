@@ -311,7 +311,7 @@ export function PpcCallrailTagCategoriesCard({
               required
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
-              placeholder="Opportunity"
+              placeholder="Signed"
             />
           </div>
           <div>
@@ -321,7 +321,7 @@ export function PpcCallrailTagCategoriesCard({
               required
               value={newTag}
               onChange={(e) => setNewTag(e.target.value)}
-              placeholder="Opportunity"
+              placeholder="Signed"
             />
           </div>
           <div>

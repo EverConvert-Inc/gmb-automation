@@ -54,7 +54,7 @@ export function CallQualityChannelSection({
             tone="brand"
           />
           <StatTile
-            label="Real"
+            label="Signed"
             value={fmtNumber(totals.real)}
             sublabel={`${fmtNumber(totals.junk)} junk, ${fmtNumber(totals.unclassified)} unclassified`}
             tone="brand"
@@ -64,7 +64,7 @@ export function CallQualityChannelSection({
             value={showCost ? fmtUsdFromMicros(totals.costMicros) : "—"}
           />
           <StatTile
-            label="Real cost / real lead"
+            label="Signed cost / signed lead"
             value={fmtUsdOrDash(totals.realCostPerRealLead)}
             sublabel={`Ads-reported CPA: ${fmtUsdOrDash(totals.adsReportedCpa)}`}
           />
