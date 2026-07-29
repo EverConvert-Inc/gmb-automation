@@ -58,12 +58,26 @@ function describeError(err: unknown): unknown {
 }
 
 // Temporary read-only diagnostic. Pulls every field Google Ads' call_view
-// resource exposes for one PPC client's Google Ads customer on a single
-// day, completely unfiltered by our own assumptions about what's
-// populated — investigating whether call_view is even the resource behind
-// the Ads UI's call-conversion report, and if so what precision/fields it
-// actually carries. Cross-checked against a known real CallRail call
-// (Hodgins & Kiber, caller 678-704-9350, Jul 28 ~2:10pm, 4m9s duration).
+// resource exposes for one PPC client's Google Ads customer, completely
+// unfiltered by our own assumptions about what's populated — investigating
+// whether call_view is even the resource behind the Ads UI's
+// call-conversion report, and if so what precision/fields it actually
+// carries. Cross-checked against a known real CallRail call (Hodgins &
+// Kiber, caller 678-704-9350, Jul 28 ~2:10pm, 4m9s duration).
+//
+// call_view does NOT support segments.date in SELECT or WHERE at all —
+// confirmed live via a real PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE
+// error, not a query typo. campaign.id/campaign.name are call_view's
+// documented "Attributed Resources" (selectable/filterable, but don't
+// segment the result set) — segments.date isn't in call_view's compatible-
+// segments list the way it is for campaign/local_services_lead. So instead
+// of filtering server-side by date, we pull back the most recent rows
+// (capped + ordered, so a high-volume account doesn't return years of
+// history in one shot) and bucket by date client-side after the fact —
+// reporting both the total unfiltered count and the date-matched subset,
+// so we can see how far back call_view actually goes and whether
+// server-side date filtering is possible at all for a future daily sync.
+//
 // Reuses the same auth path pullDailyMetrics already relies on
 // (getCustomer via a decrypted stored refresh token) — no new auth/scopes.
 // No DB writes, no matching/aggregation logic. Delete once the report is
@@ -120,11 +134,11 @@ export async function GET(req: Request) {
     const refreshToken = decryptString(cred.refreshTokenEncrypted);
     const customer = getCustomer(refreshToken, client.googleAdsCustomerId);
 
-    // No WHERE beyond the date — we want every call_view row that day so
-    // the 4m9s ~2:10pm call can be picked out by eye and compared against
-    // CallRail's record, rather than pre-filtering on an assumption about
-    // which fields would identify it.
-    const rows = await customer.query(`
+    // No date filter — call_view rejects segments.date entirely (see the
+    // comment above). Pull the most recent rows instead, capped so a
+    // high-volume account can't return an unbounded amount of history in
+    // one shot, and bucket by date client-side below.
+    const rows = (await customer.query(`
       SELECT
         call_view.caller_country_code,
         call_view.caller_area_code,
@@ -135,19 +149,35 @@ export async function GET(req: Request) {
         call_view.type,
         call_view.call_status,
         campaign.id,
-        campaign.name,
-        segments.date
+        campaign.name
       FROM call_view
-      WHERE segments.date = '${date}'
-      ORDER BY call_view.start_call_date_time
-    `);
+      ORDER BY call_view.start_call_date_time DESC
+      LIMIT 1000
+    `)) as Array<{
+      call_view?: { start_call_date_time?: string | null };
+    }>;
+
+    const matchingDate = rows.filter((r) =>
+      (r.call_view?.start_call_date_time ?? "").startsWith(date),
+    );
+    const oldestReturned = rows.at(-1) as
+      | { call_view?: { start_call_date_time?: string | null } }
+      | undefined;
+    const newestReturned = rows[0] as
+      | { call_view?: { start_call_date_time?: string | null } }
+      | undefined;
 
     return NextResponse.json({
       clientName: client.name,
       customerId: client.googleAdsCustomerId,
-      date,
-      rowCount: rows.length,
-      rows,
+      requestedDate: date,
+      totalRowsReturned: rows.length,
+      returnedRange: {
+        newest: newestReturned?.call_view?.start_call_date_time ?? null,
+        oldest: oldestReturned?.call_view?.start_call_date_time ?? null,
+      },
+      matchingDateCount: matchingDate.length,
+      matchingDateRows: matchingDate,
     });
   } catch (err) {
     return NextResponse.json(
