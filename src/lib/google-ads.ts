@@ -420,7 +420,23 @@ export type CallViewRow = {
   callerAreaCode: string;
   campaignId: string;
   campaignName: string;
+  // "AD" (called directly from the ad) or "LANDING_PAGE" (clicked the ad,
+  // then called from a forwarding number Google swapped onto the landing
+  // page) — under investigation for whether this maps to the "Ad" vs
+  // "Website" source distinction visible in Google Ads' own UI, and
+  // whether call_view actually returns both kinds or only ever "AD" for
+  // a given account. Raw numeric fallback (e.g. "2") if the enums export
+  // doesn't recognize the value, rather than risking a wrong/nonexistent
+  // enum name silently mislabeling it.
+  callTrackingDisplayLocation: string;
 };
+
+function decodeCallTrackingDisplayLocation(raw: unknown): string {
+  if (typeof raw !== "number") return String(raw ?? "");
+  const enumMap = (enums as Record<string, Record<number, string> | undefined>)
+    .CallTrackingDisplayLocation;
+  return enumMap?.[raw] ?? String(raw);
+}
 
 // Pulls Google Ads' call_view resource — calls placed via a call
 // extension/call-only ad — for cross-referencing against CallRail calls to
@@ -447,6 +463,7 @@ export async function pullCallViewRows(
       call_view.start_call_date_time,
       call_view.call_duration_seconds,
       call_view.caller_area_code,
+      call_view.call_tracking_display_location,
       campaign.id,
       campaign.name
     FROM call_view
@@ -463,6 +480,9 @@ export async function pullCallViewRows(
       callerAreaCode: String(callView.caller_area_code ?? ""),
       campaignId: String(campaign.id ?? ""),
       campaignName: String(campaign.name ?? ""),
+      callTrackingDisplayLocation: decodeCallTrackingDisplayLocation(
+        callView.call_tracking_display_location,
+      ),
     };
   });
 }

@@ -133,11 +133,14 @@ async function pullRawCallrailCalls(
 // false positives inflating the PMax count.
 //
 // "Website" vs "Ad" source calls (a Google Ads-side conversion-source
-// distinction, not a CallRail field) are NOT distinguished here — call_view
-// can only ever see "Ad" source activity, so every GMB-tracker call is
-// tested against the same call_view pool regardless of which source it'd
-// be attributed to on Google's side. That's a separate coverage gap, not
-// something this audit tries to resolve.
+// distinction, not a CallRail field) — under investigation for whether
+// this actually maps to call_view.call_tracking_display_location's
+// AD/LANDING_PAGE values. This route now reports
+// callViewDisplayLocationBreakdown (a tally across every available
+// call_view row, not just matched ones) plus the raw callViewRows
+// themselves, so the real field values can be inspected directly before
+// concluding whether call_view only ever returns "Ad" source activity for
+// this account or actually covers both.
 //
 // No DB writes, no changes to production matching logic (imports the real
 // createGmbAdMatcher, doesn't reimplement it). Delete once match quality
@@ -233,14 +236,29 @@ export async function GET(req: Request) {
       };
     });
 
+    // Tally across ALL available call_view rows (not just matched ones) —
+    // answers whether call_view is returning a mix of AD/LANDING_PAGE for
+    // this account, or only ever one type, before concluding anything
+    // about why the matched count looks low.
+    const callViewDisplayLocationBreakdown: Record<string, number> = {};
+    for (const row of callViewRows) {
+      const key = row.callTrackingDisplayLocation || "(blank)";
+      callViewDisplayLocationBreakdown[key] =
+        (callViewDisplayLocationBreakdown[key] ?? 0) + 1;
+    }
+
     return NextResponse.json({
       clientName: client.name,
       customerId: client.googleAdsCustomerId,
       from,
       to,
       totalCallViewRowsAvailable: callViewRows.length,
+      callViewDisplayLocationBreakdown,
       totalGmbTrackerCalls: gmbCalls.length,
       matchedCount: results.filter((r) => r.matched).length,
+      // Raw rows included so the actual field values (not just our
+      // interpretation of them) are inspectable directly.
+      callViewRows,
       results,
     });
   } catch (err) {

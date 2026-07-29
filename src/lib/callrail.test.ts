@@ -96,6 +96,7 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
         callerAreaCode: "678",
         campaignId: "1",
         campaignName: "Local PMax Map | Calls",
+        callTrackingDisplayLocation: "AD",
       },
       {
         // Different time/area — present in the pool but shouldn't match
@@ -105,6 +106,7 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
         callerAreaCode: "404",
         campaignId: "2",
         campaignName: "Other Campaign",
+        callTrackingDisplayLocation: "AD",
       },
     ];
 
@@ -179,6 +181,7 @@ describe("createGmbAdMatcher — diagnostic delta reporting", () => {
       callerAreaCode: "678",
       campaignId: "1",
       campaignName: "Local PMax Map | Calls",
+      callTrackingDisplayLocation: "AD",
     },
   ];
 
