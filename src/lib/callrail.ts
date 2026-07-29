@@ -2,6 +2,8 @@
 // stored as CALLRAIL_API_KEY; per-client mapping lives in ppc_clients
 // (`callrailCompanyId` + `signedCaseTag`).
 
+import type { CallViewRow } from "./google-ads";
+
 const BASE_URL = process.env.CALLRAIL_API_BASE ?? "https://api.callrail.com";
 
 function authHeaders(): HeadersInit {
@@ -42,6 +44,11 @@ type CallRailCall = {
   // be wrong, CallRail's `fields` param 400s loudly (same as `tracker` did
   // during LSA development) rather than silently returning wrong data.
   first_call?: boolean | null;
+  // The caller's own phone number (e.g. "+16787049350"), used only to
+  // derive an area code for GMB ad-vs-organic matching against Google
+  // Ads' call_view (see matchGmbCallToAdView below). Same
+  // fail-loud-if-wrong-field-name property as first_call above.
+  customer_phone_number?: string | null;
 };
 
 // CallRail's "account" is the agency. Most setups have one. We list and
@@ -124,8 +131,18 @@ export type CallrailDailyTotals = {
   // Flat counterpart to tagCategoryBreakdown — see CallrailRollupCounts.
   rollupCounts: CallrailRollupCounts;
   // Populated only when gmbNameFilters is passed (PPC callers). Keyed by
-  // "PPC" | "GMB". Null when gmbNameFilters is omitted (LSA callers) —
-  // there's no channel ambiguity to split there.
+  // "PPC" | "GMB" | "PMax". Null when gmbNameFilters is omitted (LSA
+  // callers) — there's no channel ambiguity to split there.
+  //
+  // GMB and PMax share the same tracker names (e.g. "GMB - Raleigh") —
+  // Google Ads' Performance Max campaigns can show sponsored pins/
+  // placements on Google Maps via location assets tied to the same
+  // Business Profile, so tracker-name matching alone can't tell paid PMax
+  // traffic apart from organic GMB traffic. A GMB-tracker call is
+  // reclassified into "PMax" instead of "GMB" when it cross-references to
+  // a Google Ads call_view row (see matchGmbCallToAdView below) — GMB's
+  // totals reflect organic-only traffic once a call has been pulled out
+  // into PMax; a call is never counted in both.
   channelBreakdown: Record<string, CallrailChannelBucket> | null;
 };
 
@@ -162,6 +179,15 @@ export async function pullCallsForCompany(
   // only caller); LSA passes "LSA" so its own calls land under that label
   // instead of being mislabeled "PPC" when it also does GMB splitting.
   ownChannel: "PPC" | "LSA" = "PPC",
+  // Pre-fetched Google Ads call_view rows (see google-ads.ts's
+  // pullCallViewRows) for this client's googleAdsCustomerId, used to
+  // reclassify GMB-tracker calls into PMax when ad-driven (see the
+  // channelBreakdown comment on CallrailDailyTotals). Omitted entirely for
+  // LSA (v1 scope is PPC-only) and for any PPC client without a
+  // googleAdsCustomerId configured — every GMB-tracker call then just
+  // stays "GMB" (organic), which is the safe direction to fail in (never
+  // overclaims ad attribution).
+  callViewRows?: CallViewRow[],
 ): Promise<CallrailDailyTotals[]> {
   const accountId = await resolveAccountId();
   const calls: CallRailCall[] = [];
@@ -180,7 +206,7 @@ export async function pullCallsForCompany(
     // formatted, kept as a fallback.
     url.searchParams.set(
       "fields",
-      "tags,duration,source_name,formatted_tracking_source,first_call",
+      "tags,duration,source_name,formatted_tracking_source,first_call,customer_phone_number",
     );
     const res = await fetch(url.toString(), { headers: authHeaders() });
     if (!res.ok) {
@@ -237,6 +263,96 @@ export async function pullCallsForCompany(
     if (matched.some((c) => c.rollup === "junk")) return "junk";
     if (matched.some((c) => c.rollup === "real")) return "real";
     return null;
+  }
+
+  // --- GMB ad-vs-organic matching (call_view cross-reference) ---
+  //
+  // Tolerances are starting values validated against exactly one confirmed
+  // real match (exact-second timestamp, exact-second duration, exact area
+  // code) — a small tolerance rather than 0 accounts for the clock/rounding
+  // drift risk flagged when this was scoped, but hasn't been stress-tested
+  // against a larger sample yet. Widen/narrow here if production matching
+  // turns out too strict or too loose.
+  const AD_MATCH_TIME_TOLERANCE_SECONDS = 5;
+  const AD_MATCH_DURATION_TOLERANCE_SECONDS = 3;
+
+  // CallRail's customer_phone_number is expected as E.164-ish
+  // ("+16787049350") but we strip all non-digits and accept 10 or
+  // 11-digit (leading "1") US numbers defensively. Anything else (missing,
+  // malformed, non-US) yields "" and never matches — falls back to
+  // organic, the safe direction.
+  function parseAreaCode(phone: string | null | undefined): string {
+    if (!phone) return "";
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1, 4);
+    if (digits.length === 10) return digits.slice(0, 3);
+    return "";
+  }
+
+  // Extracts the "HH:mm:ss" local-time-of-day component from CallRail's
+  // start_time. NOTE: this assumes CallRail's start_time represents the
+  // same local wall-clock time as Google Ads' call_view.start_call_date_time
+  // (both in the business's account time zone) — confirmed for one real
+  // call via CallRail's UI call log, but not independently re-verified
+  // against this exact raw API field's format/offset. Worth a spot-check
+  // once this is live; a systematic offset here would silently bias every
+  // match attempt in the same direction rather than fail loudly.
+  function extractLocalTimeOfDay(startTime: string): string | null {
+    const m = startTime.match(/T(\d{2}:\d{2}:\d{2})/);
+    return m ? m[1] : null;
+  }
+
+  function timeOfDaySeconds(hhmmss: string): number | null {
+    const m = hhmmss.match(/^(\d{2}):(\d{2}):(\d{2})$/);
+    if (!m) return null;
+    return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  }
+
+  // Each call_view row can be consumed by at most one CallRail call — a
+  // shared mutable pool with a `consumed` flag prevents two different
+  // GMB calls from both claiming the same ad-driven call.
+  const callViewPool = (callViewRows ?? []).map((row) => ({
+    row,
+    consumed: false,
+  }));
+
+  // Best-match search: same date, area code exact, time and duration both
+  // within tolerance, nearest time wins among candidates. Returns true and
+  // consumes the pool entry on match.
+  function matchGmbCallToAdView(
+    callDate: string,
+    callStartTime: string,
+    callDurationSeconds: number | null,
+    callerPhone: string | null | undefined,
+  ): boolean {
+    if (callViewPool.length === 0) return false;
+    if (callDurationSeconds === null) return false;
+    const areaCode = parseAreaCode(callerPhone);
+    if (!areaCode) return false;
+    const localTime = extractLocalTimeOfDay(callStartTime);
+    if (!localTime) return false;
+    const callSeconds = timeOfDaySeconds(localTime);
+    if (callSeconds === null) return false;
+
+    let best: { entry: (typeof callViewPool)[number]; delta: number } | null = null;
+    for (const entry of callViewPool) {
+      if (entry.consumed) continue;
+      if (entry.row.callerAreaCode !== areaCode) continue;
+      const [rowDate, rowTime] = entry.row.startCallDateTime.split(" ");
+      if (rowDate !== callDate || !rowTime) continue;
+      const rowSeconds = timeOfDaySeconds(rowTime);
+      if (rowSeconds === null) continue;
+      const timeDelta = Math.abs(rowSeconds - callSeconds);
+      if (timeDelta > AD_MATCH_TIME_TOLERANCE_SECONDS) continue;
+      const durationDelta = Math.abs(
+        entry.row.callDurationSeconds - callDurationSeconds,
+      );
+      if (durationDelta > AD_MATCH_DURATION_TOLERANCE_SECONDS) continue;
+      if (!best || timeDelta < best.delta) best = { entry, delta: timeDelta };
+    }
+    if (!best) return false;
+    best.entry.consumed = true;
+    return true;
   }
 
   const byDate = new Map<string, CallrailDailyTotals>();
@@ -315,14 +431,32 @@ export async function pullCallsForCompany(
     // filters win first, then the caller's own-channel filters checked
     // above; a call matching neither is out of scope entirely, not
     // silently counted under the caller's own channel.
+    //
+    // A GMB-tracker call is further split into "GMB" (organic) vs "PMax"
+    // (ad-driven) by cross-referencing Google Ads' call_view — GMB and
+    // PMax share the same tracker name, so this is the only way to tell
+    // them apart (see matchGmbCallToAdView below and CallrailDailyTotals'
+    // channelBreakdown comment). Unscoped by first_call — ad-attribution
+    // is a traffic-source property of the call itself, not a call-quality
+    // classification, so a repeat caller's GMB/PMax call is still
+    // reclassified the same way a first-time one would be.
     if (bucket.channelBreakdown) {
-      const isGmb =
+      const isGmbTracker =
         !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
-      const channel: "GMB" | "PPC" | "LSA" | null = isGmb
-        ? "GMB"
-        : isRelevantForReport
-          ? ownChannel
-          : null;
+      let channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
+      if (isGmbTracker) {
+        const isAdDriven = matchGmbCallToAdView(
+          date,
+          call.start_time,
+          call.duration,
+          call.customer_phone_number,
+        );
+        channel = isAdDriven ? "PMax" : "GMB";
+      } else if (isRelevantForReport) {
+        channel = ownChannel;
+      } else {
+        channel = null;
+      }
       if (channel) {
         const channelBucket =
           bucket.channelBreakdown[channel] ?? newChannelBucket();

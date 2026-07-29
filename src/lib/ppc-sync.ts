@@ -10,7 +10,7 @@ import {
   ppcSyncJobs,
 } from "./db/schema";
 import { decryptString } from "./crypto";
-import { pullDailyMetrics } from "./google-ads";
+import { pullDailyMetrics, pullCallViewRows, type CallViewRow } from "./google-ads";
 import { pullCallsForCompany } from "./callrail";
 
 type SyncOpts = {
@@ -217,6 +217,34 @@ export async function syncCallrailForClient(
       })
     ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
 
+    // GMB ad-vs-organic matching (see callrail.ts) — best-effort. A client
+    // without a linked Google Ads account is the normal, expected case
+    // (every GMB call just reports as organic, no callViewRows needed).
+    // An actual Google Ads API failure here logs loudly but doesn't fail
+    // this CallRail sync — signedCases/tagCategoryBreakdown are far more
+    // load-bearing than this still-new enrichment, so a Google Ads hiccup
+    // shouldn't take down the whole job.
+    let callViewRows: CallViewRow[] | undefined;
+    if (client.googleAdsCustomerId && client.googleAdsOauthTokenId) {
+      try {
+        const cred = await db.query.oauthCredentials.findFirst({
+          where: eq(oauthCredentials.id, client.googleAdsOauthTokenId),
+        });
+        if (cred) {
+          const refreshToken = decryptString(cred.refreshTokenEncrypted);
+          callViewRows = await pullCallViewRows(
+            refreshToken,
+            client.googleAdsCustomerId,
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[ppc-sync] call_view pull failed for ${client.name} (${ppcClientId}), continuing without GMB ad-attribution:`,
+          err,
+        );
+      }
+    }
+
     const rows = await pullCallsForCompany(
       client.callrailCompanyId,
       opts.fromDate,
@@ -225,13 +253,17 @@ export async function syncCallrailForClient(
       client.signedCaseNameFilters,
       tagCategories,
       client.gmbCallrailNameFilters,
+      "PPC",
+      callViewRows,
     );
 
     for (const r of rows) {
       // channelBreakdown is always populated here — gmbCallrailNameFilters
       // is always passed above — so this is what powers the Ads
-      // Conversion Tracker x CallRail report's PPC/GMB split. rollupCounts
-      // is split out into its own column (rollup_breakdown) rather than
+      // Conversion Tracker x CallRail report's PPC/GMB/PMax split (PMax
+      // only appears when callViewRows successfully cross-references a
+      // GMB-tracker call as ad-driven — see callrail.ts). rollupCounts is
+      // split out into its own column (rollup_breakdown) rather than
       // stored redundantly inside tag_category_breakdown too.
       const channelBreakdown = r.channelBreakdown ?? {};
       const tagCategoryBreakdown = Object.fromEntries(

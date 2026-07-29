@@ -1,0 +1,1 @@
+ALTER TABLE "ppc_callrail_daily" DROP COLUMN IF EXISTS "gmb_ad_attribution";
