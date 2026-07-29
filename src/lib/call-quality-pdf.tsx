@@ -278,7 +278,6 @@ function ChannelPage({
             <Text style={[styles.cellNum, styles.th]}>First-time</Text>
             <Text style={[styles.cellNum, styles.th]}>Signed</Text>
             <Text style={[styles.cellNum, styles.th]}>Junk</Text>
-            <Text style={[styles.cellNum, styles.th]}>Unclassified</Text>
             {showCost && (
               <>
                 <Text style={[styles.cellNum, styles.th]}>Cost</Text>
@@ -298,9 +297,6 @@ function ChannelPage({
               </Text>
               <Text style={[styles.cellNum, styles.td]}>
                 {fmtNumber(r.junk)}
-              </Text>
-              <Text style={[styles.cellNum, styles.td]}>
-                {fmtNumber(r.unclassified)}
               </Text>
               {showCost && (
                 <>

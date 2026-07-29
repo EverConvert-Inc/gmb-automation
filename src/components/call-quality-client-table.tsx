@@ -8,7 +8,6 @@ type SortKey =
   | "firstTimeCalls"
   | "real"
   | "junk"
-  | "unclassified"
   | "cost"
   | "realCpl"
   | "adsCpa";
@@ -121,8 +120,6 @@ export function CallQualityClientTable({
           return compareNumbers(a.real, b.real, sortDir);
         case "junk":
           return compareNumbers(a.junk, b.junk, sortDir);
-        case "unclassified":
-          return compareNumbers(a.unclassified, b.unclassified, sortDir);
         case "cost":
           return compareNumbers(Number(a.costMicros), Number(b.costMicros), sortDir);
         case "realCpl":
@@ -178,14 +175,6 @@ export function CallQualityClientTable({
               sortDir={sortDir}
               onSort={onSort}
             />
-            <SortHeader
-              label="Unclassified"
-              align="right"
-              field="unclassified"
-              sortKey={sortKey}
-              sortDir={sortDir}
-              onSort={onSort}
-            />
             {showCost && (
               <>
                 <SortHeader
@@ -228,9 +217,6 @@ export function CallQualityClientTable({
               </td>
               <td className="px-3 py-2 text-right align-middle tabular-nums">
                 {fmtNumber(r.junk)}
-              </td>
-              <td className="px-3 py-2 text-right align-middle tabular-nums">
-                {fmtNumber(r.unclassified)}
               </td>
               {showCost && (
                 <>
