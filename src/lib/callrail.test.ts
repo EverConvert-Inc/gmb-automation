@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { pullCallsForCompany } from "./callrail";
+import { createGmbAdMatcher, pullCallsForCompany } from "./callrail";
 import type { CallViewRow } from "./google-ads";
 
 type MockCall = {
@@ -168,5 +168,94 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
 
     expect(day.channelBreakdown?.GMB.totalCalls).toBe(1);
     expect(day.channelBreakdown?.PMax).toBeUndefined();
+  });
+});
+
+describe("createGmbAdMatcher — diagnostic delta reporting", () => {
+  const callViewRows: CallViewRow[] = [
+    {
+      startCallDateTime: "2026-07-28 14:10:05",
+      callDurationSeconds: 249,
+      callerAreaCode: "678",
+      campaignId: "1",
+      campaignName: "Local PMax Map | Calls",
+    },
+  ];
+
+  it("reports zero deltas for an exact match", () => {
+    const matcher = createGmbAdMatcher(callViewRows);
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:05-04:00",
+      249,
+      "+16787049350",
+    );
+    expect(result.matched).toBe(true);
+    expect(result.bestCandidate).toMatchObject({
+      timeDeltaSeconds: 0,
+      durationDeltaSeconds: 0,
+      withinTolerance: true,
+      alreadyConsumed: false,
+    });
+  });
+
+  it("still matches near the tolerance edge, reporting the real deltas", () => {
+    const matcher = createGmbAdMatcher(callViewRows);
+    // 5s time delta (at the limit), 3s duration delta (at the limit).
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:10-04:00",
+      252,
+      "+16787049350",
+    );
+    expect(result.matched).toBe(true);
+    expect(result.bestCandidate).toMatchObject({
+      timeDeltaSeconds: 5,
+      durationDeltaSeconds: 3,
+      withinTolerance: true,
+    });
+  });
+
+  it("reports a near-miss (outside tolerance) instead of a silent non-match", () => {
+    const matcher = createGmbAdMatcher(callViewRows);
+    // 8s time delta — outside the 5s tolerance.
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:13-04:00",
+      249,
+      "+16787049350",
+    );
+    expect(result.matched).toBe(false);
+    expect(result.bestCandidate).toMatchObject({
+      timeDeltaSeconds: 8,
+      durationDeltaSeconds: 0,
+      withinTolerance: false,
+      alreadyConsumed: false,
+    });
+  });
+
+  it("reports alreadyConsumed on the closest candidate when it was claimed by an earlier call", () => {
+    const matcher = createGmbAdMatcher(callViewRows);
+    const first = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:05-04:00",
+      249,
+      "+16787049350",
+    );
+    expect(first.matched).toBe(true);
+
+    // Same area code, same date, close in time — but the only call_view
+    // row for this area code is already consumed.
+    const second = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:07-04:00",
+      250,
+      "+16787049350",
+    );
+    expect(second.matched).toBe(false);
+    expect(second.bestCandidate).toMatchObject({
+      alreadyConsumed: true,
+      withinTolerance: true, // would have matched, if not for consumption
+    });
   });
 });

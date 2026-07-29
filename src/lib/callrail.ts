@@ -46,7 +46,7 @@ type CallRailCall = {
   first_call?: boolean | null;
   // The caller's own phone number (e.g. "+16787049350"), used only to
   // derive an area code for GMB ad-vs-organic matching against Google
-  // Ads' call_view (see matchGmbCallToAdView below). Same
+  // Ads' call_view (see createGmbAdMatcher below). Same
   // fail-loud-if-wrong-field-name property as first_call above.
   customer_phone_number?: string | null;
 };
@@ -140,11 +140,176 @@ export type CallrailDailyTotals = {
   // Business Profile, so tracker-name matching alone can't tell paid PMax
   // traffic apart from organic GMB traffic. A GMB-tracker call is
   // reclassified into "PMax" instead of "GMB" when it cross-references to
-  // a Google Ads call_view row (see matchGmbCallToAdView below) — GMB's
+  // a Google Ads call_view row (see createGmbAdMatcher below) — GMB's
   // totals reflect organic-only traffic once a call has been pulled out
   // into PMax; a call is never counted in both.
   channelBreakdown: Record<string, CallrailChannelBucket> | null;
 };
+
+// --- GMB ad-vs-organic matching (call_view cross-reference) ---
+//
+// Tolerances are starting values validated against exactly one confirmed
+// real match (exact-second timestamp, exact-second duration, exact area
+// code) — a small tolerance rather than 0 accounts for the clock/rounding
+// drift risk flagged when this was scoped, but hasn't been stress-tested
+// against a larger sample yet. Widen/narrow here if production matching
+// turns out too strict or too loose. Exported so a diagnostic route can
+// report them alongside real match deltas, rather than the audit
+// silently assuming different numbers than production actually uses.
+export const AD_MATCH_TIME_TOLERANCE_SECONDS = 5;
+export const AD_MATCH_DURATION_TOLERANCE_SECONDS = 3;
+
+// CallRail's customer_phone_number is expected as E.164-ish
+// ("+16787049350") but we strip all non-digits and accept 10 or
+// 11-digit (leading "1") US numbers defensively. Anything else (missing,
+// malformed, non-US) yields "" and never matches — falls back to
+// organic, the safe direction.
+export function parseAreaCode(phone: string | null | undefined): string {
+  if (!phone) return "";
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1, 4);
+  if (digits.length === 10) return digits.slice(0, 3);
+  return "";
+}
+
+// Extracts the "HH:mm:ss" local-time-of-day component from CallRail's
+// start_time. NOTE: this assumes CallRail's start_time represents the
+// same local wall-clock time as Google Ads' call_view.start_call_date_time
+// (both in the business's account time zone) — confirmed for one real
+// call via CallRail's UI call log, but not independently re-verified
+// against this exact raw API field's format/offset. Worth a spot-check
+// once this is live; a systematic offset here would silently bias every
+// match attempt in the same direction rather than fail loudly.
+export function extractLocalTimeOfDay(startTime: string): string | null {
+  const m = startTime.match(/T(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : null;
+}
+
+export function timeOfDaySeconds(hhmmss: string): number | null {
+  const m = hhmmss.match(/^(\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
+export type GmbAdMatchResult = {
+  matched: boolean;
+  // "" when the caller's phone number was missing/unparseable — matching
+  // was never attempted in that case.
+  areaCode: string;
+  // The closest same-area-code, same-date call_view row considered,
+  // regardless of whether it actually passed tolerance or was already
+  // consumed by an earlier call that day — for diagnosing whether
+  // near-tolerance-edge matches (or near-misses) are inflating/deflating
+  // the PMax count. undefined only when no call_view row shared the same
+  // area code + date at all.
+  bestCandidate?: {
+    timeDeltaSeconds: number;
+    durationDeltaSeconds: number;
+    withinTolerance: boolean;
+    alreadyConsumed: boolean;
+    campaignId: string;
+    campaignName: string;
+    matchedStartCallDateTime: string;
+    matchedCallDurationSeconds: number;
+  };
+};
+
+// Each call_view row can be consumed by at most one CallRail call — matters
+// for both production (a call_view row backs exactly one PMax
+// reclassification) and diagnostics (bestCandidate.alreadyConsumed
+// explains why a later, otherwise-similar call fell through to GMB).
+export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
+  const pool = callViewRows.map((row) => ({ row, consumed: false }));
+
+  function match(
+    callDate: string,
+    callStartTime: string,
+    callDurationSeconds: number | null,
+    callerPhone: string | null | undefined,
+  ): GmbAdMatchResult {
+    const areaCode = parseAreaCode(callerPhone);
+    if (!areaCode || callDurationSeconds === null) {
+      return { matched: false, areaCode };
+    }
+    const localTime = extractLocalTimeOfDay(callStartTime);
+    const callSeconds = localTime ? timeOfDaySeconds(localTime) : null;
+    if (callSeconds === null) {
+      return { matched: false, areaCode };
+    }
+
+    type Candidate = {
+      entry: (typeof pool)[number];
+      timeDelta: number;
+      durationDelta: number;
+    };
+    // Two separate "best" trackers over the same pass: `validBest` mirrors
+    // the original production selection exactly (nearest-by-time among
+    // ONLY unconsumed, in-tolerance candidates — this alone decides
+    // `matched`); `closestOverall` tracks the nearest-by-time candidate
+    // regardless of consumed/tolerance status, purely so an unmatched call
+    // can still report why (a near-miss delta, or "the only candidate was
+    // already claimed") instead of just "no match, no explanation".
+    let validBest: Candidate | null = null;
+    let closestOverall: Candidate | null = null;
+    for (const entry of pool) {
+      if (entry.row.callerAreaCode !== areaCode) continue;
+      const [rowDate, rowTime] = entry.row.startCallDateTime.split(" ");
+      if (rowDate !== callDate || !rowTime) continue;
+      const rowSeconds = timeOfDaySeconds(rowTime);
+      if (rowSeconds === null) continue;
+      const timeDelta = Math.abs(rowSeconds - callSeconds);
+      const durationDelta = Math.abs(
+        entry.row.callDurationSeconds - callDurationSeconds,
+      );
+      const candidate: Candidate = { entry, timeDelta, durationDelta };
+
+      if (!closestOverall || timeDelta < closestOverall.timeDelta) {
+        closestOverall = candidate;
+      }
+      if (entry.consumed) continue;
+      if (timeDelta > AD_MATCH_TIME_TOLERANCE_SECONDS) continue;
+      if (durationDelta > AD_MATCH_DURATION_TOLERANCE_SECONDS) continue;
+      if (!validBest || timeDelta < validBest.timeDelta) validBest = candidate;
+    }
+
+    if (validBest) {
+      validBest.entry.consumed = true;
+      return {
+        matched: true,
+        areaCode,
+        bestCandidate: {
+          timeDeltaSeconds: validBest.timeDelta,
+          durationDeltaSeconds: validBest.durationDelta,
+          withinTolerance: true,
+          alreadyConsumed: false,
+          campaignId: validBest.entry.row.campaignId,
+          campaignName: validBest.entry.row.campaignName,
+          matchedStartCallDateTime: validBest.entry.row.startCallDateTime,
+          matchedCallDurationSeconds: validBest.entry.row.callDurationSeconds,
+        },
+      };
+    }
+    if (!closestOverall) return { matched: false, areaCode };
+    return {
+      matched: false,
+      areaCode,
+      bestCandidate: {
+        timeDeltaSeconds: closestOverall.timeDelta,
+        durationDeltaSeconds: closestOverall.durationDelta,
+        withinTolerance:
+          closestOverall.timeDelta <= AD_MATCH_TIME_TOLERANCE_SECONDS &&
+          closestOverall.durationDelta <= AD_MATCH_DURATION_TOLERANCE_SECONDS,
+        alreadyConsumed: closestOverall.entry.consumed,
+        campaignId: closestOverall.entry.row.campaignId,
+        campaignName: closestOverall.entry.row.campaignName,
+        matchedStartCallDateTime: closestOverall.entry.row.startCallDateTime,
+        matchedCallDurationSeconds: closestOverall.entry.row.callDurationSeconds,
+      },
+    };
+  }
+
+  return { match };
+}
 
 // Walks every call in the window and groups by (day in UTC). Signed cases =
 // count of calls that (a) carry the configured tag (case-insensitive) and
@@ -265,95 +430,7 @@ export async function pullCallsForCompany(
     return null;
   }
 
-  // --- GMB ad-vs-organic matching (call_view cross-reference) ---
-  //
-  // Tolerances are starting values validated against exactly one confirmed
-  // real match (exact-second timestamp, exact-second duration, exact area
-  // code) — a small tolerance rather than 0 accounts for the clock/rounding
-  // drift risk flagged when this was scoped, but hasn't been stress-tested
-  // against a larger sample yet. Widen/narrow here if production matching
-  // turns out too strict or too loose.
-  const AD_MATCH_TIME_TOLERANCE_SECONDS = 5;
-  const AD_MATCH_DURATION_TOLERANCE_SECONDS = 3;
-
-  // CallRail's customer_phone_number is expected as E.164-ish
-  // ("+16787049350") but we strip all non-digits and accept 10 or
-  // 11-digit (leading "1") US numbers defensively. Anything else (missing,
-  // malformed, non-US) yields "" and never matches — falls back to
-  // organic, the safe direction.
-  function parseAreaCode(phone: string | null | undefined): string {
-    if (!phone) return "";
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1, 4);
-    if (digits.length === 10) return digits.slice(0, 3);
-    return "";
-  }
-
-  // Extracts the "HH:mm:ss" local-time-of-day component from CallRail's
-  // start_time. NOTE: this assumes CallRail's start_time represents the
-  // same local wall-clock time as Google Ads' call_view.start_call_date_time
-  // (both in the business's account time zone) — confirmed for one real
-  // call via CallRail's UI call log, but not independently re-verified
-  // against this exact raw API field's format/offset. Worth a spot-check
-  // once this is live; a systematic offset here would silently bias every
-  // match attempt in the same direction rather than fail loudly.
-  function extractLocalTimeOfDay(startTime: string): string | null {
-    const m = startTime.match(/T(\d{2}:\d{2}:\d{2})/);
-    return m ? m[1] : null;
-  }
-
-  function timeOfDaySeconds(hhmmss: string): number | null {
-    const m = hhmmss.match(/^(\d{2}):(\d{2}):(\d{2})$/);
-    if (!m) return null;
-    return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
-  }
-
-  // Each call_view row can be consumed by at most one CallRail call — a
-  // shared mutable pool with a `consumed` flag prevents two different
-  // GMB calls from both claiming the same ad-driven call.
-  const callViewPool = (callViewRows ?? []).map((row) => ({
-    row,
-    consumed: false,
-  }));
-
-  // Best-match search: same date, area code exact, time and duration both
-  // within tolerance, nearest time wins among candidates. Returns true and
-  // consumes the pool entry on match.
-  function matchGmbCallToAdView(
-    callDate: string,
-    callStartTime: string,
-    callDurationSeconds: number | null,
-    callerPhone: string | null | undefined,
-  ): boolean {
-    if (callViewPool.length === 0) return false;
-    if (callDurationSeconds === null) return false;
-    const areaCode = parseAreaCode(callerPhone);
-    if (!areaCode) return false;
-    const localTime = extractLocalTimeOfDay(callStartTime);
-    if (!localTime) return false;
-    const callSeconds = timeOfDaySeconds(localTime);
-    if (callSeconds === null) return false;
-
-    let best: { entry: (typeof callViewPool)[number]; delta: number } | null = null;
-    for (const entry of callViewPool) {
-      if (entry.consumed) continue;
-      if (entry.row.callerAreaCode !== areaCode) continue;
-      const [rowDate, rowTime] = entry.row.startCallDateTime.split(" ");
-      if (rowDate !== callDate || !rowTime) continue;
-      const rowSeconds = timeOfDaySeconds(rowTime);
-      if (rowSeconds === null) continue;
-      const timeDelta = Math.abs(rowSeconds - callSeconds);
-      if (timeDelta > AD_MATCH_TIME_TOLERANCE_SECONDS) continue;
-      const durationDelta = Math.abs(
-        entry.row.callDurationSeconds - callDurationSeconds,
-      );
-      if (durationDelta > AD_MATCH_DURATION_TOLERANCE_SECONDS) continue;
-      if (!best || timeDelta < best.delta) best = { entry, delta: timeDelta };
-    }
-    if (!best) return false;
-    best.entry.consumed = true;
-    return true;
-  }
+  const gmbMatcher = createGmbAdMatcher(callViewRows ?? []);
 
   const byDate = new Map<string, CallrailDailyTotals>();
   for (const call of calls) {
@@ -435,7 +512,7 @@ export async function pullCallsForCompany(
     // A GMB-tracker call is further split into "GMB" (organic) vs "PMax"
     // (ad-driven) by cross-referencing Google Ads' call_view — GMB and
     // PMax share the same tracker name, so this is the only way to tell
-    // them apart (see matchGmbCallToAdView below and CallrailDailyTotals'
+    // them apart (see createGmbAdMatcher above and CallrailDailyTotals'
     // channelBreakdown comment). Unscoped by first_call — ad-attribution
     // is a traffic-source property of the call itself, not a call-quality
     // classification, so a repeat caller's GMB/PMax call is still
@@ -445,13 +522,13 @@ export async function pullCallsForCompany(
         !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
       let channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
       if (isGmbTracker) {
-        const isAdDriven = matchGmbCallToAdView(
+        const matchResult = gmbMatcher.match(
           date,
           call.start_time,
           call.duration,
           call.customer_phone_number,
         );
-        channel = isAdDriven ? "PMax" : "GMB";
+        channel = matchResult.matched ? "PMax" : "GMB";
       } else if (isRelevantForReport) {
         channel = ownChannel;
       } else {
