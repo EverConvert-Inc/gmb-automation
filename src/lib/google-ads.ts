@@ -413,3 +413,56 @@ export async function pullLocalServicesLeads(
 
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
+
+export type CallViewRow = {
+  startCallDateTime: string; // "yyyy-MM-dd HH:mm:ss", account time zone
+  callDurationSeconds: number;
+  callerAreaCode: string;
+  campaignId: string;
+  campaignName: string;
+};
+
+// Pulls Google Ads' call_view resource — calls placed via a call
+// extension/call-only ad — for cross-referencing against CallRail calls to
+// determine ad-driven vs organic (see callrail.ts). Confirmed live against
+// a real account: call_view rejects segments.date entirely in SELECT or
+// WHERE (PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE) — it isn't
+// date-filterable the way campaign/local_services_lead are. campaign.id/
+// campaign.name are call_view's documented "Attributed Resources"
+// (selectable/filterable, but don't segment the result set), which is why
+// only those two (not segments.*) appear in the WHERE-less query below.
+//
+// Since there's no server-side date bound, we pull the most recent rows
+// instead (capped + ordered) and let the caller bucket by date itself —
+// confirmed live that a real account only carries ~28 call_view rows
+// total going back a year, so this cap is a safety margin for a future
+// high-volume account, not something expected to bind today.
+export async function pullCallViewRows(
+  refreshToken: string,
+  customerId: string,
+): Promise<CallViewRow[]> {
+  const customer = getCustomer(refreshToken, customerId);
+  const rows = await customer.query(`
+    SELECT
+      call_view.start_call_date_time,
+      call_view.call_duration_seconds,
+      call_view.caller_area_code,
+      campaign.id,
+      campaign.name
+    FROM call_view
+    ORDER BY call_view.start_call_date_time DESC
+    LIMIT 1000
+  `);
+
+  return rows.map((r) => {
+    const callView = (r as { call_view?: Record<string, unknown> }).call_view ?? {};
+    const campaign = r.campaign ?? {};
+    return {
+      startCallDateTime: String(callView.start_call_date_time ?? ""),
+      callDurationSeconds: Number(callView.call_duration_seconds ?? 0),
+      callerAreaCode: String(callView.caller_area_code ?? ""),
+      campaignId: String(campaign.id ?? ""),
+      campaignName: String(campaign.name ?? ""),
+    };
+  });
+}
