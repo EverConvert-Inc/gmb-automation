@@ -453,6 +453,20 @@ export const ppcCallrailDaily = pgTable(
     rollupBreakdown: jsonb("rollup_breakdown")
       .notNull()
       .default(sql`'{}'::jsonb`),
+    // Ad-driven vs organic split for this day's GMB-classified calls only
+    // — { "adDriven": 3, "organic": 5 }. Computed by matching a GMB call's
+    // timestamp/duration/caller area code against Google Ads' call_view
+    // resource for this client's googleAdsCustomerId (see callrail.ts).
+    // Deliberately a separate column rather than nested inside
+    // tagCategoryBreakdown/rollupBreakdown above — this concept only ever
+    // applies to the GMB channel, so folding it into those two
+    // already-complex channel-nested shapes (see lsa_leads_daily's
+    // flat-vs-nested duality) would mix concerns for no benefit. Absent
+    // (empty object) for days synced before this feature existed, or for
+    // any client without a googleAdsCustomerId — a re-sync backfills it.
+    gmbAdAttribution: jsonb("gmb_ad_attribution")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     ingestedAt: timestamp("ingested_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

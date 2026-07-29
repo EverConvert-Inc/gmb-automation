@@ -1,0 +1,1 @@
+ALTER TABLE "ppc_callrail_daily" ADD COLUMN "gmb_ad_attribution" jsonb DEFAULT '{}'::jsonb NOT NULL;
