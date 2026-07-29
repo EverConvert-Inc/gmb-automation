@@ -15,6 +15,48 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
+// JSON.stringify-safe replacer — Google Ads client errors can carry
+// circular refs (sockets/connections) and bigints, either of which throws
+// inside a plain JSON.stringify.
+function safeStringify(value: unknown): string {
+  const seen = new WeakSet();
+  return JSON.stringify(value, (_key, val) => {
+    if (typeof val === "bigint") return val.toString();
+    if (typeof val === "object" && val !== null) {
+      if (seen.has(val)) return "[Circular]";
+      seen.add(val);
+    }
+    return val;
+  });
+}
+
+// The google-ads-api client often throws plain gRPC-style error objects
+// (not real Error instances) with structured fields like `errors`/`details`
+// — `String(err)` on those just gives "[object Object]", which is what
+// happened here. Surface everything we can find instead: for real Error
+// instances, walk own properties (Google's client sometimes attaches
+// `.errors`/`.request_id` onto an Error too) rather than just `.message`;
+// for anything else, safely stringify the whole object.
+function describeError(err: unknown): unknown {
+  if (err instanceof Error) {
+    const extra: Record<string, unknown> = { message: err.message };
+    for (const key of Object.getOwnPropertyNames(err)) {
+      if (key === "stack" || key === "message") continue;
+      extra[key] = (err as unknown as Record<string, unknown>)[key];
+    }
+    try {
+      return JSON.parse(safeStringify(extra));
+    } catch {
+      return { message: err.message };
+    }
+  }
+  try {
+    return JSON.parse(safeStringify(err));
+  } catch {
+    return { raw: String(err) };
+  }
+}
+
 // Temporary read-only diagnostic. Pulls every field Google Ads' call_view
 // resource exposes for one PPC client's Google Ads customer on a single
 // day, completely unfiltered by our own assumptions about what's
@@ -108,7 +150,9 @@ export async function GET(req: Request) {
       rows,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ clientName, date, error: message }, { status: 500 });
+    return NextResponse.json(
+      { clientName, date, error: describeError(err) },
+      { status: 500 },
+    );
   }
 }
