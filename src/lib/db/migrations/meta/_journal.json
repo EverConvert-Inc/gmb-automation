@@ -218,6 +218,13 @@
       "when": 1785329527639,
       "tag": "0030_revert_signed_opportunity_swap",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785332168799,
+      "tag": "0031_remove_pending_tag_category",
+      "breakpoints": true
     }
   ]
 }

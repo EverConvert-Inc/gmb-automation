@@ -1,8 +1,9 @@
-// The 8 tags the team currently uses in real CallRail tagging practice.
+// The 7 tags the team currently uses in real CallRail tagging practice.
 // Seeded for every existing PPC/LSA client by migration 0016 (original 5),
 // 0018 (Wrong Number), 0019 (Opportunity), 0027 (Client), 0028
-// (Marketing), and 0030 (reverted 0029's Signed/Opportunity swap — Signed
-// is back, Opportunity is gone); new clients get the same defaults from
+// (Marketing), 0030 (reverted 0029's Signed/Opportunity swap — Signed is
+// back, Opportunity is gone), and 0031 (removed Pending — Signed is now
+// the sole real-rollup default); new clients get the same defaults from
 // the client-creation API routes. Editable per client afterward — this is
 // just the starting point, not a fixed list.
 //
@@ -17,7 +18,6 @@ export const DEFAULT_CALLRAIL_TAG_CATEGORIES: Array<{
   sortOrder: number;
 }> = [
   { label: "Signed", callrailTagName: "Signed", rollup: "real", sortOrder: 0 },
-  { label: "Pending", callrailTagName: "Pending", rollup: "real", sortOrder: 1 },
   { label: "Spam", callrailTagName: "Spam", rollup: "junk", sortOrder: 2 },
   {
     label: "Outside Practice Area",
