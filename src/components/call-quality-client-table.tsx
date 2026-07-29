@@ -87,8 +87,9 @@ function SortHeader({
 }
 
 // One row per client, aggregated over the selected date range. showCost
-// hides the Cost/Signed CPL/Ads CPA columns entirely for GMB, which never
-// carries a cost figure (organic, no ad spend).
+// hides the Cost/Signed CPL/Ads CPA columns entirely for GMB (organic, no
+// ad spend) and PMax (spend not isolated from the rest of the PPC account
+// yet — see queries-call-quality.ts's finalize()).
 export function CallQualityClientTable({
   rows,
   showCost,

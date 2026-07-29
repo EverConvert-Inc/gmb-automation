@@ -10,7 +10,7 @@ import {
 import { renderCallQualityReportPdf } from "./call-quality-pdf";
 
 const DEFAULT_APP_URL = "https://gmb-automation.vercel.app";
-const CHANNELS: CallQualityChannel[] = ["PPC", "LSA", "GMB"];
+const CHANNELS: CallQualityChannel[] = ["PPC", "LSA", "GMB", "PMax"];
 
 type SendOpts = {
   from: string; // YYYY-MM-DD, start of report window
@@ -80,7 +80,7 @@ function fmtSubject(fromIso: string, toIso: string): string {
 // One row per channel — Signed/Junk plus first-time calls (Unclassified
 // is tracked in the data but not shown here — low value at this
 // aggregated level), since (unlike PPC/LSA) there's no single unified
-// KPI set across PPC/LSA/GMB. Full per-client breakdown is in the
+// KPI set across PPC/LSA/GMB/PMax. Full per-client breakdown is in the
 // attached PDF.
 function renderEmailHtml({
   report,
@@ -93,7 +93,11 @@ function renderEmailHtml({
 }): string {
   const channelRows = CHANNELS.map((channel) => {
     const t = report.summary[channel];
-    const cost = channel === "GMB" ? "—" : fmtMicros(t.costMicros);
+    // GMB (organic) and PMax (spend not isolated from the rest of the PPC
+    // account yet) never carry a real cost figure — "—" instead of a
+    // misleading "$0".
+    const cost =
+      channel === "GMB" || channel === "PMax" ? "—" : fmtMicros(t.costMicros);
     return `
       <tr>
         <td style="padding:6px 4px;font-size:13px;font-weight:600;color:#0f172a;">${channel}</td>
@@ -134,7 +138,7 @@ function renderEmailHtml({
       <tr>
         <td style="padding:16px 24px 8px;">
           <p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#334155;">
-            Full per-client breakdown across PPC, LSA, and GMB is attached as a PDF.
+            Full per-client breakdown across PPC, LSA, GMB, and PMax is attached as a PDF.
           </p>
           <a href="${dashboardUrl}" style="display:inline-block;padding:10px 18px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:500;">View interactive dashboard &rarr;</a>
         </td>
@@ -166,7 +170,8 @@ function renderEmailText({
 }): string {
   const lines = CHANNELS.map((channel) => {
     const t = report.summary[channel];
-    const cost = channel === "GMB" ? "—" : fmtMicros(t.costMicros);
+    const cost =
+      channel === "GMB" || channel === "PMax" ? "—" : fmtMicros(t.costMicros);
     return `${channel.padEnd(5)} first-time ${fmtNumber(t.firstTimeCalls)}, signed ${fmtNumber(t.real)}, junk ${fmtNumber(t.junk)}, cost ${cost}`;
   });
   return [
@@ -174,7 +179,7 @@ function renderEmailText({
     ``,
     ...lines,
     ``,
-    `Full per-client breakdown across PPC, LSA, and GMB is attached as a PDF.`,
+    `Full per-client breakdown across PPC, LSA, GMB, and PMax is attached as a PDF.`,
     ``,
     `Open the interactive dashboard:`,
     dashboardUrl,

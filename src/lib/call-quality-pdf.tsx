@@ -209,10 +209,11 @@ function KpiBox({
 // One page per channel — same shape as the web's CallQualityChannelSection
 // + CallQualityClientTable (KPI strip, then a flat per-client table; no
 // per-campaign nesting since Call Quality is a rollup, not a campaign
-// report). showCost hides Cost/Signed CPL/Ads CPA for GMB, which never
-// carries a cost figure (organic, no ad spend). Unlike PPC/LSA's PDFs,
-// there's no prior-period delta here — getCallQualityByClientReport only
-// returns range totals, no comparison window.
+// report). showCost hides Cost/Signed CPL/Ads CPA for GMB (organic, no ad
+// spend) and PMax (spend not isolated from the rest of the PPC account
+// yet). Unlike PPC/LSA's PDFs, there's no prior-period delta here —
+// getCallQualityByClientReport only returns range totals, no comparison
+// window.
 function ChannelPage({
   channel,
   totals,
@@ -226,7 +227,10 @@ function ChannelPage({
   opts: RenderOpts;
   generatedAt: Date;
 }) {
-  const showCost = channel !== "GMB";
+  // Neither GMB (organic) nor PMax (spend not isolated from the rest of
+  // the PPC account yet — see queries-call-quality.ts's finalize()) has a
+  // meaningful cost figure today.
+  const showCost = channel !== "GMB" && channel !== "PMax";
   const rows = [...clientRows].sort(
     (a, b) => b.real - a.real || a.clientName.localeCompare(b.clientName),
   );
@@ -330,7 +334,7 @@ function ChannelPage({
   );
 }
 
-const CHANNELS: CallQualityChannel[] = ["PPC", "LSA", "GMB"];
+const CHANNELS: CallQualityChannel[] = ["PPC", "LSA", "GMB", "PMax"];
 
 export function CallQualityReportDocument({
   report,

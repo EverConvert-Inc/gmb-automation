@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Building2, Megaphone, PhoneCall } from "lucide-react";
+import { Building2, MapPin, Megaphone, PhoneCall } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { CallQualityChannelSection } from "@/components/call-quality-channel-section";
@@ -81,6 +81,13 @@ export default async function CallQualityPage({
         icon={<Building2 className="h-4 w-4" />}
         totals={report.summary.GMB}
         clientRows={report.clients.GMB}
+      />
+
+      <CallQualityChannelSection
+        channel="PMax"
+        icon={<MapPin className="h-4 w-4" />}
+        totals={report.summary.PMax}
+        clientRows={report.clients.PMax}
       />
     </div>
   );

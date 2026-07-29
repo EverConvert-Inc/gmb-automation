@@ -10,7 +10,7 @@ import {
   ppcClients,
 } from "./db/schema";
 
-export type CallQualityChannel = "PPC" | "LSA" | "GMB";
+export type CallQualityChannel = "PPC" | "LSA" | "GMB" | "PMax";
 export type CallQualityGranularity = "day" | "week";
 
 type Accumulator = {
@@ -24,8 +24,9 @@ type Accumulator = {
   // tag-based "real cost per real lead". PPC uses Google Ads' own
   // conversions; LSA uses lead_charged (the closest LSA analog to a
   // Google-reported conversion, since local_services_lead has no
-  // `conversions` metric). Unused for GMB — no Google Ads campaign
-  // backs it.
+  // `conversions` metric). Unused for GMB (no Google Ads campaign backs
+  // it) or PMax (real cost isn't attributed per-channel yet — see
+  // finalize() below).
   conversions: number;
   chargedCount: number;
 };
@@ -141,9 +142,9 @@ export type CallQualityChannelTotals = {
   junk: number;
   unclassified: number;
   costMicros: bigint;
-  // Both in dollars. null when the denominator is zero, or (GMB) when the
-  // metric doesn't apply at all — GMB carries no ad spend, so neither
-  // figure is meaningful there.
+  // Both in dollars. null when the denominator is zero, or (GMB/PMax) when
+  // the metric doesn't apply at all — GMB carries no ad spend, and PMax's
+  // spend isn't isolated from the rest of the account yet (see finalize()).
   realCostPerRealLead: number | null;
   adsReportedCpa: number | null;
 };
@@ -167,14 +168,20 @@ function finalize(
   channel: CallQualityChannel,
   acc: Accumulator,
 ): CallQualityChannelTotals {
+  // Neither channel has real per-channel ad spend attributed today: GMB is
+  // organic by definition, and PMax's cost isn't isolated from the rest of
+  // the PPC account's spend yet (would need either a confirmed campaign-
+  // name convention or persisting the matched call_view campaign id at
+  // sync time — deferred, see callrail.ts). Revisit once that's built.
+  const hasNoAdCostData = channel === "GMB" || channel === "PMax";
   const realCostPerRealLead =
-    channel === "GMB"
+    hasNoAdCostData
       ? null
       : acc.real > 0
         ? Number(acc.costMicros) / 1_000_000 / acc.real
         : null;
   const adsReportedCpa =
-    channel === "GMB"
+    hasNoAdCostData
       ? null
       : channel === "PPC"
         ? acc.conversions > 0
@@ -303,6 +310,7 @@ export async function getCallQualityReport({
     PPC: emptyAcc(),
     LSA: emptyAcc(),
     GMB: emptyAcc(),
+    PMax: emptyAcc(),
   };
 
   function getPeriodAcc(period: string, channel: CallQualityChannel): Accumulator {
@@ -315,7 +323,7 @@ export async function getCallQualityReport({
     return acc;
   }
 
-  // PPC + GMB, from ppc_callrail_daily's channel-nested breakdowns.
+  // PPC + GMB + PMax, from ppc_callrail_daily's channel-nested breakdowns.
   // tagCategoryBreakdown (per-label, may double-count a call across
   // labels) and rollupBreakdown (per-call, pre-deduped at sync time) are
   // read independently — rollup totals never derive from label counts.
@@ -329,7 +337,7 @@ export async function getCallQualityReport({
       string,
       { real?: number; junk?: number; unclassified?: number }
     >;
-    for (const channel of ["PPC", "GMB"] as const) {
+    for (const channel of ["PPC", "GMB", "PMax"] as const) {
       const chData = breakdown[channel];
       if (!chData) continue; // no calls classified to this channel that day
       const periodAcc = getPeriodAcc(period, channel);
@@ -417,6 +425,7 @@ export async function getCallQualityReport({
     PPC: finalize("PPC", summaryAccs.PPC),
     LSA: finalize("LSA", summaryAccs.LSA),
     GMB: finalize("GMB", summaryAccs.GMB),
+    PMax: finalize("PMax", summaryAccs.PMax),
   };
 
   return { granularity, rows, allLabels, summary };
@@ -532,11 +541,13 @@ export async function getCallQualityByClientReport({
     PPC: new Map(),
     LSA: new Map(),
     GMB: new Map(),
+    PMax: new Map(),
   };
   const summaryAccs: Record<CallQualityChannel, Accumulator> = {
     PPC: emptyAcc(),
     LSA: emptyAcc(),
     GMB: emptyAcc(),
+    PMax: emptyAcc(),
   };
 
   function getClientAcc(channel: CallQualityChannel, clientId: string): Accumulator {
@@ -555,6 +566,7 @@ export async function getCallQualityByClientReport({
   for (const c of ppcClientRows) {
     getClientAcc("PPC", c.id);
     getClientAcc("GMB", c.id);
+    getClientAcc("PMax", c.id);
   }
   for (const c of lsaClientRows) {
     getClientAcc("LSA", c.id);
@@ -569,7 +581,7 @@ export async function getCallQualityByClientReport({
       string,
       { real?: number; junk?: number; unclassified?: number }
     >;
-    for (const channel of ["PPC", "GMB"] as const) {
+    for (const channel of ["PPC", "GMB", "PMax"] as const) {
       const chData = breakdown[channel];
       if (!chData) continue;
       // Client since deactivated or unlinked from CallRail — its historical
@@ -660,12 +672,14 @@ export async function getCallQualityByClientReport({
     PPC: buildClientRows("PPC"),
     LSA: buildClientRows("LSA"),
     GMB: buildClientRows("GMB"),
+    PMax: buildClientRows("PMax"),
   };
 
   const summary: Record<CallQualityChannel, CallQualityChannelTotals> = {
     PPC: finalize("PPC", summaryAccs.PPC),
     LSA: finalize("LSA", summaryAccs.LSA),
     GMB: finalize("GMB", summaryAccs.GMB),
+    PMax: finalize("PMax", summaryAccs.PMax),
   };
 
   return { clients, summary };

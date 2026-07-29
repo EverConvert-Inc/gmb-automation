@@ -42,7 +42,10 @@ export function CallQualityChannelSection({
   totals: CallQualityChannelTotals;
   clientRows: CallQualityClientRow[];
 }) {
-  const showCost = channel !== "GMB";
+  // Neither GMB (organic) nor PMax (spend not isolated from the rest of
+  // the PPC account yet — see queries-call-quality.ts's finalize()) has a
+  // meaningful cost figure today.
+  const showCost = channel !== "GMB" && channel !== "PMax";
 
   return (
     <SectionCard icon={icon} title={channel} eyebrow="Channel">
