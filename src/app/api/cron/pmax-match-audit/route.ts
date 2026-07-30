@@ -4,7 +4,11 @@ import { ppcClients, oauthCredentials } from "@/lib/db/schema";
 import { eq, ilike } from "drizzle-orm";
 import { decryptString } from "@/lib/crypto";
 import { pullCallViewRows } from "@/lib/google-ads";
-import { createGmbAdMatcher } from "@/lib/callrail";
+import {
+  createGmbAdMatcher,
+  extractLocalTimeOfDay,
+  timeOfDaySeconds,
+} from "@/lib/callrail";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -247,6 +251,60 @@ export async function GET(req: Request) {
         (callViewDisplayLocationBreakdown[key] ?? 0) + 1;
     }
 
+    // --- Unconsumed call_view rows in [from, to], with any nearby CallRail
+    // call regardless of tracker. Purely diagnostic (no production matching
+    // logic touched): identifies which in-range call_view rows never backed
+    // a match, then checks (a) any GMB-tracker call within a wider ±10min
+    // window (a real but more-distant match tolerance would be missing),
+    // and (b) any CallRail call AT ALL near that time, in case the call
+    // landed on a differently-named tracker and was never even considered.
+    const NEARBY_WINDOW_SECONDS = 600;
+    const inRangeCallViewRows = callViewRows.filter((row) => {
+      const rowDate = row.startCallDateTime.split(" ")[0];
+      return rowDate >= from && rowDate <= to;
+    });
+    // Matched results carry exactly which call_view row they consumed
+    // (bestCandidate.matchedStartCallDateTime/matchedCallDurationSeconds/
+    // campaignId) — used here purely to identify unconsumed rows, not to
+    // re-derive match outcomes.
+    const consumedRowKeys = new Set(
+      results
+        .filter((r) => r.matched && r.bestCandidate)
+        .map(
+          (r) =>
+            `${r.bestCandidate!.matchedStartCallDateTime}|${r.bestCandidate!.matchedCallDurationSeconds}|${r.bestCandidate!.campaignId}`,
+        ),
+    );
+    const unconsumedCallViewRowsInRange = inRangeCallViewRows
+      .filter(
+        (row) =>
+          !consumedRowKeys.has(
+            `${row.startCallDateTime}|${row.callDurationSeconds}|${row.campaignId}`,
+          ),
+      )
+      .map((row) => {
+        const [rowDate, rowTime] = row.startCallDateTime.split(" ");
+        const rowSeconds = rowTime ? timeOfDaySeconds(rowTime) : null;
+        const nearbyCallsAnyTracker = rawCalls
+          .filter((c) => {
+            if (rowSeconds === null) return false;
+            if (c.start_time.slice(0, 10) !== rowDate) return false;
+            const localTime = extractLocalTimeOfDay(c.start_time);
+            const callSeconds = localTime ? timeOfDaySeconds(localTime) : null;
+            if (callSeconds === null) return false;
+            return Math.abs(callSeconds - rowSeconds) <= NEARBY_WINDOW_SECONDS;
+          })
+          .map((c) => ({
+            callId: c.id,
+            startTime: c.start_time,
+            durationSeconds: c.duration,
+            trackerName: c.source_name ?? c.formatted_tracking_source ?? null,
+            callerPhone: c.customer_phone_number ?? null,
+            isGmbTracker: gmbCalls.includes(c),
+          }));
+        return { ...row, nearbyCallsAnyTracker };
+      });
+
     return NextResponse.json({
       clientName: client.name,
       customerId: client.googleAdsCustomerId,
@@ -260,6 +318,9 @@ export async function GET(req: Request) {
       // interpretation of them) are inspectable directly.
       callViewRows,
       results,
+      inRangeCallViewRowCount: inRangeCallViewRows.length,
+      nearbyWindowSeconds: NEARBY_WINDOW_SECONDS,
+      unconsumedCallViewRowsInRange,
     });
   } catch (err) {
     return NextResponse.json(
