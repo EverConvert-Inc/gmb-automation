@@ -159,6 +159,17 @@ export type CallrailDailyTotals = {
 export const AD_MATCH_TIME_TOLERANCE_SECONDS = 5;
 export const AD_MATCH_DURATION_TOLERANCE_SECONDS = 3;
 
+// call_view rows can genuinely have a blank caller_area_code (confirmed
+// live — Google's own call-conversion UI shows "--" for these rows too).
+// Requiring an area-code match as a hard gate makes any such row
+// permanently unmatchable regardless of how well timestamp/duration
+// align. When call_view's row HAS an area code, it's still required to
+// match (unchanged, extra confidence). When it's blank, the area-code
+// check is skipped entirely and these tighter tolerances apply instead,
+// to compensate for losing that confirming signal.
+export const AD_MATCH_TIME_TOLERANCE_SECONDS_NO_AREA_CODE = 2;
+export const AD_MATCH_DURATION_TOLERANCE_SECONDS_NO_AREA_CODE = 1;
+
 // CallRail's customer_phone_number is expected as E.164-ish
 // ("+16787049350") but we strip all non-digits and accept 10 or
 // 11-digit (leading "1") US numbers defensively. Anything else (missing,
@@ -196,17 +207,25 @@ export type GmbAdMatchResult = {
   // "" when the caller's phone number was missing/unparseable — matching
   // was never attempted in that case.
   areaCode: string;
-  // The closest same-area-code, same-date call_view row considered,
-  // regardless of whether it actually passed tolerance or was already
-  // consumed by an earlier call that day — for diagnosing whether
+  // The closest same-date call_view row considered — same area code (when
+  // call_view's row has one) or any area code (when call_view's row is
+  // blank) — regardless of whether it actually passed tolerance or was
+  // already consumed by an earlier call that day. For diagnosing whether
   // near-tolerance-edge matches (or near-misses) are inflating/deflating
-  // the PMax count. undefined only when no call_view row shared the same
-  // area code + date at all.
+  // the PMax count. Previously, a blank-area-code call_view row was
+  // excluded before ever being considered a candidate at all — now it
+  // shows up here like any other, so an audit can see this failure mode
+  // instead of it being silently invisible. undefined only when no
+  // call_view row shared the same date (and, when applicable, area code)
+  // at all.
   bestCandidate?: {
     timeDeltaSeconds: number;
     durationDeltaSeconds: number;
     withinTolerance: boolean;
     alreadyConsumed: boolean;
+    // Whether this candidate's call_view row had a real area code (5s/3s
+    // tolerance applied) or was blank (tighter 2s/1s tolerance applied).
+    callViewAreaCodeAvailable: boolean;
     campaignId: string;
     campaignName: string;
     matchedStartCallDateTime: string;
@@ -241,18 +260,26 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
       entry: (typeof pool)[number];
       timeDelta: number;
       durationDelta: number;
+      areaCodeAvailable: boolean;
+      withinTolerance: boolean;
     };
     // Two separate "best" trackers over the same pass: `validBest` mirrors
-    // the original production selection exactly (nearest-by-time among
-    // ONLY unconsumed, in-tolerance candidates — this alone decides
-    // `matched`); `closestOverall` tracks the nearest-by-time candidate
-    // regardless of consumed/tolerance status, purely so an unmatched call
-    // can still report why (a near-miss delta, or "the only candidate was
-    // already claimed") instead of just "no match, no explanation".
+    // the original production selection (nearest-by-time among ONLY
+    // unconsumed, in-tolerance candidates — this alone decides `matched`),
+    // now also accepting a blank-area-code call_view row under the
+    // tighter no-area-code tolerances; `closestOverall` tracks the
+    // nearest-by-time candidate regardless of consumed/tolerance status,
+    // purely so an unmatched call can still report why (a near-miss
+    // delta, or "the only candidate was already claimed") instead of just
+    // "no match, no explanation".
     let validBest: Candidate | null = null;
     let closestOverall: Candidate | null = null;
     for (const entry of pool) {
-      if (entry.row.callerAreaCode !== areaCode) continue;
+      const areaCodeAvailable = entry.row.callerAreaCode !== "";
+      // Area code is only a gate when call_view's row actually has one —
+      // a blank row is still a candidate, just held to tighter tolerances
+      // below instead of being excluded outright.
+      if (areaCodeAvailable && entry.row.callerAreaCode !== areaCode) continue;
       const [rowDate, rowTime] = entry.row.startCallDateTime.split(" ");
       if (rowDate !== callDate || !rowTime) continue;
       const rowSeconds = timeOfDaySeconds(rowTime);
@@ -261,51 +288,47 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
       const durationDelta = Math.abs(
         entry.row.callDurationSeconds - callDurationSeconds,
       );
-      const candidate: Candidate = { entry, timeDelta, durationDelta };
+      const timeTolerance = areaCodeAvailable
+        ? AD_MATCH_TIME_TOLERANCE_SECONDS
+        : AD_MATCH_TIME_TOLERANCE_SECONDS_NO_AREA_CODE;
+      const durationTolerance = areaCodeAvailable
+        ? AD_MATCH_DURATION_TOLERANCE_SECONDS
+        : AD_MATCH_DURATION_TOLERANCE_SECONDS_NO_AREA_CODE;
+      const withinTolerance =
+        timeDelta <= timeTolerance && durationDelta <= durationTolerance;
+      const candidate: Candidate = {
+        entry,
+        timeDelta,
+        durationDelta,
+        areaCodeAvailable,
+        withinTolerance,
+      };
 
       if (!closestOverall || timeDelta < closestOverall.timeDelta) {
         closestOverall = candidate;
       }
-      if (entry.consumed) continue;
-      if (timeDelta > AD_MATCH_TIME_TOLERANCE_SECONDS) continue;
-      if (durationDelta > AD_MATCH_DURATION_TOLERANCE_SECONDS) continue;
+      if (entry.consumed || !withinTolerance) continue;
       if (!validBest || timeDelta < validBest.timeDelta) validBest = candidate;
     }
 
+    const best = validBest ?? closestOverall;
+    if (!best) return { matched: false, areaCode };
+    const bestCandidate = {
+      timeDeltaSeconds: best.timeDelta,
+      durationDeltaSeconds: best.durationDelta,
+      withinTolerance: best.withinTolerance,
+      alreadyConsumed: best.entry.consumed,
+      callViewAreaCodeAvailable: best.areaCodeAvailable,
+      campaignId: best.entry.row.campaignId,
+      campaignName: best.entry.row.campaignName,
+      matchedStartCallDateTime: best.entry.row.startCallDateTime,
+      matchedCallDurationSeconds: best.entry.row.callDurationSeconds,
+    };
     if (validBest) {
       validBest.entry.consumed = true;
-      return {
-        matched: true,
-        areaCode,
-        bestCandidate: {
-          timeDeltaSeconds: validBest.timeDelta,
-          durationDeltaSeconds: validBest.durationDelta,
-          withinTolerance: true,
-          alreadyConsumed: false,
-          campaignId: validBest.entry.row.campaignId,
-          campaignName: validBest.entry.row.campaignName,
-          matchedStartCallDateTime: validBest.entry.row.startCallDateTime,
-          matchedCallDurationSeconds: validBest.entry.row.callDurationSeconds,
-        },
-      };
+      return { matched: true, areaCode, bestCandidate };
     }
-    if (!closestOverall) return { matched: false, areaCode };
-    return {
-      matched: false,
-      areaCode,
-      bestCandidate: {
-        timeDeltaSeconds: closestOverall.timeDelta,
-        durationDeltaSeconds: closestOverall.durationDelta,
-        withinTolerance:
-          closestOverall.timeDelta <= AD_MATCH_TIME_TOLERANCE_SECONDS &&
-          closestOverall.durationDelta <= AD_MATCH_DURATION_TOLERANCE_SECONDS,
-        alreadyConsumed: closestOverall.entry.consumed,
-        campaignId: closestOverall.entry.row.campaignId,
-        campaignName: closestOverall.entry.row.campaignName,
-        matchedStartCallDateTime: closestOverall.entry.row.startCallDateTime,
-        matchedCallDurationSeconds: closestOverall.entry.row.callDurationSeconds,
-      },
-    };
+    return { matched: false, areaCode, bestCandidate };
   }
 
   return { match };

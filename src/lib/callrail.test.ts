@@ -262,3 +262,70 @@ describe("createGmbAdMatcher — diagnostic delta reporting", () => {
     });
   });
 });
+
+describe("createGmbAdMatcher — blank call_view area code fallback", () => {
+  const blankAreaCodeRow: CallViewRow[] = [
+    {
+      startCallDateTime: "2026-07-28 14:10:05",
+      callDurationSeconds: 249,
+      callerAreaCode: "", // Google's UI shows "--" for these
+      campaignId: "1",
+      campaignName: "Local PMax Map | Calls",
+      callTrackingDisplayLocation: "LANDING_PAGE",
+    },
+  ];
+
+  it("matches within the tighter 2s/1s tolerance when call_view's area code is blank", () => {
+    const matcher = createGmbAdMatcher(blankAreaCodeRow);
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:07-04:00", // 2s delta
+      250, // 1s duration delta
+      "+16787049350", // CallRail's own area code (678) — never checked against blank row
+    );
+    expect(result.matched).toBe(true);
+    expect(result.bestCandidate).toMatchObject({
+      timeDeltaSeconds: 2,
+      durationDeltaSeconds: 1,
+      withinTolerance: true,
+      callViewAreaCodeAvailable: false,
+    });
+  });
+
+  it("does NOT match a blank-area-code row outside the tighter tolerance, even though it's within the normal 5s/3s window", () => {
+    const matcher = createGmbAdMatcher(blankAreaCodeRow);
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:08-04:00", // 3s delta — inside 5s, outside the 2s no-area-code tolerance
+      249,
+      "+16787049350",
+    );
+    expect(result.matched).toBe(false);
+    expect(result.bestCandidate).toMatchObject({
+      timeDeltaSeconds: 3,
+      withinTolerance: false,
+      callViewAreaCodeAvailable: false,
+    });
+  });
+
+  it("still excludes a call_view row with a real but DIFFERENT area code, regardless of proximity", () => {
+    const matcher = createGmbAdMatcher([
+      {
+        startCallDateTime: "2026-07-28 14:10:05",
+        callDurationSeconds: 249,
+        callerAreaCode: "404", // real area code, but disagrees with the caller's 678
+        campaignId: "1",
+        campaignName: "Local PMax Map | Calls",
+        callTrackingDisplayLocation: "AD",
+      },
+    ]);
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:05-04:00", // exact time/duration match otherwise
+      249,
+      "+16787049350", // area code 678
+    );
+    expect(result.matched).toBe(false);
+    expect(result.bestCandidate).toBeUndefined();
+  });
+});
