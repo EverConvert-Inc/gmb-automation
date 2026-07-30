@@ -12,6 +12,7 @@ import {
 import { decryptString } from "./crypto";
 import { pullDailyMetrics, pullCallViewRows, type CallViewRow } from "./google-ads";
 import { pullCallsForCompany } from "./callrail";
+import { yesterdayIsoEastern, daysAgoIsoEastern } from "./date-utils";
 
 type SyncOpts = {
   fromDate: string; // YYYY-MM-DD
@@ -19,21 +20,11 @@ type SyncOpts = {
   triggeredBy?: string; // "scheduled" | "manual" | ...
 };
 
-function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-export function yesterdayIso(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return toIsoDate(d);
-}
-
-export function daysAgoIso(days: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - days);
-  return toIsoDate(d);
-}
+// Re-exported under the original names so every existing caller (cron
+// routes, sync-now routes) is unaffected — see date-utils.ts for why this
+// is Eastern-based rather than UTC.
+export const yesterdayIso = yesterdayIsoEastern;
+export const daysAgoIso = daysAgoIsoEastern;
 
 async function startJob(
   ppcClientId: string | null,

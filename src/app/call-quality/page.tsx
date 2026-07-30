@@ -6,6 +6,7 @@ import { CallQualityChannelSection } from "@/components/call-quality-channel-sec
 import { CallQualitySyncNowButton } from "@/components/call-quality-sync-now-button";
 import { EmailCallQualityReportButton } from "@/components/email-call-quality-report-button";
 import { getCallQualityByClientReport } from "@/lib/queries-call-quality";
+import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -13,29 +14,16 @@ export const metadata: Metadata = {
   title: "Call Quality",
 };
 
-// Same rationale as /ppc and /lsa: syncs only pull yesterday's data, so
-// "to" defaults to yesterday rather than today.
-function yesterdayIso(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
-function firstOfMonthIso(): string {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
-    .toISOString()
-    .slice(0, 10);
-}
-
 export default async function CallQualityPage({
   searchParams,
 }: {
   searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const { from: fromParam, to: toParam } = await searchParams;
-  const from = fromParam || firstOfMonthIso();
-  const to = toParam || yesterdayIso();
+  // Same rationale as /ppc and /lsa: syncs only pull yesterday's data, so
+  // "to" defaults to yesterday rather than today.
+  const from = fromParam || firstOfMonthIsoEastern();
+  const to = toParam || yesterdayIsoEastern();
 
   const report = await getCallQualityByClientReport({ from, to });
 

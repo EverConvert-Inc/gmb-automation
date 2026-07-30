@@ -17,28 +17,13 @@ import { LsaReportTable } from "@/components/lsa-report-table";
 import { LsaPhoneCallsChart } from "@/components/lsa-phone-calls-chart";
 import { EmailLsaReportButton } from "@/components/email-lsa-report-button";
 import { getLsaReport, listLsaClients } from "@/lib/queries-lsa";
+import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "LSA report",
 };
-
-// Same rationale as /ppc: the sync only pulls yesterday's data, so "to"
-// defaults to yesterday rather than today (today is always empty until
-// the next morning's cron, which would otherwise bias every KPI delta).
-function yesterdayIso(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
-function firstOfMonthIso(): string {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
-    .toISOString()
-    .slice(0, 10);
-}
 
 function fmtUsdFromMicros(micros: bigint): string {
   const dollars = Number(micros / 10_000n) / 100;
@@ -54,8 +39,11 @@ export default async function LsaReportPage({
   searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const { from: fromParam, to: toParam } = await searchParams;
-  const from = fromParam || firstOfMonthIso();
-  const to = toParam || yesterdayIso();
+  // Same rationale as /ppc: the sync only pulls yesterday's data, so "to"
+  // defaults to yesterday rather than today (today is always empty until
+  // the next morning's cron, which would otherwise bias every KPI delta).
+  const from = fromParam || firstOfMonthIsoEastern();
+  const to = toParam || yesterdayIsoEastern();
 
   const [report, lsaClients] = await Promise.all([
     getLsaReport({ from, to }),

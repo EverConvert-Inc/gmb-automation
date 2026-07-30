@@ -19,30 +19,13 @@ import { PpcReportTable } from "@/components/ppc-report-table";
 import { EmailPpcReportButton } from "@/components/email-ppc-report-button";
 import { EmailOptimizationAlertButton } from "@/components/email-optimization-alert-button";
 import { getPpcReport, listPpcClients } from "@/lib/queries";
+import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "PPC report",
 };
-
-// "To" defaults to yesterday rather than today because the daily PPC
-// sync only pulls yesterday's metrics — today is always empty until the
-// next morning's cron. Using today as the end of the window causes the
-// current period to be one day shorter than the (same-length) prior
-// period, which biases every KPI delta more negative than reality.
-function yesterdayIso(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
-function firstOfMonthIso(): string {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
-    .toISOString()
-    .slice(0, 10);
-}
 
 function fmtUsdFromMicros(micros: bigint): string {
   const dollars = Number(micros / 10_000n) / 100;
@@ -58,8 +41,13 @@ export default async function PpcReportPage({
   searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const { from: fromParam, to: toParam } = await searchParams;
-  const from = fromParam || firstOfMonthIso();
-  const to = toParam || yesterdayIso();
+  // "To" defaults to yesterday rather than today because the daily PPC
+  // sync only pulls yesterday's metrics — today is always empty until the
+  // next morning's cron. Using today as the end of the window causes the
+  // current period to be one day shorter than the (same-length) prior
+  // period, which biases every KPI delta more negative than reality.
+  const from = fromParam || firstOfMonthIsoEastern();
+  const to = toParam || yesterdayIsoEastern();
 
   const [report, ppcClients] = await Promise.all([
     getPpcReport({ from, to }),
