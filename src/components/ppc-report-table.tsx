@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { PpcReportRow } from "@/lib/queries";
+import type { PpcReport, PpcReportRow } from "@/lib/queries";
 
 type SortKey =
   | "client"
@@ -89,8 +89,18 @@ type ClientGroup = {
 // PPC table: default view is one row per client showing totals; click any
 // client row to expand and reveal that client's per-campaign breakdown.
 // Sort applies to the client totals; campaigns inside an expanded group are
-// always sorted by campaign name.
-export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
+// always sorted by campaign name. clientTotals is the already zero-filled
+// per-client roster from getPpcReport (every active client, even one with
+// zero campaign rows in range) — seeded into `groups` before `rows` is
+// folded in, so a client with no synced campaigns still shows a "0
+// campaigns" row instead of being entirely absent from the table.
+export function PpcReportTable({
+  rows,
+  clientTotals,
+}: {
+  rows: PpcReportRow[];
+  clientTotals: PpcReport["clientTotals"];
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("client");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -118,6 +128,19 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
   // rows, so we grab whichever value the first row carries.
   const groups: ClientGroup[] = useMemo(() => {
     const map = new Map<string, ClientGroup>();
+    for (const c of clientTotals) {
+      map.set(c.ppcClientId, {
+        ppcClientId: c.ppcClientId,
+        ppcClientName: c.ppcClientName,
+        clicks: 0,
+        impressions: 0,
+        conversions: 0,
+        phoneCalls: 0,
+        costMicros: 0n,
+        signedCases: c.signedCases,
+        campaigns: [],
+      });
+    }
     for (const r of rows) {
       const cur = map.get(r.ppcClientId) ?? {
         ppcClientId: r.ppcClientId,
@@ -148,7 +171,7 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
       });
     }
     return Array.from(map.values());
-  }, [rows]);
+  }, [rows, clientTotals]);
 
   const sortedGroups = useMemo(() => {
     const arr = [...groups];
@@ -177,11 +200,10 @@ export function PpcReportTable({ rows }: { rows: PpcReportRow[] }) {
     return arr;
   }, [groups, sortKey, sortDir]);
 
-  if (rows.length === 0) {
+  if (groups.length === 0) {
     return (
       <div className="rounded-md border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-        No campaigns matched this date range. Either no PPC clients are linked
-        yet, or no daily data has been synced for the range.
+        No active PPC clients configured yet.
       </div>
     );
   }

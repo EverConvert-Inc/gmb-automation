@@ -1244,6 +1244,20 @@ export async function getPpcReport({
     ).map((r) => r.id),
   );
 
+  // Every active client is seeded into `clientTotals` below with an
+  // all-zero row BEFORE campaignRows are folded in — a client with zero
+  // synced campaigns in range (never linked, sync not run yet, or
+  // genuinely no activity) still shows up instead of silently vanishing,
+  // same seed-then-render pattern as getCallQualityByClientReport. Note
+  // this only fixes `clientTotals` (consumed by ppc-email.ts/ppc-pdf.tsx)
+  // — the interactive web table derives its rows from `rows` (per
+  // campaign) via PpcReportTable's own client-side grouping, which is
+  // seeded separately in that component.
+  const activeClients = await db
+    .select({ id: ppcClients.id, name: ppcClients.name })
+    .from(ppcClients)
+    .where(eq(ppcClients.isActive, true));
+
   // Phone calls by day for the chart, per client.
   const byDayRows = await db
     .select({
@@ -1278,8 +1292,24 @@ export async function getPpcReport({
       : null,
   }));
 
-  // Aggregate per-client totals from campaign rows.
+  // Aggregate per-client totals from campaign rows, seeded from every
+  // active client first so one with zero campaign rows in range still
+  // gets an all-zero entry instead of being absent.
   const clientTotalsMap = new Map<string, PpcReport["clientTotals"][number]>();
+  for (const c of activeClients) {
+    clientTotalsMap.set(c.id, {
+      ppcClientId: c.id,
+      ppcClientName: c.name,
+      clicks: 0,
+      impressions: 0,
+      conversions: 0,
+      phoneCalls: 0,
+      costMicros: 0n,
+      signedCases: callrailLinkedSet.has(c.id)
+        ? signedByClient.get(c.id) ?? 0
+        : null,
+    });
+  }
   for (const r of rows) {
     const cur = clientTotalsMap.get(r.ppcClientId) ?? {
       ppcClientId: r.ppcClientId,

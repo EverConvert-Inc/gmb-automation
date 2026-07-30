@@ -498,24 +498,22 @@ export async function getCallQualityByClientReport({
     lsaDailyRows,
     ppcAdsRows,
   ] = await Promise.all([
+    // Seeded from isActive alone — a client missing callrailCompanyId
+    // (never linked to CallRail) still gets an all-zero row instead of
+    // silently vanishing from the report. This also means a client that's
+    // still active but was unlinked from CallRail after some historical
+    // data was already synced is no longer excluded further below (the
+    // exclusion guards on ppcDailyRows/ppcAdsRows/lsaDailyRows key off
+    // this same seeded set) — its real historical performance reappears,
+    // which is correct: it's still an active client.
     db
       .select({ id: ppcClients.id, name: ppcClients.name })
       .from(ppcClients)
-      .where(
-        and(
-          eq(ppcClients.isActive, true),
-          sql`${ppcClients.callrailCompanyId} is not null`,
-        ),
-      ),
+      .where(eq(ppcClients.isActive, true)),
     db
       .select({ id: lsaClients.id, name: lsaClients.name })
       .from(lsaClients)
-      .where(
-        and(
-          eq(lsaClients.isActive, true),
-          sql`${lsaClients.callrailCompanyId} is not null`,
-        ),
-      ),
+      .where(eq(lsaClients.isActive, true)),
     db
       .select({
         ppcClientId: ppcCallrailDaily.ppcClientId,

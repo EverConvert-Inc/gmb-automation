@@ -205,7 +205,7 @@ export default async function PpcReportPage({
         title="Campaigns"
         eyebrow="Per-client breakdown"
       >
-        <PpcReportTable rows={report.rows} />
+        <PpcReportTable rows={report.rows} clientTotals={report.clientTotals} />
       </SectionCard>
     </div>
   );

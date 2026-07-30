@@ -159,9 +159,18 @@ export async function getLsaReport({
     .slice(0, 10);
   const priorTo = new Date(fromMs - msPerDay).toISOString().slice(0, 10);
 
-  const [kpis, kpisPrior, clientRows, byDayRows] = await Promise.all([
+  const [kpis, kpisPrior, activeClients, clientRows, byDayRows] = await Promise.all([
     aggregateLsaKpis(from, to),
     aggregateLsaKpis(priorFrom, priorTo),
+    // Every active client is seeded into `rows` below with an all-zero row
+    // BEFORE the daily data is folded in — a client with zero qualifying
+    // leads in range (unsynced, newly added, or genuinely quiet) still
+    // shows up instead of silently vanishing from the report, same
+    // seed-then-render pattern as getCallQualityByClientReport.
+    db
+      .select({ id: lsaClients.id, name: lsaClients.name })
+      .from(lsaClients)
+      .where(eq(lsaClients.isActive, true)),
     db
       .select({
         lsaClientId: lsaClients.id,
@@ -192,8 +201,21 @@ export async function getLsaReport({
       .orderBy(lsaLeadsDaily.date),
   ]);
 
-  const rows: LsaClientRow[] = clientRows
-    .map((r) => ({
+  function emptyLsaRow(id: string, name: string): LsaClientRow {
+    return {
+      lsaClientId: id,
+      lsaClientName: name,
+      phoneCallCount: 0,
+      messageCount: 0,
+      bookingCount: 0,
+      costMicros: 0n,
+      signedCases: 0,
+    };
+  }
+  const rowMap = new Map<string, LsaClientRow>();
+  for (const c of activeClients) rowMap.set(c.id, emptyLsaRow(c.id, c.name));
+  for (const r of clientRows) {
+    rowMap.set(r.lsaClientId, {
       lsaClientId: r.lsaClientId,
       lsaClientName: r.lsaClientName,
       phoneCallCount: r.phoneCallCount ?? 0,
@@ -201,7 +223,10 @@ export async function getLsaReport({
       bookingCount: r.bookingCount ?? 0,
       costMicros: r.costMicros ? BigInt(r.costMicros) : 0n,
       signedCases: r.signedCases ?? 0,
-    }))
+    });
+  }
+
+  const rows: LsaClientRow[] = Array.from(rowMap.values())
     // Signed cases descending — clients with the most signed cases lead
     // the report. Name is only a tiebreaker for equal (often zero) counts,
     // so ties don't fall back to whatever order Postgres happened to
