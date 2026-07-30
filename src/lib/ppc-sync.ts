@@ -273,6 +273,13 @@ export async function syncCallrailForClient(
             totalCalls: cb.totalCalls,
             firstTimeCalls: cb.firstTimeCalls,
             tagCategoryBreakdown: cb.tagCategoryBreakdown,
+            // PMax-only call_view reconciliation (see CallrailChannelBucket
+            // in callrail.ts) — undefined for every other channel, which
+            // JSON.stringify drops from the persisted jsonb, same as if
+            // the key were never set.
+            callViewRowsTotal: cb.callViewRowsTotal,
+            callViewRowsMatched: cb.callViewRowsMatched,
+            callViewRowsUnmatched: cb.callViewRowsUnmatched,
           },
         ]),
       );

@@ -29,6 +29,13 @@ type Accumulator = {
   // finalize() below).
   conversions: number;
   chargedCount: number;
+  // PMax-only call_view reconciliation (see CallrailChannelBucket in
+  // callrail.ts) — always 0 for every other channel, since only the PMax
+  // entry in ppc_callrail_daily's channel-nested breakdown ever carries
+  // these fields.
+  callViewRowsTotal: number;
+  callViewRowsMatched: number;
+  callViewRowsUnmatched: number;
 };
 
 function emptyAcc(): Accumulator {
@@ -41,6 +48,9 @@ function emptyAcc(): Accumulator {
     costMicros: 0n,
     conversions: 0,
     chargedCount: 0,
+    callViewRowsTotal: 0,
+    callViewRowsMatched: 0,
+    callViewRowsUnmatched: 0,
   };
 }
 
@@ -147,6 +157,10 @@ export type CallQualityChannelTotals = {
   // spend isn't isolated from the rest of the account yet (see finalize()).
   realCostPerRealLead: number | null;
   adsReportedCpa: number | null;
+  // PMax-only — see Accumulator above. 0 for every other channel.
+  callViewRowsTotal: number;
+  callViewRowsMatched: number;
+  callViewRowsUnmatched: number;
 };
 
 export type CallQualityPeriodRow = CallQualityChannelTotals & {
@@ -200,6 +214,9 @@ function finalize(
     costMicros: acc.costMicros,
     realCostPerRealLead,
     adsReportedCpa,
+    callViewRowsTotal: acc.callViewRowsTotal,
+    callViewRowsMatched: acc.callViewRowsMatched,
+    callViewRowsUnmatched: acc.callViewRowsUnmatched,
   };
 }
 
@@ -331,7 +348,14 @@ export async function getCallQualityReport({
     const period = periodKey(row.date, granularity);
     const breakdown = (row.tagCategoryBreakdown ?? {}) as Record<
       string,
-      { totalCalls?: number; firstTimeCalls?: number; tagCategoryBreakdown?: Record<string, number> }
+      {
+        totalCalls?: number;
+        firstTimeCalls?: number;
+        tagCategoryBreakdown?: Record<string, number>;
+        callViewRowsTotal?: number;
+        callViewRowsMatched?: number;
+        callViewRowsUnmatched?: number;
+      }
     >;
     const rollupBreakdown = (row.rollupBreakdown ?? {}) as Record<
       string,
@@ -350,6 +374,12 @@ export async function getCallQualityReport({
       }
       addRollupCounts(periodAcc, rollupBreakdown[channel]);
       addRollupCounts(summaryAcc, rollupBreakdown[channel]);
+      periodAcc.callViewRowsTotal += chData.callViewRowsTotal ?? 0;
+      summaryAcc.callViewRowsTotal += chData.callViewRowsTotal ?? 0;
+      periodAcc.callViewRowsMatched += chData.callViewRowsMatched ?? 0;
+      summaryAcc.callViewRowsMatched += chData.callViewRowsMatched ?? 0;
+      periodAcc.callViewRowsUnmatched += chData.callViewRowsUnmatched ?? 0;
+      summaryAcc.callViewRowsUnmatched += chData.callViewRowsUnmatched ?? 0;
     }
   }
 
@@ -575,7 +605,14 @@ export async function getCallQualityByClientReport({
   for (const row of ppcDailyRows) {
     const breakdown = (row.tagCategoryBreakdown ?? {}) as Record<
       string,
-      { totalCalls?: number; firstTimeCalls?: number; tagCategoryBreakdown?: Record<string, number> }
+      {
+        totalCalls?: number;
+        firstTimeCalls?: number;
+        tagCategoryBreakdown?: Record<string, number>;
+        callViewRowsTotal?: number;
+        callViewRowsMatched?: number;
+        callViewRowsUnmatched?: number;
+      }
     >;
     const rollupBreakdown = (row.rollupBreakdown ?? {}) as Record<
       string,
@@ -600,6 +637,12 @@ export async function getCallQualityByClientReport({
       }
       addRollupCounts(clientAcc, rollupBreakdown[channel]);
       addRollupCounts(summaryAcc, rollupBreakdown[channel]);
+      clientAcc.callViewRowsTotal += chData.callViewRowsTotal ?? 0;
+      summaryAcc.callViewRowsTotal += chData.callViewRowsTotal ?? 0;
+      clientAcc.callViewRowsMatched += chData.callViewRowsMatched ?? 0;
+      summaryAcc.callViewRowsMatched += chData.callViewRowsMatched ?? 0;
+      clientAcc.callViewRowsUnmatched += chData.callViewRowsUnmatched ?? 0;
+      summaryAcc.callViewRowsUnmatched += chData.callViewRowsUnmatched ?? 0;
     }
   }
 

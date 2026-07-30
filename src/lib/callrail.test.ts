@@ -322,6 +322,14 @@ describe("createGmbAdMatcher — diagnostic delta reporting", () => {
       withinTolerance: true, // would have matched, if not for consumption
     });
   });
+
+  it("unconsumedRows() reports only rows never claimed by any match, reflecting final state after all calls are processed", () => {
+    const matcher = createGmbAdMatcher(callViewRows);
+    expect(matcher.unconsumedRows()).toEqual(callViewRows); // nothing matched yet
+
+    matcher.match("2026-07-28", "2026-07-28T14:10:05-04:00", 249, "+16787049350");
+    expect(matcher.unconsumedRows()).toEqual([]); // the only row got consumed
+  });
 });
 
 describe("createGmbAdMatcher — blank call_view area code fallback", () => {
@@ -405,5 +413,123 @@ describe("createGmbAdMatcher — blank call_view area code fallback", () => {
     );
     expect(result.matched).toBe(false);
     expect(result.bestCandidate).toBeUndefined();
+  });
+});
+
+describe("pullCallsForCompany — PMax call_view reconciliation", () => {
+  beforeEach(() => {
+    process.env.CALLRAIL_API_KEY = "test-key";
+    process.env.CALLRAIL_ACCOUNT_ID = "AC1";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CALLRAIL_API_KEY;
+    delete process.env.CALLRAIL_ACCOUNT_ID;
+  });
+
+  it("reports per-day callViewRows total/matched/unmatched on the PMax bucket, including a day with zero CallRail calls at all", async () => {
+    const calls: MockCall[] = [
+      {
+        // Matches callViewRows[0] exactly — the only call in this fixture.
+        id: "call-a",
+        start_time: "2026-07-28T14:10:05-04:00",
+        duration: 249,
+        tags: [],
+        source_name: "GMB - Raleigh",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const callViewRows: CallViewRow[] = [
+      {
+        startCallDateTime: "2026-07-28 14:10:05",
+        callDurationSeconds: 249,
+        callerAreaCode: "678",
+        campaignId: "1",
+        campaignName: "Local PMax Map | Calls",
+        callTrackingDisplayLocation: "AD",
+      },
+      {
+        // Same day, no CallRail call anywhere near it — stays unmatched.
+        startCallDateTime: "2026-07-28 09:00:00",
+        callDurationSeconds: 30,
+        callerAreaCode: "404",
+        campaignId: "2",
+        campaignName: "Other Campaign",
+        callTrackingDisplayLocation: "AD",
+      },
+      {
+        // A day with a call_view row but ZERO CallRail calls at all —
+        // must still surface as an unmatched row, not silently vanish.
+        startCallDateTime: "2026-07-29 10:00:00",
+        callDurationSeconds: 60,
+        callerAreaCode: "555",
+        campaignId: "3",
+        campaignName: "Other Campaign",
+        callTrackingDisplayLocation: "LANDING_PAGE",
+      },
+    ];
+
+    const days = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-29",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+    const byDate = new Map(days.map((d) => [d.date, d]));
+
+    const day28 = byDate.get("2026-07-28");
+    expect(day28?.channelBreakdown?.PMax.totalCalls).toBe(1); // call-a reclassified
+    expect(day28?.channelBreakdown?.PMax.callViewRowsTotal).toBe(2);
+    expect(day28?.channelBreakdown?.PMax.callViewRowsMatched).toBe(1);
+    expect(day28?.channelBreakdown?.PMax.callViewRowsUnmatched).toBe(1);
+
+    // A bucket exists for 07-29 even though CallRail returned no calls
+    // that day at all — created purely to carry the unmatched call_view row.
+    const day29 = byDate.get("2026-07-29");
+    expect(day29?.totalCalls).toBe(0);
+    expect(day29?.channelBreakdown?.PMax.totalCalls).toBe(0);
+    expect(day29?.channelBreakdown?.PMax.callViewRowsTotal).toBe(1);
+    expect(day29?.channelBreakdown?.PMax.callViewRowsMatched).toBe(0);
+    expect(day29?.channelBreakdown?.PMax.callViewRowsUnmatched).toBe(1);
+  });
+
+  it("excludes call_view rows outside the requested [fromDate, toDate] window from the reconciliation counts", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse([])));
+
+    const callViewRows: CallViewRow[] = [
+      {
+        // Outside the requested window — pullCallViewRows pulls the most
+        // recent rows unbounded by date, so this must not leak in.
+        startCallDateTime: "2026-06-01 10:00:00",
+        callDurationSeconds: 60,
+        callerAreaCode: "555",
+        campaignId: "1",
+        campaignName: "Old Campaign",
+        callTrackingDisplayLocation: "LANDING_PAGE",
+      },
+    ];
+
+    const days = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-29",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+
+    expect(days).toEqual([]);
   });
 });

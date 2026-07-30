@@ -118,6 +118,17 @@ export type CallrailChannelBucket = {
   firstTimeCalls: number;
   tagCategoryBreakdown: Record<string, number>;
   rollupCounts: CallrailRollupCounts;
+  // PMax-only reconciliation against Google Ads' call_view — how many
+  // call_view rows fall on this date, and how many of those found a real
+  // CallRail counterpart (see createGmbAdMatcher's unconsumedRows()).
+  // Undefined for GMB/PPC/LSA buckets; a PMax bucket can carry these even
+  // with totalCalls: 0 (a call_view row existed that day but no CallRail
+  // call matched it at all — worth surfacing, not just silently dropping).
+  // Deliberately NOT scoped by first_call, matching how PMax matching
+  // itself is unscoped by first_call — see CallrailDailyTotals above.
+  callViewRowsTotal?: number;
+  callViewRowsMatched?: number;
+  callViewRowsUnmatched?: number;
 };
 
 export type CallrailDailyTotals = {
@@ -337,7 +348,15 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
     return { matched: false, areaCode, bestCandidate };
   }
 
-  return { match };
+  // Every call_view row still unclaimed once all calls have been run
+  // through match() — the production counterpart to what
+  // pmax-match-audit's unconsumedCallViewRowsInRange computes standalone.
+  // Only meaningful to call after the full call set has been processed.
+  function unconsumedRows(): CallViewRow[] {
+    return pool.filter((entry) => !entry.consumed).map((entry) => entry.row);
+  }
+
+  return { match, unconsumedRows };
 }
 
 // Walks every call in the window and groups by (day in UTC). Signed cases =
@@ -592,6 +611,49 @@ export async function pullCallsForCompany(
 
     byDate.set(date, bucket);
   }
+
+  // PMax call_view reconciliation — how many call_view rows in
+  // [fromDate, toDate] found a real CallRail counterpart, computed only
+  // now that every call has been run through gmbMatcher.match() (so
+  // unconsumedRows() reflects the final state, not a partial one). Same
+  // gate as PMax reclassification itself: channel splitting must be
+  // active and callViewRows must have been provided. callViewRows itself
+  // isn't date-bounded (pullCallViewRows pulls the most recent rows
+  // unbounded by date), so it's filtered to the requested window here,
+  // mirroring pmax-match-audit's in-range filter.
+  if (gmbFiltersLower?.length && callViewRows?.length) {
+    const unconsumed = new Set(gmbMatcher.unconsumedRows());
+    const inRangeByDate = new Map<string, CallViewRow[]>();
+    for (const row of callViewRows) {
+      const rowDate = row.startCallDateTime.split(" ")[0];
+      if (rowDate < fromDate || rowDate > toDate) continue;
+      const rows = inRangeByDate.get(rowDate) ?? [];
+      rows.push(row);
+      inRangeByDate.set(rowDate, rows);
+    }
+    for (const [rowDate, rows] of inRangeByDate) {
+      // A date with an unmatched call_view row but zero CallRail calls at
+      // all that day has no byDate entry yet — worth surfacing rather
+      // than silently dropping, so one is created here if needed.
+      const bucket = byDate.get(rowDate) ?? {
+        date: rowDate,
+        totalCalls: 0,
+        signedCases: 0,
+        firstTimeCalls: 0,
+        tagCategoryBreakdown: {},
+        rollupCounts: newRollupCounts(),
+        channelBreakdown: {},
+      };
+      const channelBucket = bucket.channelBreakdown?.PMax ?? newChannelBucket();
+      const unmatchedCount = rows.filter((r) => unconsumed.has(r)).length;
+      channelBucket.callViewRowsTotal = rows.length;
+      channelBucket.callViewRowsUnmatched = unmatchedCount;
+      channelBucket.callViewRowsMatched = rows.length - unmatchedCount;
+      if (bucket.channelBreakdown) bucket.channelBreakdown.PMax = channelBucket;
+      byDate.set(rowDate, bucket);
+    }
+  }
+
   return Array.from(byDate.values()).sort((a, b) =>
     a.date.localeCompare(b.date),
   );
