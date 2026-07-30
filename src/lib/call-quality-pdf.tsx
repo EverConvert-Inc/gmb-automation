@@ -11,6 +11,7 @@ import type {
   CallQualityChannel,
   CallQualityClientRow,
 } from "./queries-call-quality";
+import { combinePpcAndPmaxTotals } from "./call-quality-combined";
 
 // Small duplicate formatters — the web versions live in
 // `src/components/call-quality-client-table.tsx` (which is `"use client"`)
@@ -170,6 +171,24 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 24,
   },
+  combinedLabel: {
+    fontSize: 8,
+    color: MUTED,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
+  channelHeading: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    marginBottom: 8,
+  },
+  channelDivider: {
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+    marginTop: 20,
+    paddingTop: 20,
+  },
   footer: {
     position: "absolute",
     bottom: 16,
@@ -206,57 +225,33 @@ function KpiBox({
   );
 }
 
-// One page per channel — same shape as the web's CallQualityChannelSection
-// + CallQualityClientTable (KPI strip, then a flat per-client table; no
-// per-campaign nesting since Call Quality is a rollup, not a campaign
-// report). showCost hides Cost/Signed CPL/Ads CPA for GMB (organic, no ad
-// spend) and PMax (spend not isolated from the rest of the PPC account
-// yet). Unlike PPC/LSA's PDFs, there's no prior-period delta here —
-// getCallQualityByClientReport only returns range totals, no comparison
-// window.
-function ChannelPage({
+// KPI strip + per-client table for one channel — no page/header/footer,
+// shared by ChannelPage (LSA/GMB, each still gets its own page) and
+// PpcPmaxPage (PPC and PMax share one page, this rendered twice as
+// sub-sections). showCost hides Cost/Signed CPL/Ads CPA for GMB (organic,
+// no ad spend) and PMax (spend not isolated from the rest of the PPC
+// account yet). showCallViewBreakdown adds PMax's always-visible call_view
+// reconciliation columns (react-pdf has no collapsible equivalent to the
+// web's per-client dropdown). "Total PMax calls" is deliberately not
+// labeled just "Total calls" — distinct from "First-time" above, since
+// PMax matching is unscoped by first_call.
+function ChannelKpiAndTable({
   channel,
   totals,
   clientRows,
-  opts,
-  generatedAt,
 }: {
   channel: CallQualityChannel;
   totals: CallQualityByClientReport["summary"][CallQualityChannel];
   clientRows: CallQualityClientRow[];
-  opts: RenderOpts;
-  generatedAt: Date;
 }) {
-  // Neither GMB (organic) nor PMax (spend not isolated from the rest of
-  // the PPC account yet — see queries-call-quality.ts's finalize()) has a
-  // meaningful cost figure today.
   const showCost = channel !== "GMB" && channel !== "PMax";
-  // PMax-only call_view match reconciliation (see CallrailChannelBucket in
-  // callrail.ts) — always-visible columns here since react-pdf has no
-  // collapsible equivalent to the web's per-client dropdown
-  // (CallQualityClientTable). "Total PMax calls" is deliberately not
-  // labeled just "Total calls" — distinct from "First-time" above, since
-  // PMax matching is unscoped by first_call.
   const showCallViewBreakdown = channel === "PMax";
   const rows = [...clientRows].sort(
     (a, b) => b.real - a.real || a.clientName.localeCompare(b.clientName),
   );
 
   return (
-    <Page size="LETTER" style={styles.page}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.headerEyebrow}>Cross-channel</Text>
-          <Text style={styles.headerTitle}>Call Quality — {channel}</Text>
-          <Text style={styles.headerDate}>
-            {fmtRangeHeader(opts.from, opts.to)}
-          </Text>
-        </View>
-        <Text style={styles.headerGenerated}>
-          Generated {fmtGeneratedAt(generatedAt)} UTC
-        </Text>
-      </View>
-
+    <>
       <View style={styles.kpiStrip}>
         <KpiBox
           label="First-time calls"
@@ -346,22 +341,136 @@ function ChannelPage({
           ))}
         </View>
       )}
+    </>
+  );
+}
 
-      <View style={styles.footer} fixed>
-        <Text>
-          Generated automatically by EverConvert Local Visibility Platform.
+function PageHeader({
+  title,
+  opts,
+  generatedAt,
+}: {
+  title: string;
+  opts: RenderOpts;
+  generatedAt: Date;
+}) {
+  return (
+    <View style={styles.headerRow}>
+      <View>
+        <Text style={styles.headerEyebrow}>Cross-channel</Text>
+        <Text style={styles.headerTitle}>Call Quality — {title}</Text>
+        <Text style={styles.headerDate}>
+          {fmtRangeHeader(opts.from, opts.to)}
         </Text>
-        <Text
-          render={({ pageNumber, totalPages }) =>
-            `Page ${pageNumber} of ${totalPages}`
-          }
-        />
       </View>
+      <Text style={styles.headerGenerated}>
+        Generated {fmtGeneratedAt(generatedAt)} UTC
+      </Text>
+    </View>
+  );
+}
+
+function PageFooter() {
+  return (
+    <View style={styles.footer} fixed>
+      <Text>
+        Generated automatically by EverConvert Local Visibility Platform.
+      </Text>
+      <Text
+        render={({ pageNumber, totalPages }) =>
+          `Page ${pageNumber} of ${totalPages}`
+        }
+      />
+    </View>
+  );
+}
+
+// One page per channel (LSA, GMB) — same shape as the web's
+// CallQualityChannelSection + CallQualityClientTable. Unlike PPC/LSA's
+// PDFs, there's no prior-period delta here — getCallQualityByClientReport
+// only returns range totals, no comparison window.
+function ChannelPage({
+  channel,
+  totals,
+  clientRows,
+  opts,
+  generatedAt,
+}: {
+  channel: CallQualityChannel;
+  totals: CallQualityByClientReport["summary"][CallQualityChannel];
+  clientRows: CallQualityClientRow[];
+  opts: RenderOpts;
+  generatedAt: Date;
+}) {
+  return (
+    <Page size="LETTER" style={styles.page}>
+      <PageHeader title={channel} opts={opts} generatedAt={generatedAt} />
+      <ChannelKpiAndTable channel={channel} totals={totals} clientRows={clientRows} />
+      <PageFooter />
     </Page>
   );
 }
 
-const CHANNELS: CallQualityChannel[] = ["PPC", "LSA", "GMB", "PMax"];
+// PMax calls are pulled entirely out of PPC's own numbers, but PMax's ad
+// spend was never actually isolated from PPC's — it stays inside PPC's
+// costMicros regardless of channel. That means PPC's own "Signed cost /
+// signed lead" looks worse than reality once some of its real leads move
+// to PMax's bucket while the cost stays behind, even though nothing
+// about the true effective CPL actually changed (see
+// call-quality-combined.ts). One page: combined total up top (the
+// accurate effective picture), then PPC and PMax broken out below exactly
+// as ChannelPage would render them individually.
+function PpcPmaxPage({
+  ppcTotals,
+  pmaxTotals,
+  ppcClientRows,
+  pmaxClientRows,
+  opts,
+  generatedAt,
+}: {
+  ppcTotals: CallQualityByClientReport["summary"]["PPC"];
+  pmaxTotals: CallQualityByClientReport["summary"]["PMax"];
+  ppcClientRows: CallQualityClientRow[];
+  pmaxClientRows: CallQualityClientRow[];
+  opts: RenderOpts;
+  generatedAt: Date;
+}) {
+  const combined = combinePpcAndPmaxTotals(ppcTotals, pmaxTotals);
+
+  return (
+    <Page size="LETTER" style={styles.page}>
+      <PageHeader title="PPC + PMax" opts={opts} generatedAt={generatedAt} />
+
+      <Text style={styles.combinedLabel}>Combined</Text>
+      <View style={styles.kpiStrip}>
+        <KpiBox label="First-time calls" value={fmtNumber(combined.firstTimeCalls)} />
+        <KpiBox
+          label="Signed"
+          value={fmtNumber(combined.real)}
+          sublabel={`${fmtNumber(combined.junk)} junk, ${fmtNumber(combined.unclassified)} unclassified`}
+        />
+        <KpiBox label="Cost" value={fmtMicros(combined.costMicros)} />
+        <KpiBox
+          label="Signed cost / signed lead"
+          value={fmtUsdOrDash(combined.realCostPerRealLead)}
+          sublabel={`Ads-reported CPA: ${fmtUsdOrDash(combined.adsReportedCpa)}`}
+        />
+      </View>
+
+      <View style={styles.channelDivider}>
+        <Text style={styles.channelHeading}>PPC</Text>
+        <ChannelKpiAndTable channel="PPC" totals={ppcTotals} clientRows={ppcClientRows} />
+      </View>
+
+      <View style={styles.channelDivider}>
+        <Text style={styles.channelHeading}>PMax</Text>
+        <ChannelKpiAndTable channel="PMax" totals={pmaxTotals} clientRows={pmaxClientRows} />
+      </View>
+
+      <PageFooter />
+    </Page>
+  );
+}
 
 export function CallQualityReportDocument({
   report,
@@ -376,16 +485,28 @@ export function CallQualityReportDocument({
       title={`Call Quality report ${fmtRangeHeader(opts.from, opts.to)}`}
       author="EverConvert Local Visibility Platform"
     >
-      {CHANNELS.map((channel) => (
-        <ChannelPage
-          key={channel}
-          channel={channel}
-          totals={report.summary[channel]}
-          clientRows={report.clients[channel]}
-          opts={opts}
-          generatedAt={generatedAt}
-        />
-      ))}
+      <PpcPmaxPage
+        ppcTotals={report.summary.PPC}
+        pmaxTotals={report.summary.PMax}
+        ppcClientRows={report.clients.PPC}
+        pmaxClientRows={report.clients.PMax}
+        opts={opts}
+        generatedAt={generatedAt}
+      />
+      <ChannelPage
+        channel="LSA"
+        totals={report.summary.LSA}
+        clientRows={report.clients.LSA}
+        opts={opts}
+        generatedAt={generatedAt}
+      />
+      <ChannelPage
+        channel="GMB"
+        totals={report.summary.GMB}
+        clientRows={report.clients.GMB}
+        opts={opts}
+        generatedAt={generatedAt}
+      />
     </Document>
   );
 }
