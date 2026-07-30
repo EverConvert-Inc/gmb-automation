@@ -168,7 +168,7 @@ export const AD_MATCH_DURATION_TOLERANCE_SECONDS = 3;
 // check is skipped entirely and these tighter tolerances apply instead,
 // to compensate for losing that confirming signal.
 export const AD_MATCH_TIME_TOLERANCE_SECONDS_NO_AREA_CODE = 2;
-export const AD_MATCH_DURATION_TOLERANCE_SECONDS_NO_AREA_CODE = 1;
+export const AD_MATCH_DURATION_TOLERANCE_SECONDS_NO_AREA_CODE = 3;
 
 // CallRail's customer_phone_number is expected as E.164-ish
 // ("+16787049350") but we strip all non-digits and accept 10 or

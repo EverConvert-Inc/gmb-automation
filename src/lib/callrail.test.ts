@@ -275,7 +275,7 @@ describe("createGmbAdMatcher — blank call_view area code fallback", () => {
     },
   ];
 
-  it("matches within the tighter 2s/1s tolerance when call_view's area code is blank", () => {
+  it("matches within the tighter 2s time / 3s duration tolerance when call_view's area code is blank", () => {
     const matcher = createGmbAdMatcher(blankAreaCodeRow);
     const result = matcher.match(
       "2026-07-28",
@@ -287,6 +287,23 @@ describe("createGmbAdMatcher — blank call_view area code fallback", () => {
     expect(result.bestCandidate).toMatchObject({
       timeDeltaSeconds: 2,
       durationDeltaSeconds: 1,
+      withinTolerance: true,
+      callViewAreaCodeAvailable: false,
+    });
+  });
+
+  it("matches a blank-area-code row at 1-2s time delta / 2-3s duration delta (the confirmed real-world near-miss pattern from short/abandoned calls)", () => {
+    const matcher = createGmbAdMatcher(blankAreaCodeRow);
+    const result = matcher.match(
+      "2026-07-28",
+      "2026-07-28T14:10:06-04:00", // 1s time delta
+      252, // 3s duration delta — was rejected under the old 1s duration tolerance
+      "+16787049350",
+    );
+    expect(result.matched).toBe(true);
+    expect(result.bestCandidate).toMatchObject({
+      timeDeltaSeconds: 1,
+      durationDeltaSeconds: 3,
       withinTolerance: true,
       callViewAreaCodeAvailable: false,
     });
