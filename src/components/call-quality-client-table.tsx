@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { CallQualityClientRow } from "@/lib/queries-call-quality";
 
 type SortKey =
@@ -89,16 +90,34 @@ function SortHeader({
 // One row per client, aggregated over the selected date range. showCost
 // hides the Cost/Signed CPL/Ads CPA columns entirely for GMB (organic, no
 // ad spend) and PMax (spend not isolated from the rest of the PPC account
-// yet — see queries-call-quality.ts's finalize()).
+// yet — see queries-call-quality.ts's finalize()). showCallViewBreakdown
+// (PMax only) adds a per-client expand/collapse row — same pattern as
+// /ppc's campaign breakdown (PpcReportTable) — revealing the call_view
+// match reconciliation (see CallrailChannelBucket in callrail.ts):
+// how many Google Ads call_view rows this client had in range, and how
+// many found a real CallRail counterpart. Collapsed by default so it
+// doesn't clutter the table when nothing needs review.
 export function CallQualityClientTable({
   rows,
   showCost,
+  showCallViewBreakdown = false,
 }: {
   rows: CallQualityClientRow[];
   showCost: boolean;
+  showCallViewBreakdown?: boolean;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("real");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpand(clientId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  }
 
   function onSort(field: SortKey) {
     if (field === sortKey) {
@@ -145,6 +164,7 @@ export function CallQualityClientTable({
       <table className="w-full text-sm">
         <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
+            {showCallViewBreakdown && <th className="w-8 px-2 py-2" />}
             <SortHeader
               label="Client"
               field="client"
@@ -207,33 +227,83 @@ export function CallQualityClientTable({
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((r) => (
-            <tr key={r.clientId} className="border-b last:border-0">
-              <td className="px-3 py-2 align-middle">{r.clientName}</td>
-              <td className="px-3 py-2 text-right align-middle tabular-nums">
-                {fmtNumber(r.firstTimeCalls)}
-              </td>
-              <td className="px-3 py-2 text-right align-middle tabular-nums">
-                {fmtNumber(r.real)}
-              </td>
-              <td className="px-3 py-2 text-right align-middle tabular-nums">
-                {fmtNumber(r.junk)}
-              </td>
-              {showCost && (
-                <>
+          {sortedRows.map((r) => {
+            const open = showCallViewBreakdown && expanded.has(r.clientId);
+            const columnCount = (showCallViewBreakdown ? 1 : 0) + 4 + (showCost ? 3 : 0);
+            return (
+              <Fragment key={r.clientId}>
+                <tr
+                  className={`border-b last:border-0${showCallViewBreakdown ? " cursor-pointer hover:bg-muted/30" : ""}`}
+                  onClick={showCallViewBreakdown ? () => toggleExpand(r.clientId) : undefined}
+                >
+                  {showCallViewBreakdown && (
+                    <td className="w-8 px-2 py-2 align-middle text-muted-foreground">
+                      {open ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                    </td>
+                  )}
+                  <td className="px-3 py-2 align-middle">{r.clientName}</td>
                   <td className="px-3 py-2 text-right align-middle tabular-nums">
-                    {fmtUsdFromMicros(r.costMicros)}
+                    {fmtNumber(r.firstTimeCalls)}
                   </td>
                   <td className="px-3 py-2 text-right align-middle tabular-nums">
-                    {fmtUsdOrDash(r.realCostPerRealLead)}
+                    {fmtNumber(r.real)}
                   </td>
                   <td className="px-3 py-2 text-right align-middle tabular-nums">
-                    {fmtUsdOrDash(r.adsReportedCpa)}
+                    {fmtNumber(r.junk)}
                   </td>
-                </>
-              )}
-            </tr>
-          ))}
+                  {showCost && (
+                    <>
+                      <td className="px-3 py-2 text-right align-middle tabular-nums">
+                        {fmtUsdFromMicros(r.costMicros)}
+                      </td>
+                      <td className="px-3 py-2 text-right align-middle tabular-nums">
+                        {fmtUsdOrDash(r.realCostPerRealLead)}
+                      </td>
+                      <td className="px-3 py-2 text-right align-middle tabular-nums">
+                        {fmtUsdOrDash(r.adsReportedCpa)}
+                      </td>
+                    </>
+                  )}
+                </tr>
+                {open && (
+                  <tr className="border-b bg-muted/10 last:border-0">
+                    <td className="px-3 py-2" colSpan={columnCount}>
+                      {/* Distinct from "First-time calls" above — this is
+                          every call_view row Google Ads attributes to PMax
+                          for this client in range, regardless of
+                          first-time/repeat caller status (PMax matching is
+                          deliberately unscoped by first_call — see
+                          callrail.ts). */}
+                      <div className="grid grid-cols-3 gap-3 pl-8 text-xs">
+                        <div>
+                          <div className="text-muted-foreground">Total PMax calls</div>
+                          <div className="font-medium text-foreground">
+                            {fmtNumber(r.callViewRowsTotal)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Matched</div>
+                          <div className="font-medium text-foreground">
+                            {fmtNumber(r.callViewRowsMatched)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Unmatched</div>
+                          <div className="font-medium text-foreground">
+                            {fmtNumber(r.callViewRowsUnmatched)}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>

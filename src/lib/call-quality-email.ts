@@ -98,7 +98,7 @@ function renderEmailHtml({
     // misleading "$0".
     const cost =
       channel === "GMB" || channel === "PMax" ? "—" : fmtMicros(t.costMicros);
-    return `
+    const mainRow = `
       <tr>
         <td style="padding:6px 4px;font-size:13px;font-weight:600;color:#0f172a;">${channel}</td>
         <td style="padding:6px 4px;font-size:13px;text-align:right;color:#334155;">${fmtNumber(t.firstTimeCalls)}</td>
@@ -106,6 +106,20 @@ function renderEmailHtml({
         <td style="padding:6px 4px;font-size:13px;text-align:right;color:#334155;">${fmtNumber(t.junk)}</td>
         <td style="padding:6px 4px;font-size:13px;text-align:right;color:#334155;">${cost}</td>
       </tr>`;
+    // Whole-report call_view reconciliation, PMax only (see
+    // CallrailChannelBucket in callrail.ts). Only shown when nonzero — a
+    // quiet period shouldn't add a noise line every day. Full per-client
+    // detail is in the attached PDF/web dropdown; this is just a flag.
+    const unmatchedNote =
+      channel === "PMax" && t.callViewRowsUnmatched > 0
+        ? `
+      <tr>
+        <td colspan="5" style="padding:0 4px 6px;font-size:11px;color:#b45309;">
+          ⚠ ${fmtNumber(t.callViewRowsUnmatched)} of ${fmtNumber(t.callViewRowsTotal)} PMax calls (per Google Ads' call_view) had no matching CallRail record this period.
+        </td>
+      </tr>`
+        : "";
+    return mainRow + unmatchedNote;
   }).join("");
 
   return `<!doctype html>
@@ -168,11 +182,19 @@ function renderEmailText({
   range: string;
   dashboardUrl: string;
 }): string {
-  const lines = CHANNELS.map((channel) => {
+  const lines = CHANNELS.flatMap((channel) => {
     const t = report.summary[channel];
     const cost =
       channel === "GMB" || channel === "PMax" ? "—" : fmtMicros(t.costMicros);
-    return `${channel.padEnd(5)} first-time ${fmtNumber(t.firstTimeCalls)}, signed ${fmtNumber(t.real)}, junk ${fmtNumber(t.junk)}, cost ${cost}`;
+    const mainLine = `${channel.padEnd(5)} first-time ${fmtNumber(t.firstTimeCalls)}, signed ${fmtNumber(t.real)}, junk ${fmtNumber(t.junk)}, cost ${cost}`;
+    // Same nonzero-only gate as renderEmailHtml's unmatchedNote.
+    if (channel === "PMax" && t.callViewRowsUnmatched > 0) {
+      return [
+        mainLine,
+        `      ⚠ ${fmtNumber(t.callViewRowsUnmatched)} of ${fmtNumber(t.callViewRowsTotal)} PMax calls (per Google Ads' call_view) had no matching CallRail record this period.`,
+      ];
+    }
+    return [mainLine];
   });
   return [
     `Call Quality report — ${range}`,

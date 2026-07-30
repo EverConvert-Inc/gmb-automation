@@ -231,6 +231,13 @@ function ChannelPage({
   // the PPC account yet — see queries-call-quality.ts's finalize()) has a
   // meaningful cost figure today.
   const showCost = channel !== "GMB" && channel !== "PMax";
+  // PMax-only call_view match reconciliation (see CallrailChannelBucket in
+  // callrail.ts) — always-visible columns here since react-pdf has no
+  // collapsible equivalent to the web's per-client dropdown
+  // (CallQualityClientTable). "Total PMax calls" is deliberately not
+  // labeled just "Total calls" — distinct from "First-time" above, since
+  // PMax matching is unscoped by first_call.
+  const showCallViewBreakdown = channel === "PMax";
   const rows = [...clientRows].sort(
     (a, b) => b.real - a.real || a.clientName.localeCompare(b.clientName),
   );
@@ -289,6 +296,13 @@ function ChannelPage({
                 <Text style={[styles.cellNum, styles.th]}>Ads CPA</Text>
               </>
             )}
+            {showCallViewBreakdown && (
+              <>
+                <Text style={[styles.cellNum, styles.th]}>Total PMax calls</Text>
+                <Text style={[styles.cellNum, styles.th]}>Matched</Text>
+                <Text style={[styles.cellNum, styles.th]}>Unmatched</Text>
+              </>
+            )}
           </View>
           {rows.map((r) => (
             <View key={r.clientId} style={styles.tableRow}>
@@ -312,6 +326,19 @@ function ChannelPage({
                   </Text>
                   <Text style={[styles.cellNum, styles.td]}>
                     {fmtUsdOrDash(r.adsReportedCpa)}
+                  </Text>
+                </>
+              )}
+              {showCallViewBreakdown && (
+                <>
+                  <Text style={[styles.cellNum, styles.td]}>
+                    {fmtNumber(r.callViewRowsTotal)}
+                  </Text>
+                  <Text style={[styles.cellNum, styles.td]}>
+                    {fmtNumber(r.callViewRowsMatched)}
+                  </Text>
+                  <Text style={[styles.cellNum, styles.td]}>
+                    {fmtNumber(r.callViewRowsUnmatched)}
                   </Text>
                 </>
               )}

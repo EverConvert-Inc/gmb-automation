@@ -73,7 +73,11 @@ export function CallQualityChannelSection({
           />
         </div>
 
-        <CallQualityClientTable rows={clientRows} showCost={showCost} />
+        <CallQualityClientTable
+          rows={clientRows}
+          showCost={showCost}
+          showCallViewBreakdown={channel === "PMax"}
+        />
       </div>
     </SectionCard>
   );
