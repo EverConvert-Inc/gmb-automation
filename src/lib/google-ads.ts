@@ -250,7 +250,12 @@ export type AdsDailyMetricsRow = {
 };
 
 // Pulls campaign-level daily metrics for the given date window. Date format
-// must be YYYY-MM-DD for GAQL.
+// must be YYYY-MM-DD for GAQL. Restricted to campaign.status = 'ENABLED' —
+// the `campaign` resource otherwise still returns historical performance
+// rows for paused/removed campaigns, which would silently inflate
+// spend/clicks/conversions with activity from campaigns no longer being
+// actively managed. Same pattern already used in
+// ppc-optimization-alert.ts's campaign.status filter.
 export async function pullDailyMetrics(
   refreshToken: string,
   customerId: string,
@@ -271,6 +276,7 @@ export async function pullDailyMetrics(
       metrics.phone_calls
     FROM campaign
     WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+      AND campaign.status = 'ENABLED'
     ORDER BY segments.date
   `);
 
@@ -305,6 +311,9 @@ export type LsaCostDailyRow = {
 // summed per day (lsa_leads_daily is one row per client per date, not per
 // campaign — mirrors pullDailyMetrics's date-window pattern but collapses
 // campaigns since the LSA report doesn't break out cost by campaign).
+// Same campaign.status = 'ENABLED' restriction as pullDailyMetrics, for
+// the same reason — a paused LOCAL_SERVICES campaign's historical cost
+// would otherwise still be summed in.
 export async function pullLocalServicesCost(
   refreshToken: string,
   customerId: string,
@@ -317,6 +326,7 @@ export async function pullLocalServicesCost(
     SELECT campaign.id, campaign.advertising_channel_type, segments.date, metrics.cost_micros
     FROM campaign
     WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES'
+      AND campaign.status = 'ENABLED'
       AND segments.date BETWEEN '${fromDate}' AND '${toDate}'
   `);
 
@@ -453,6 +463,17 @@ function decodeCallTrackingDisplayLocation(raw: unknown): string {
 // confirmed live that a real account only carries ~28 call_view rows
 // total going back a year, so this cap is a safety margin for a future
 // high-volume account, not something expected to bind today.
+//
+// Restricted to campaign.status = 'ENABLED' — same rationale as
+// pullDailyMetrics/pullLocalServicesCost, and campaign.id/campaign.name
+// (also Attributed Resources, not real call_view fields) are already
+// filterable here, so campaign.status is expected to follow the same
+// rule. NOT yet confirmed live for this specific resource, unlike the
+// other two — call_view has already been seen to reject one otherwise-
+// ordinary field (segments.date) that works fine on `campaign` directly,
+// so this needs a live check before trusting it; if Google Ads rejects
+// filtering on it here, the fallback is selecting campaign.status (already
+// done below) and filtering the returned rows client-side instead.
 export async function pullCallViewRows(
   refreshToken: string,
   customerId: string,
@@ -465,11 +486,23 @@ export async function pullCallViewRows(
       call_view.caller_area_code,
       call_view.call_tracking_display_location,
       campaign.id,
-      campaign.name
+      campaign.name,
+      campaign.status
     FROM call_view
+    WHERE campaign.status = 'ENABLED'
     ORDER BY call_view.start_call_date_time DESC
     LIMIT 1000
   `);
+
+  // The LIMIT above has no detection today for when a client's call_view
+  // volume actually exceeds it — a hit here means older in-window rows
+  // were silently excluded from PMax matching. Purely observability, not
+  // a behavior change: still returns whatever came back either way.
+  if (rows.length === 1000) {
+    console.warn(
+      `[pullCallViewRows] hit the 1000-row cap for customerId=${customerId} — older in-window call_view rows may have been silently dropped from PMax matching`,
+    );
+  }
 
   return rows.map((r) => {
     const callView = (r as { call_view?: Record<string, unknown> }).call_view ?? {};
