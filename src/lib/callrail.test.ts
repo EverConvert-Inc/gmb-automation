@@ -73,7 +73,9 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
         customer_phone_number: "+16787049350",
       },
       {
-        // Non-GMB tracker entirely — untouched by GMB/PMax reclassification.
+        // PPC tracker — now also checked against call_view (see the
+        // cross-tracker reclassification test below), but doesn't match
+        // either row here (time mismatch), so it stays PPC unchanged.
         id: "call-d",
         start_time: "2026-07-28T16:00:00-04:00",
         duration: 30,
@@ -135,8 +137,67 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
     // call-b (area mismatch) + call-c (pool exhausted) stay organic GMB.
     expect(day.channelBreakdown?.GMB.totalCalls).toBe(2);
 
-    // call-d untouched.
+    // call-d untouched (checked against call_view, didn't match).
     expect(day.channelBreakdown?.PPC.totalCalls).toBe(1);
+  });
+
+  it("reclassifies a PPC-tracker call into PMax when it matches a call_view row — tracker naming doesn't gate PMax eligibility, only call_view cross-reference does", async () => {
+    const calls: MockCall[] = [
+      {
+        // Confirmed real case: a call on a "PPC - Google Map" tracker
+        // that Google Ads' call_view independently labels "Ad" source
+        // for the same PMax campaign — a tracker-naming mistake, not a
+        // real PPC click. Exact timestamp/duration match.
+        id: "call-ppc-match",
+        start_time: "2026-07-28T13:02:12-04:00",
+        duration: 103,
+        tags: [],
+        source_name: "PPC - Google Map",
+        first_call: true,
+        customer_phone_number: "+19197718904",
+      },
+      {
+        // Genuine PPC call — no call_view row anywhere near it, stays PPC.
+        id: "call-ppc-nomatch",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: [],
+        source_name: "PPC - Brand",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockCallsResponse(calls)),
+    );
+
+    const callViewRows: CallViewRow[] = [
+      {
+        startCallDateTime: "2026-07-28 13:02:12",
+        callDurationSeconds: 102,
+        callerAreaCode: "919",
+        campaignId: "1",
+        campaignName: "Local PMAX | Phone Calls",
+        callTrackingDisplayLocation: "AD",
+      },
+    ];
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+
+    expect(day.channelBreakdown?.PMax.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.PPC.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.GMB).toBeUndefined();
   });
 
   it("leaves every GMB-tracker call in GMB (no PMax key at all) when callViewRows is omitted", async () => {

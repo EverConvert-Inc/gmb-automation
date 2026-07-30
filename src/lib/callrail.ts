@@ -138,11 +138,17 @@ export type CallrailDailyTotals = {
   // Google Ads' Performance Max campaigns can show sponsored pins/
   // placements on Google Maps via location assets tied to the same
   // Business Profile, so tracker-name matching alone can't tell paid PMax
-  // traffic apart from organic GMB traffic. A GMB-tracker call is
-  // reclassified into "PMax" instead of "GMB" when it cross-references to
-  // a Google Ads call_view row (see createGmbAdMatcher below) — GMB's
-  // totals reflect organic-only traffic once a call has been pulled out
-  // into PMax; a call is never counted in both.
+  // traffic apart from organic GMB traffic. Any call already in scope for
+  // this client — GMB-tracker OR the caller's own PPC/LSA-tracker — is
+  // reclassified into "PMax" when it cross-references to a Google Ads
+  // call_view row (see createGmbAdMatcher below), regardless of which
+  // bucket its tracker name would otherwise put it in. Confirmed real:
+  // an ad-driven call landing on a "PPC - Google Map" tracker matched a
+  // call_view row Google itself labels "Ad" source for the same PMax
+  // campaign — tracker naming is a human-configured label and can be
+  // wrong; call_view cross-reference is the authoritative signal. GMB's
+  // (and PPC/LSA's) totals reflect non-PMax traffic only once a call has
+  // been pulled out into PMax; a call is never counted in both.
   channelBreakdown: Record<string, CallrailChannelBucket> | null;
 };
 
@@ -532,28 +538,37 @@ export async function pullCallsForCompany(
     // above; a call matching neither is out of scope entirely, not
     // silently counted under the caller's own channel.
     //
-    // A GMB-tracker call is further split into "GMB" (organic) vs "PMax"
-    // (ad-driven) by cross-referencing Google Ads' call_view — GMB and
-    // PMax share the same tracker name, so this is the only way to tell
-    // them apart (see createGmbAdMatcher above and CallrailDailyTotals'
-    // channelBreakdown comment). Unscoped by first_call — ad-attribution
-    // is a traffic-source property of the call itself, not a call-quality
-    // classification, so a repeat caller's GMB/PMax call is still
+    // Any call already in scope here (GMB-tracker OR the caller's own
+    // PPC/LSA-tracker) is checked against Google Ads' call_view before
+    // falling back to its tracker-name-based bucket — tracker naming
+    // can't reliably distinguish ad-driven traffic from organic/direct
+    // traffic on its own (see CallrailDailyTotals' channelBreakdown
+    // comment for the confirmed real case: a call on a "PPC"-named
+    // tracker that was actually ad-driven PMax traffic). A match pulls
+    // the call into "PMax" from whichever bucket it would've landed in;
+    // a non-match falls back to today's tracker-name classification
+    // unchanged. Unscoped by first_call — ad-attribution is a
+    // traffic-source property of the call itself, not a call-quality
+    // classification, so a repeat caller's PMax call is still
     // reclassified the same way a first-time one would be.
     if (bucket.channelBreakdown) {
       const isGmbTracker =
         !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
       let channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
-      if (isGmbTracker) {
+      if (isGmbTracker || isRelevantForReport) {
         const matchResult = gmbMatcher.match(
           date,
           call.start_time,
           call.duration,
           call.customer_phone_number,
         );
-        channel = matchResult.matched ? "PMax" : "GMB";
-      } else if (isRelevantForReport) {
-        channel = ownChannel;
+        if (matchResult.matched) {
+          channel = "PMax";
+        } else if (isGmbTracker) {
+          channel = "GMB";
+        } else {
+          channel = ownChannel;
+        }
       } else {
         channel = null;
       }

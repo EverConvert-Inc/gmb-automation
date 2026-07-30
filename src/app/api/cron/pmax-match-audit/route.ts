@@ -127,14 +127,18 @@ async function pullRawCallrailCalls(
   return calls;
 }
 
-// Temporary read-only diagnostic. For every GMB-tracker CallRail call in
-// the given window, runs the SAME createGmbAdMatcher used in production
-// (src/lib/callrail.ts) against real call_view rows, and reports the exact
-// timestamp/duration/area-code deltas for every match AND every near-miss
-// — not just a pass/fail count. Purpose: confirm whether current PMax
-// matches are tight (near-zero deltas, like the confirmed Hodgins & Kiber
-// case) or loose (near the 5s/3s tolerance edges), which would suggest
-// false positives inflating the PMax count.
+// Temporary read-only diagnostic. For every CallRail call in the given
+// window that's in scope for this client (GMB-tracker OR the client's own
+// report-relevant trackers — production now checks call_view against
+// both, not just GMB-tracker calls, since a confirmed real case showed an
+// ad-driven call landing on a "PPC"-named tracker), runs the SAME
+// createGmbAdMatcher used in production (src/lib/callrail.ts) against real
+// call_view rows, and reports the exact timestamp/duration/area-code
+// deltas for every match AND every near-miss — not just a pass/fail
+// count. Purpose: confirm whether current PMax matches are tight
+// (near-zero deltas, like the confirmed Hodgins & Kiber case) or loose
+// (near the 5s/3s tolerance edges), which would suggest false positives
+// inflating the PMax count.
 //
 // "Website" vs "Ad" source calls (a Google Ads-side conversion-source
 // distinction, not a CallRail field) — under investigation for whether
@@ -203,6 +207,15 @@ export async function GET(req: Request) {
         { status: 400 },
       );
     }
+    // Mirrors production's `nameFilters` param (ppc-sync.ts passes
+    // client.signedCaseNameFilters) — production now checks call_view
+    // against any call in scope for this client, GMB-tracker OR this
+    // filter list, not just GMB-tracker calls. Kept separate from
+    // gmbFilters below so the audit can report which original bucket
+    // each match came from.
+    const reportFilters = client.signedCaseNameFilters
+      .map((f) => f.trim().toLowerCase())
+      .filter(Boolean);
 
     const cred = await db.query.oauthCredentials.findFirst({
       where: eq(oauthCredentials.id, client.googleAdsOauthTokenId),
@@ -217,13 +230,23 @@ export async function GET(req: Request) {
     const callViewRows = await pullCallViewRows(refreshToken, client.googleAdsCustomerId);
 
     const rawCalls = await pullRawCallrailCalls(client.callrailCompanyId, from, to);
-    const gmbCalls = rawCalls.filter((c) => {
-      const trackerName = (c.source_name ?? c.formatted_tracking_source ?? "").toLowerCase();
-      return gmbFilters.some((f) => trackerName.includes(f));
-    });
+    function trackerNameOf(c: RawCallrailCall): string {
+      return (c.source_name ?? c.formatted_tracking_source ?? "").toLowerCase();
+    }
+    const gmbCalls = rawCalls.filter((c) => gmbFilters.some((f) => trackerNameOf(c).includes(f)));
+    // Non-GMB calls still in scope for this client's report (production's
+    // `isRelevantForReport`) — these are now also PMax candidates, since a
+    // confirmed real case showed an ad-driven call landing on a
+    // "PPC"-named tracker instead of a "GMB"-named one. gmbCalls is
+    // checked first so a call matching both filter lists (shouldn't
+    // normally happen) isn't double-counted.
+    const ppcRelevantCalls = rawCalls.filter(
+      (c) => !gmbCalls.includes(c) && reportFilters.some((f) => trackerNameOf(c).includes(f)),
+    );
+    const candidateCalls = [...gmbCalls, ...ppcRelevantCalls];
 
     const matcher = createGmbAdMatcher(callViewRows);
-    const results = gmbCalls.map((c) => {
+    const results = candidateCalls.map((c) => {
       const result = matcher.match(
         c.start_time.slice(0, 10),
         c.start_time,
@@ -236,6 +259,12 @@ export async function GET(req: Request) {
         durationSeconds: c.duration,
         trackerName: c.source_name ?? c.formatted_tracking_source ?? null,
         callerPhone: c.customer_phone_number ?? null,
+        // Which bucket this call would fall back to if it doesn't match —
+        // "GMB" for a GMB-tracker call, "PPC/LSA" otherwise (production
+        // itself uses the caller's actual ownChannel; this audit always
+        // targets PPC clients, so "PPC/LSA" is a diagnostic label, not
+        // necessarily the exact bucket name production would use).
+        fallbackChannel: gmbCalls.includes(c) ? "GMB" : "PPC/LSA",
         ...result,
       };
     });
@@ -313,7 +342,13 @@ export async function GET(req: Request) {
       totalCallViewRowsAvailable: callViewRows.length,
       callViewDisplayLocationBreakdown,
       totalGmbTrackerCalls: gmbCalls.length,
+      totalPpcRelevantCalls: ppcRelevantCalls.length,
+      totalCandidateCalls: candidateCalls.length,
       matchedCount: results.filter((r) => r.matched).length,
+      matchedFromGmbTracker: results.filter((r) => r.matched && r.fallbackChannel === "GMB")
+        .length,
+      matchedFromPpcTracker: results.filter((r) => r.matched && r.fallbackChannel === "PPC/LSA")
+        .length,
       // Raw rows included so the actual field values (not just our
       // interpretation of them) are inspectable directly.
       callViewRows,
