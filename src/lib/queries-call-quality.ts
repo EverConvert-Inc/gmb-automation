@@ -245,8 +245,15 @@ export async function getCallQualityReport({
   to: string; // YYYY-MM-DD
   granularity: CallQualityGranularity;
 }): Promise<CallQualityReport> {
-  const [ppcDailyRows, ppcTagCategoryRows, lsaDailyRows, lsaTagCategoryRows, ppcAdsRows] =
-    await Promise.all([
+  const [
+    ppcDailyRows,
+    ppcTagCategoryRows,
+    lsaDailyRows,
+    lsaTagCategoryRows,
+    ppcAdsRows,
+    activePpcClientIds,
+    activeLsaClientIds,
+  ] = await Promise.all([
       db
         .select({
           ppcClientId: ppcCallrailDaily.ppcClientId,
@@ -295,7 +302,12 @@ export async function getCallQualityReport({
       // PPC's Google Ads cost/conversions aren't split by channel — GMB
       // never gets a cost figure (confirmed: organic, no ad spend), so
       // all of it belongs to the PPC channel. Summed at the DB level
-      // since we don't need per-client/per-campaign detail here.
+      // since we don't need per-client/per-campaign detail here. Joined
+      // to ppcClients to apply the same isActive filter as
+      // getCallQualityByClientReport's equivalent query — this grouping
+      // collapses the client dimension entirely, so unlike ppcDailyRows
+      // below, a client id isn't available in the result rows to filter
+      // after the fact; the exclusion has to happen in the query itself.
       db
         .select({
           date: ppcAdsDaily.date,
@@ -303,13 +315,30 @@ export async function getCallQualityReport({
           conversions: sql<string>`sum(${ppcAdsDaily.conversions})`,
         })
         .from(ppcAdsDaily)
+        .innerJoin(ppcClients, eq(ppcClients.id, ppcAdsDaily.ppcClientId))
         .where(
           and(
             gte(ppcAdsDaily.date, from),
             sql`${ppcAdsDaily.date} <= ${to}`,
+            eq(ppcClients.isActive, true),
           ),
         )
         .groupBy(ppcAdsDaily.date),
+      // Same active-client eligibility rule getCallQualityByClientReport
+      // applies (isActive alone, post the silent-client-drop fix) — a
+      // deactivated client's historical in-range data is excluded from
+      // both functions identically, so the same [from, to] produces the
+      // same summary total regardless of which one is called.
+      db
+        .select({ id: ppcClients.id })
+        .from(ppcClients)
+        .where(eq(ppcClients.isActive, true))
+        .then((rows) => new Set(rows.map((r) => r.id))),
+      db
+        .select({ id: lsaClients.id })
+        .from(lsaClients)
+        .where(eq(lsaClients.isActive, true))
+        .then((rows) => new Set(rows.map((r) => r.id))),
     ]);
 
   // Lowest sortOrder configured for a given label, across every client on
@@ -361,6 +390,7 @@ export async function getCallQualityReport({
       string,
       { real?: number; junk?: number; unclassified?: number }
     >;
+    if (!activePpcClientIds.has(row.ppcClientId)) continue;
     for (const channel of ["PPC", "GMB", "PMax"] as const) {
       const chData = breakdown[channel];
       if (!chData) continue; // no calls classified to this channel that day
@@ -404,6 +434,7 @@ export async function getCallQualityReport({
   // (see normalizeLsaBreakdown) — "LSA" is always present; "GMB" only
   // appears for a client with no matching PPC record.
   for (const row of lsaDailyRows) {
+    if (!activeLsaClientIds.has(row.lsaClientId)) continue;
     const period = periodKey(row.date, granularity);
     const periodAcc = getPeriodAcc(period, "LSA");
     const summaryAcc = summaryAccs.LSA;
