@@ -1,5 +1,10 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildLeadFieldEntries, extractStandardFields } from "./facebook-leads";
+import {
+  buildLeadFieldEntries,
+  extractStandardFields,
+  verifyFacebookSignature,
+} from "./facebook-leads";
 import type { FieldDataEntry } from "./facebook-leads";
 
 describe("buildLeadFieldEntries", () => {
@@ -67,5 +72,39 @@ describe("extractStandardFields", () => {
       phone: null,
       state: null,
     });
+  });
+});
+
+describe("verifyFacebookSignature", () => {
+  const appSecret = "test-app-secret";
+  const rawBody = JSON.stringify({ object: "page", entry: [{ id: "123" }] });
+
+  function sign(body: string, secret: string): string {
+    return `sha256=${createHmac("sha256", secret).update(body, "utf8").digest("hex")}`;
+  }
+
+  it("accepts a signature computed over the exact raw body with the correct secret", () => {
+    const header = sign(rawBody, appSecret);
+    expect(verifyFacebookSignature(rawBody, header, appSecret)).toBe(true);
+  });
+
+  it("rejects a signature computed with the wrong secret", () => {
+    const header = sign(rawBody, "some-other-secret");
+    expect(verifyFacebookSignature(rawBody, header, appSecret)).toBe(false);
+  });
+
+  it("rejects a signature computed over a different body (tampered payload)", () => {
+    const header = sign(rawBody, appSecret);
+    const tamperedBody = JSON.stringify({ object: "page", entry: [{ id: "456" }] });
+    expect(verifyFacebookSignature(tamperedBody, header, appSecret)).toBe(false);
+  });
+
+  it("rejects when the header is missing", () => {
+    expect(verifyFacebookSignature(rawBody, null, appSecret)).toBe(false);
+  });
+
+  it("rejects when the header doesn't have the sha256= prefix", () => {
+    const bareHex = createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+    expect(verifyFacebookSignature(rawBody, bareHex, appSecret)).toBe(false);
   });
 });

@@ -1,5 +1,28 @@
+import { createHmac } from "node:crypto";
+import { timingSafeEqual } from "./crypto";
+
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
+
+const SIGNATURE_PREFIX = "sha256=";
+
+// Facebook signs every webhook POST body with HMAC-SHA256 keyed by the
+// app secret (not the Page Access Token). Verify against the *raw* body
+// string — the caller must capture it via req.text() before any JSON
+// parsing, since re-serializing would produce different bytes than what
+// Facebook actually signed.
+export function verifyFacebookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  appSecret: string,
+): boolean {
+  if (!signatureHeader || !signatureHeader.startsWith(SIGNATURE_PREFIX)) {
+    return false;
+  }
+  const provided = signatureHeader.slice(SIGNATURE_PREFIX.length);
+  const expected = createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+  return timingSafeEqual(provided, expected);
+}
 
 // Meta's own field keys for Lead Ads' built-in contact fields. Used only to
 // populate the denormalized query columns on fb_leads — the notification

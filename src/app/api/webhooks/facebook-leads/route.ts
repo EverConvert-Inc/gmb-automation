@@ -8,6 +8,7 @@ import {
   extractStandardFields,
   fetchFormQuestionLabels,
   fetchLeadFieldData,
+  verifyFacebookSignature,
 } from "@/lib/facebook-leads";
 import { sendFbLeadEmail } from "@/lib/fb-lead-email";
 
@@ -100,9 +101,22 @@ async function processLeadgenChange(value: LeadgenChangeValue) {
 }
 
 export async function POST(req: Request) {
+  // Read the raw body first — verification must run against the exact
+  // bytes Facebook signed. Calling req.json() before this would consume
+  // the stream and force us to verify against a re-serialized (and
+  // potentially byte-different) copy instead.
+  const rawBody = await req.text();
+
+  const appSecret = process.env.FB_APP_SECRET ?? "";
+  const signature = req.headers.get("x-hub-signature-256");
+  if (!appSecret || !verifyFacebookSignature(rawBody, signature, appSecret)) {
+    console.warn("[fb-leads] rejected webhook: missing or invalid X-Hub-Signature-256");
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   let body: WebhookBody;
   try {
-    body = (await req.json()) as WebhookBody;
+    body = JSON.parse(rawBody) as WebhookBody;
   } catch (err) {
     console.error("[fb-leads] invalid JSON body", (err as Error).message);
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
