@@ -99,6 +99,17 @@ export type CallrailTagCategoryConfig = {
 // Junk > Real > Unclassified (a junk/spam flag disqualifies a call from
 // counting as Real regardless of what else is tagged on it).
 //
+// `real` and `junk` are scoped to DIFFERENT populations, on purpose: `junk`
+// (like tagCategoryBreakdown and firstTimeCalls) only counts first-time
+// calls, so it can never exceed firstTimeCalls — same invariant as always.
+// `real` is NOT scoped to first-time calls — a Signed tag can land on a
+// repeat call (the customer called more than once before converting), and
+// missing that lead matters more than keeping `real`'s population aligned
+// with firstTimeCalls/junk's. The Junk > Real priority still applies
+// regardless of first-time status: a repeat call tagged both Signed and
+// Junk counts toward neither (junk wins the priority, but isn't itself
+// counted since it's not first-time). See the isFirstTime handling below.
+//
 // `unclassified` can't actually occur here: the `categories` this
 // function matches against always comes from the client's *current*
 // tag-category config, and every current row has a real/junk rollup by
@@ -533,20 +544,25 @@ export async function pullCallsForCompany(
     const isRelevantForReport = matchesAnyFilter(trackerName, filtersLower);
     if (isRelevantForReport) {
       if (isFirstTime) bucket.firstTimeCalls += 1;
-      // Tag category rollup is scoped to first-time calls only, same
-      // population as firstTimeCalls itself — otherwise Real/Junk/
-      // Unclassified are counted over a different (larger, repeat-caller-
-      // inclusive) population than firstTimeCalls, and can exceed it,
-      // which is exactly the confusing "two unrelated stats" behavior
-      // this scoping fixes. A repeat caller's tagged call still counts
-      // toward totalCalls/signedCases above, just not toward these.
+      // tagCategoryBreakdown stays scoped to first-time calls only, same
+      // population as firstTimeCalls itself. A repeat caller's tagged call
+      // still counts toward totalCalls/signedCases above, just not toward
+      // this per-label breakdown.
       if (isFirstTime) {
         for (const label of matchedCategoryLabels) {
           bucket.tagCategoryBreakdown[label] =
             (bucket.tagCategoryBreakdown[label] ?? 0) + 1;
         }
-        const rollup = resolveCallRollup(matchedCategories);
-        if (rollup) bucket.rollupCounts[rollup] += 1;
+      }
+      // Real/Junk are scoped DIFFERENTLY on purpose — see the
+      // CallrailRollupCounts comment above. Real counts regardless of
+      // first-time status (a Signed tag can land on a repeat call); Junk
+      // stays first-time-only, so it can never exceed firstTimeCalls.
+      const rollup = resolveCallRollup(matchedCategories);
+      if (rollup === "real") {
+        bucket.rollupCounts.real += 1;
+      } else if (rollup === "junk" && isFirstTime) {
+        bucket.rollupCounts.junk += 1;
       }
     }
 
@@ -596,14 +612,21 @@ export async function pullCallsForCompany(
           bucket.channelBreakdown[channel] ?? newChannelBucket();
         channelBucket.totalCalls += 1;
         if (isFirstTime) channelBucket.firstTimeCalls += 1;
-        // Same first-time-only scoping as the flat block above.
+        // tagCategoryBreakdown: same first-time-only scoping as the flat
+        // block above.
         if (isFirstTime) {
           for (const label of matchedCategoryLabels) {
             channelBucket.tagCategoryBreakdown[label] =
               (channelBucket.tagCategoryBreakdown[label] ?? 0) + 1;
           }
-          const rollup = resolveCallRollup(matchedCategories);
-          if (rollup) channelBucket.rollupCounts[rollup] += 1;
+        }
+        // Real/Junk: same differently-scoped treatment as the flat block
+        // above (see the CallrailRollupCounts comment).
+        const rollup = resolveCallRollup(matchedCategories);
+        if (rollup === "real") {
+          channelBucket.rollupCounts.real += 1;
+        } else if (rollup === "junk" && isFirstTime) {
+          channelBucket.rollupCounts.junk += 1;
         }
         bucket.channelBreakdown[channel] = channelBucket;
       }

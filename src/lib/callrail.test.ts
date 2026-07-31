@@ -234,6 +234,161 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
   });
 });
 
+describe("pullCallsForCompany — Real/Junk scoped differently", () => {
+  beforeEach(() => {
+    process.env.CALLRAIL_API_KEY = "test-key";
+    process.env.CALLRAIL_ACCOUNT_ID = "AC1";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CALLRAIL_API_KEY;
+    delete process.env.CALLRAIL_ACCOUNT_ID;
+  });
+
+  const TAG_CATEGORIES_WITH_JUNK = [
+    { label: "Signed", callrailTagName: "Signed", rollup: "real" as const },
+    { label: "Junk", callrailTagName: "Junk", rollup: "junk" as const },
+  ];
+
+  it("counts a repeat caller's Signed tag toward `real` (not scoped to first-time), but a repeat caller's Junk tag NOT toward `junk` (stays first-time-only)", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-first",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: [],
+        source_name: "PPC - Brand",
+        first_call: true,
+      },
+      {
+        // The customer called before, didn't sign, then converted on a
+        // later call — this is the exact scenario this scoping fix is
+        // for. Should count toward `real` even though it isn't first-time.
+        id: "call-repeat-signed",
+        start_time: "2026-07-28T10:00:00-04:00",
+        duration: 90,
+        tags: ["Signed"],
+        source_name: "PPC - Brand",
+        first_call: false,
+      },
+      {
+        // A repeat caller's junk/spam call should NOT inflate `junk` —
+        // that stays scoped to first-time calls only, same as before.
+        id: "call-repeat-junk",
+        start_time: "2026-07-28T11:00:00-04:00",
+        duration: 5,
+        tags: ["Junk"],
+        source_name: "PPC - Brand",
+        first_call: false,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES_WITH_JUNK,
+    );
+
+    expect(day.firstTimeCalls).toBe(1);
+    expect(day.rollupCounts).toEqual({ real: 1, junk: 0, unclassified: 0 });
+    // tagCategoryBreakdown stays first-time-only — neither repeat call
+    // contributes, unlike rollupCounts.real above.
+    expect(day.tagCategoryBreakdown).toEqual({});
+  });
+
+  it("counts neither real nor junk for a repeat call tagged both Signed and Junk — Junk still disqualifies Real via priority, regardless of first-time status, but isn't itself counted since it's not first-time", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-repeat-both",
+        start_time: "2026-07-28T10:00:00-04:00",
+        duration: 90,
+        tags: ["Signed", "Junk"],
+        source_name: "PPC - Brand",
+        first_call: false,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES_WITH_JUNK,
+    );
+
+    expect(day.firstTimeCalls).toBe(0);
+    expect(day.rollupCounts).toEqual({ real: 0, junk: 0, unclassified: 0 });
+  });
+
+  it("still counts a first-time call's Junk tag toward `junk` — unchanged behavior, Junk stays ⊆ firstTimeCalls so it can never exceed it", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-first-junk",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 5,
+        tags: ["Junk"],
+        source_name: "PPC - Brand",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES_WITH_JUNK,
+    );
+
+    expect(day.firstTimeCalls).toBe(1);
+    expect(day.rollupCounts).toEqual({ real: 0, junk: 1, unclassified: 0 });
+  });
+
+  it("applies the same differently-scoped Real/Junk treatment to the per-channel breakdown, not just the flat rollup", async () => {
+    const calls: MockCall[] = [
+      {
+        // Repeat caller, PPC tracker, Signed — should land in
+        // channelBreakdown.PPC.rollupCounts.real despite not being
+        // first-time, same as the flat-bucket case above.
+        id: "call-repeat-signed",
+        start_time: "2026-07-28T10:00:00-04:00",
+        duration: 90,
+        tags: ["Signed"],
+        source_name: "PPC - Brand",
+        first_call: false,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES_WITH_JUNK,
+      ["GMB"], // gmbNameFilters — enables the channel split
+      "PPC",
+    );
+
+    expect(day.channelBreakdown?.PPC.firstTimeCalls).toBe(0);
+    expect(day.channelBreakdown?.PPC.rollupCounts).toEqual({
+      real: 1,
+      junk: 0,
+      unclassified: 0,
+    });
+  });
+});
+
 describe("createGmbAdMatcher — diagnostic delta reporting", () => {
   const callViewRows: CallViewRow[] = [
     {
