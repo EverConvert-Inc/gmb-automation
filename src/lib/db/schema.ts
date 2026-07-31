@@ -762,3 +762,72 @@ export const dataforseoSpendSnapshots = pgTable("dataforseo_spend_snapshots", {
 
 export type DataforseoSpendSnapshot =
   typeof dataforseoSpendSnapshots.$inferSelect;
+
+// Mirrors ppcClients/lsaClients — its own standalone client table rather
+// than a join onto the generic `clients`, per that convention. pageId is
+// the join key the webhook payload arrives with.
+export const fbLeadClients = pgTable(
+  "fb_lead_clients",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    pageId: text("page_id").notNull().unique(),
+    // AES-256-GCM via encryptString/decryptString in crypto.ts, keyed by
+    // ENCRYPTION_KEY — same mechanism as oauthCredentials' token columns.
+    pageAccessTokenEncrypted: text("page_access_token_encrypted").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pageIdx: index("fb_lead_clients_page_idx").on(t.pageId),
+    activeIdx: index("fb_lead_clients_active_idx").on(t.isActive),
+  }),
+);
+
+export type FbLeadClient = typeof fbLeadClients.$inferSelect;
+
+export const fbLeads = pgTable(
+  "fb_leads",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    fbLeadClientId: uuid("fb_lead_client_id")
+      .notNull()
+      .references(() => fbLeadClients.id, { onDelete: "cascade" }),
+    pageId: text("page_id").notNull(),
+    formId: text("form_id").notNull(),
+    leadgenId: text("leadgen_id").notNull(),
+    fullName: text("full_name"),
+    email: text("email"),
+    phone: text("phone"),
+    state: text("state"),
+    // Ordered [{ name, values }] as returned by the Graph API's field_data —
+    // preserves form order so the notification email lists questions in
+    // the same order the lead answered them.
+    fieldData: jsonb("field_data").notNull(),
+    emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // Facebook retries webhook delivery on non-2xx/timeout; this makes
+    // re-processing the same leadgen_id a no-op instead of a duplicate row.
+    leadgenIdUnique: unique("fb_leads_leadgen_id_unique").on(t.leadgenId),
+    clientIdx: index("fb_leads_client_idx").on(t.fbLeadClientId),
+    createdIdx: index("fb_leads_created_idx").on(t.createdAt),
+  }),
+);
+
+export type FbLead = typeof fbLeads.$inferSelect;
+
+// Same pattern as lsaReportRecipients/callQualityReportRecipients — a
+// managed distribution list instead of a hardcoded intake address.
+export const fbLeadRecipients = pgTable("fb_lead_recipients", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type FbLeadRecipient = typeof fbLeadRecipients.$inferSelect;

@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "seed:big5": "tsx src/lib/seed-big5.ts"
+    "seed:big5": "tsx src/lib/seed-big5.ts",
+    "seed:fb-lead-client": "tsx src/lib/seed-fb-lead-client.ts"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
