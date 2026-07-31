@@ -225,54 +225,31 @@ function KpiBox({
   );
 }
 
-// KPI strip + per-client table for one channel — no page/header/footer,
-// shared by ChannelPage (LSA/GMB, each still gets its own page) and
-// PpcPmaxPage (PPC and PMax share one page, this rendered twice as
-// sub-sections). showCost hides Cost/Signed CPL/Ads CPA for GMB (organic,
-// no ad spend) and PMax (spend not isolated from the rest of the PPC
-// account yet). showCallViewBreakdown adds PMax's always-visible call_view
-// reconciliation columns (react-pdf has no collapsible equivalent to the
-// web's per-client dropdown). "Total PMax calls" is deliberately not
-// labeled just "Total calls" — distinct from "First-time" above, since
-// PMax matching is unscoped by first_call.
-function ChannelKpiAndTable({
-  channel,
-  totals,
+// Per-client table for one channel — no KPI strip, no page/header/footer.
+// Shared by ChannelKpiAndTable (LSA/GMB, PPC/PMax's own pages if ever
+// used standalone again) and PpcPmaxPage's PPC/PMax sub-sections, which
+// render only the table (no KPI strip — see PpcPmaxPage). showCost hides
+// Cost/Signed CPL/Ads CPA for GMB (organic, no ad spend) and PMax (spend
+// not isolated from the rest of the PPC account yet). showCallViewBreakdown
+// adds PMax's always-visible call_view reconciliation columns (react-pdf
+// has no collapsible equivalent to the web's per-client dropdown). "Total
+// PMax calls" is deliberately not labeled just "Total calls" — distinct
+// from "First-time" above, since PMax matching is unscoped by first_call.
+function ClientTable({
+  showCost,
+  showCallViewBreakdown,
   clientRows,
 }: {
-  channel: CallQualityChannel;
-  totals: CallQualityByClientReport["summary"][CallQualityChannel];
+  showCost: boolean;
+  showCallViewBreakdown: boolean;
   clientRows: CallQualityClientRow[];
 }) {
-  const showCost = channel !== "GMB" && channel !== "PMax";
-  const showCallViewBreakdown = channel === "PMax";
   const rows = [...clientRows].sort(
     (a, b) => b.real - a.real || a.clientName.localeCompare(b.clientName),
   );
 
   return (
     <>
-      <View style={styles.kpiStrip}>
-        <KpiBox
-          label="First-time calls"
-          value={fmtNumber(totals.firstTimeCalls)}
-        />
-        <KpiBox
-          label="Signed"
-          value={fmtNumber(totals.real)}
-          sublabel={`${fmtNumber(totals.junk)} junk, ${fmtNumber(totals.unclassified)} unclassified`}
-        />
-        <KpiBox
-          label="Cost"
-          value={showCost ? fmtMicros(totals.costMicros) : "—"}
-        />
-        <KpiBox
-          label="Signed cost / signed lead"
-          value={fmtUsdOrDash(totals.realCostPerRealLead)}
-          sublabel={`Ads-reported CPA: ${fmtUsdOrDash(totals.adsReportedCpa)}`}
-        />
-      </View>
-
       {rows.length === 0 ? (
         <Text style={styles.emptyNotice}>
           No clients linked to CallRail for this channel yet.
@@ -341,6 +318,53 @@ function ChannelKpiAndTable({
           ))}
         </View>
       )}
+    </>
+  );
+}
+
+// KPI strip + ClientTable for one channel — used by ChannelPage (LSA/GMB,
+// each still gets its own page with a KPI strip). PpcPmaxPage renders
+// ClientTable directly for its PPC/PMax sub-sections instead of this —
+// the combined KPI strip up top is the only KPI summary shown there now.
+function ChannelKpiAndTable({
+  channel,
+  totals,
+  clientRows,
+}: {
+  channel: CallQualityChannel;
+  totals: CallQualityByClientReport["summary"][CallQualityChannel];
+  clientRows: CallQualityClientRow[];
+}) {
+  const showCost = channel !== "GMB" && channel !== "PMax";
+  const showCallViewBreakdown = channel === "PMax";
+
+  return (
+    <>
+      <View style={styles.kpiStrip}>
+        <KpiBox
+          label="First-time calls"
+          value={fmtNumber(totals.firstTimeCalls)}
+        />
+        <KpiBox
+          label="Signed"
+          value={fmtNumber(totals.real)}
+          sublabel={`${fmtNumber(totals.junk)} junk, ${fmtNumber(totals.unclassified)} unclassified`}
+        />
+        <KpiBox
+          label="Cost"
+          value={showCost ? fmtMicros(totals.costMicros) : "—"}
+        />
+        <KpiBox
+          label="Signed cost / signed lead"
+          value={fmtUsdOrDash(totals.realCostPerRealLead)}
+          sublabel={`Ads-reported CPA: ${fmtUsdOrDash(totals.adsReportedCpa)}`}
+        />
+      </View>
+      <ClientTable
+        showCost={showCost}
+        showCallViewBreakdown={showCallViewBreakdown}
+        clientRows={clientRows}
+      />
     </>
   );
 }
@@ -417,9 +441,11 @@ function ChannelPage({
 // signed lead" looks worse than reality once some of its real leads move
 // to PMax's bucket while the cost stays behind, even though nothing
 // about the true effective CPL actually changed (see
-// call-quality-combined.ts). One page: combined total up top (the
-// accurate effective picture), then PPC and PMax broken out below exactly
-// as ChannelPage would render them individually.
+// call-quality-combined.ts). One page: combined total up top is the only
+// KPI summary shown (PPC's/PMax's own KPI strips would just restate a
+// split that's no longer the headline number), then PPC and PMax broken
+// out below as client tables only — still genuinely separate lead
+// sources, just without their own top-level stats anymore.
 function PpcPmaxPage({
   ppcTotals,
   pmaxTotals,
@@ -459,12 +485,12 @@ function PpcPmaxPage({
 
       <View style={styles.channelDivider}>
         <Text style={styles.channelHeading}>PPC</Text>
-        <ChannelKpiAndTable channel="PPC" totals={ppcTotals} clientRows={ppcClientRows} />
+        <ClientTable showCost clientRows={ppcClientRows} showCallViewBreakdown={false} />
       </View>
 
       <View style={styles.channelDivider}>
         <Text style={styles.channelHeading}>PMax</Text>
-        <ChannelKpiAndTable channel="PMax" totals={pmaxTotals} clientRows={pmaxClientRows} />
+        <ClientTable showCost={false} clientRows={pmaxClientRows} showCallViewBreakdown />
       </View>
 
       <PageFooter />

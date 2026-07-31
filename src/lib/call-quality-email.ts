@@ -81,8 +81,10 @@ function fmtSubject(fromIso: string, toIso: string): string {
 // is tracked in the data but not shown here — low value at this
 // aggregated level), since (unlike PPC/LSA) there's no single unified
 // KPI set across PPC/LSA/GMB/PMax. Full per-client breakdown is in the
-// attached PDF. `indent` renders a sub-row ("↳ PPC"/"↳ PMax") nested
-// under the bolded combined row — same grouping as the web view and PDF.
+// attached PDF. `bold` marks the combined "PPC + PMax" row — PPC and
+// PMax no longer get their own rows here (see call-quality-combined.ts;
+// same simplification as the web view and PDF, which dropped their
+// individual KPI blocks too).
 function channelRow({
   label,
   firstTimeCalls,
@@ -90,7 +92,6 @@ function channelRow({
   junk,
   cost,
   bold = false,
-  indent = false,
 }: {
   label: string;
   firstTimeCalls: number;
@@ -98,17 +99,12 @@ function channelRow({
   junk: number;
   cost: string;
   bold?: boolean;
-  indent?: boolean;
 }): string {
-  const labelStyle = indent
-    ? "padding:6px 4px 6px 20px;font-size:12px;font-weight:500;color:#475569;"
-    : `padding:6px 4px;font-size:13px;font-weight:${bold ? 700 : 600};color:#0f172a;`;
-  const cellStyle = indent
-    ? "padding:6px 4px;font-size:12px;text-align:right;color:#475569;"
-    : "padding:6px 4px;font-size:13px;text-align:right;color:#334155;";
+  const labelStyle = `padding:6px 4px;font-size:13px;font-weight:${bold ? 700 : 600};color:#0f172a;`;
+  const cellStyle = "padding:6px 4px;font-size:13px;text-align:right;color:#334155;";
   return `
       <tr${bold ? ` style="background:#f8fafc;"` : ""}>
-        <td style="${labelStyle}">${indent ? "↳ " : ""}${label}</td>
+        <td style="${labelStyle}">${label}</td>
         <td style="${cellStyle}">${fmtNumber(firstTimeCalls)}</td>
         <td style="${cellStyle}">${fmtNumber(real)}</td>
         <td style="${cellStyle}">${fmtNumber(junk)}</td>
@@ -118,13 +114,15 @@ function channelRow({
 
 // Whole-report call_view reconciliation, PMax only (see
 // CallrailChannelBucket in callrail.ts). Only shown when nonzero — a
-// quiet period shouldn't add a noise line every day. Full per-client
-// detail is in the attached PDF/web dropdown; this is just a flag.
+// quiet period shouldn't add a noise line every day. Attached to the
+// combined "PPC + PMax" row rather than a PMax-specific one, since PMax
+// no longer gets its own row here. Full per-client detail is in the
+// attached PDF/web dropdown; this is just a flag.
 function pmaxUnmatchedNoteHtml(pmax: CallQualityChannelTotals): string {
   if (pmax.callViewRowsUnmatched <= 0) return "";
   return `
       <tr>
-        <td colspan="5" style="padding:0 4px 6px 20px;font-size:11px;color:#b45309;">
+        <td colspan="5" style="padding:0 4px 6px;font-size:11px;color:#b45309;">
           ⚠ ${fmtNumber(pmax.callViewRowsUnmatched)} of ${fmtNumber(pmax.callViewRowsTotal)} PMax calls (per Google Ads' call_view) had no matching CallRail record this period.
         </td>
       </tr>`;
@@ -134,9 +132,8 @@ function pmaxUnmatchedNoteHtml(pmax: CallQualityChannelTotals): string {
 // (Gmail strips <style> blocks but respects inline `style=` attributes).
 // PMax calls are pulled entirely out of PPC's own numbers, but PPC's
 // cost was never actually split — so a bolded "PPC + PMax" combined row
-// (the accurate effective picture, see call-quality-combined.ts) comes
-// first, with PPC and PMax nested underneath as indented sub-rows before
-// LSA and GMB. Same grouping as the web view and PDF.
+// (the accurate effective picture, see call-quality-combined.ts) is the
+// only PPC/PMax row shown, ahead of LSA and GMB.
 function renderEmailHtml({
   report,
   range,
@@ -157,22 +154,6 @@ function renderEmailHtml({
       junk: combined.junk,
       cost: fmtMicros(combined.costMicros),
       bold: true,
-    }),
-    channelRow({
-      label: "PPC",
-      firstTimeCalls: ppc.firstTimeCalls,
-      real: ppc.real,
-      junk: ppc.junk,
-      cost: fmtMicros(ppc.costMicros),
-      indent: true,
-    }),
-    channelRow({
-      label: "PMax",
-      firstTimeCalls: pmax.firstTimeCalls,
-      real: pmax.real,
-      junk: pmax.junk,
-      cost: "—",
-      indent: true,
     }) + pmaxUnmatchedNoteHtml(pmax),
     channelRow({
       label: "LSA",
@@ -245,22 +226,19 @@ function channelTextLine({
   real,
   junk,
   cost,
-  indent = false,
 }: {
   label: string;
   firstTimeCalls: number;
   real: number;
   junk: number;
   cost: string;
-  indent?: boolean;
 }): string {
-  const prefix = indent ? `  ↳ ${label}`.padEnd(11) : label.padEnd(11);
-  return `${prefix} first-time ${fmtNumber(firstTimeCalls)}, signed ${fmtNumber(real)}, junk ${fmtNumber(junk)}, cost ${cost}`;
+  return `${label.padEnd(11)} first-time ${fmtNumber(firstTimeCalls)}, signed ${fmtNumber(real)}, junk ${fmtNumber(junk)}, cost ${cost}`;
 }
 
 // Plain-text fallback for email clients that don't render HTML (and
 // improves deliverability — Gmail dings senders who only ship HTML).
-// Same "PPC + PMax" combined-then-nested grouping as renderEmailHtml.
+// Same combined-only "PPC + PMax" row as renderEmailHtml.
 function renderEmailText({
   report,
   range,
@@ -281,26 +259,12 @@ function renderEmailText({
       junk: combined.junk,
       cost: fmtMicros(combined.costMicros),
     }),
-    channelTextLine({
-      label: "PPC",
-      firstTimeCalls: ppc.firstTimeCalls,
-      real: ppc.real,
-      junk: ppc.junk,
-      cost: fmtMicros(ppc.costMicros),
-      indent: true,
-    }),
-    channelTextLine({
-      label: "PMax",
-      firstTimeCalls: pmax.firstTimeCalls,
-      real: pmax.real,
-      junk: pmax.junk,
-      cost: "—",
-      indent: true,
-    }),
-    // Same nonzero-only gate as renderEmailHtml's pmaxUnmatchedNoteHtml.
+    // Same nonzero-only gate as renderEmailHtml's pmaxUnmatchedNoteHtml —
+    // PMax no longer has its own row here, so this stays attached to the
+    // combined row instead.
     ...(pmax.callViewRowsUnmatched > 0
       ? [
-          `        ⚠ ${fmtNumber(pmax.callViewRowsUnmatched)} of ${fmtNumber(pmax.callViewRowsTotal)} PMax calls (per Google Ads' call_view) had no matching CallRail record this period.`,
+          `      ⚠ ${fmtNumber(pmax.callViewRowsUnmatched)} of ${fmtNumber(pmax.callViewRowsTotal)} PMax calls (per Google Ads' call_view) had no matching CallRail record this period.`,
         ]
       : []),
     channelTextLine({

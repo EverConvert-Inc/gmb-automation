@@ -107,10 +107,12 @@ export function CallQualityChannelSection({
 // call-quality-combined.ts) — so PPC's own "Signed cost / signed lead"
 // looks worse than reality once some of its real leads move to PMax's
 // bucket while the cost stays behind. This groups PPC and PMax into one
-// card: a combined total up top (the accurate effective picture), then
-// each channel broken out below exactly as it already renders elsewhere
-// — same components, same numbers, just nested instead of two separate
-// top-level cards.
+// card: a combined total up top (the accurate effective picture) is the
+// only KPI summary shown — PPC's and PMax's own stat tiles would just
+// restate a split that's no longer the headline number. The per-client
+// tables below still break PPC and PMax out separately, since they're
+// genuinely different lead sources (PMax is ad-driven and tracked via
+// call_view reconciliation) even though the KPI summary above them isn't.
 export function CallQualityPpcPmaxSection({
   icon,
   ppcTotals,
@@ -156,12 +158,12 @@ export function CallQualityPpcPmaxSection({
 
         <div className="border-t pt-6">
           <div className="mb-3 text-sm font-semibold">PPC</div>
-          <ChannelStatsAndTable channel="PPC" totals={ppcTotals} clientRows={ppcClientRows} />
+          <CallQualityClientTable rows={ppcClientRows} showCost showCallViewBreakdown={false} />
         </div>
 
         <div className="border-t pt-6">
           <div className="mb-3 text-sm font-semibold">PMax</div>
-          <ChannelStatsAndTable channel="PMax" totals={pmaxTotals} clientRows={pmaxClientRows} />
+          <CallQualityClientTable rows={pmaxClientRows} showCost={false} showCallViewBreakdown />
         </div>
       </div>
     </SectionCard>
