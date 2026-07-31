@@ -5,6 +5,7 @@ import { db } from "@/lib/db/client";
 import { oauthCredentials } from "@/lib/db/schema";
 import { decryptString } from "@/lib/crypto";
 import { pullLocalServicesLeads } from "@/lib/google-ads";
+import { daysAgoIsoEastern, todayIsoEastern } from "@/lib/date-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,12 +21,6 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
 // Temporary diagnostic: pullLocalServicesLeads()'s arbitrary-range path
 // (creation_date_time BETWEEN '<from> 00:00:00' AND '<to> 23:59:59')
 // typechecks but has never been run live — lsa-test only ever exercised
@@ -37,8 +32,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const toDate = isoDaysAgo(0);
-  const fromDate = isoDaysAgo(6); // 7-day window, inclusive of today
+  const toDate = todayIsoEastern();
+  const fromDate = daysAgoIsoEastern(6); // 7-day window, inclusive of today
 
   try {
     const cred = await db.query.oauthCredentials.findFirst({

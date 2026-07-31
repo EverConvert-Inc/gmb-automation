@@ -4,22 +4,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Calendar } from "lucide-react";
-
-// Returns YYYY-MM-DD for a Date in UTC.
-function iso(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-// Latest day we actually have data for. The Google Ads + CallRail crons
-// only sync yesterday's metrics (today is still in flight), so capping
-// every preset at yesterday avoids comparing N-1 days of real data
-// against a full N-day prior period. Without this cap, every delta on
-// the report skews more negative than reality.
-function latestDataDay(): Date {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d;
-}
+import {
+  daysAgoIsoEastern,
+  firstOfMonthIsoEastern,
+  firstOfPreviousMonthIsoEastern,
+  lastDayOfPreviousMonthIsoEastern,
+  yesterdayIsoEastern,
+} from "@/lib/date-utils";
 
 type Preset = {
   key: string;
@@ -33,53 +24,40 @@ function presets(): Preset[] {
     {
       key: "last7",
       label: "Last 7 days",
-      range: () => {
-        const to = latestDataDay();
-        const from = new Date(to);
-        from.setUTCDate(from.getUTCDate() - 6);
-        return [iso(from), iso(to)];
-      },
+      // The Google Ads + CallRail crons only sync yesterday's metrics
+      // (today is still in flight), so every preset caps `to` at
+      // yesterday — without that cap, every delta on the report skews
+      // more negative than reality by comparing N-1 days of real data
+      // against a full N-day prior period.
+      range: () => [daysAgoIsoEastern(7), yesterdayIsoEastern()],
     },
     {
       key: "mtd",
       label: "This month",
       range: () => {
-        const to = latestDataDay();
-        const now = new Date();
-        const from = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-        );
+        const from = firstOfMonthIsoEastern();
+        const to = yesterdayIsoEastern();
         // Day-1-of-month edge case: yesterday is in the previous month,
         // so clamp `to` forward to `from`. The query returns no rows and
         // the report shows an empty state, which is accurate — this
-        // month has no synced data yet.
-        const toClamped = to.getTime() < from.getTime() ? from : to;
-        return [iso(from), iso(toClamped)];
+        // month has no synced data yet. ISO YYYY-MM-DD strings sort
+        // lexicographically the same as chronologically, so a plain
+        // string compare is exact here.
+        return [from, to < from ? from : to];
       },
     },
     {
       key: "lastMonth",
       label: "Last month",
-      range: () => {
-        const now = new Date();
-        const from = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
-        );
-        const to = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0),
-        );
-        return [iso(from), iso(to)];
-      },
+      range: () => [
+        firstOfPreviousMonthIsoEastern(),
+        lastDayOfPreviousMonthIsoEastern(),
+      ],
     },
     {
       key: "last90",
       label: "Last 90 days",
-      range: () => {
-        const to = latestDataDay();
-        const from = new Date(to);
-        from.setUTCDate(from.getUTCDate() - 89);
-        return [iso(from), iso(to)];
-      },
+      range: () => [daysAgoIsoEastern(90), yesterdayIsoEastern()],
     },
   ];
 }

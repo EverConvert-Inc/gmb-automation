@@ -56,3 +56,27 @@ export function firstOfMonthIsoEastern(): string {
   const [year, month] = toIsoDateEastern(new Date()).split("-");
   return `${year}-${month}-01`;
 }
+
+// First of the PREVIOUS Eastern-local month. Built from
+// firstOfMonthIsoEastern()'s already-resolved Eastern year/month — pure
+// calendar arithmetic on those two integers, not a fresh `now` lookup, so
+// there's no further timezone/DST edge case to worry about here.
+export function firstOfPreviousMonthIsoEastern(): string {
+  const [year, month] = firstOfMonthIsoEastern().split("-").map(Number);
+  const prevYear = month === 1 ? year - 1 : year;
+  const prevMonth = month === 1 ? 12 : month - 1;
+  return `${prevYear}-${String(prevMonth).padStart(2, "0")}-01`;
+}
+
+// Last day of the PREVIOUS Eastern-local month — i.e. the day before the
+// first of the current Eastern-local month. Built the same way: pure UTC
+// calendar-date arithmetic on firstOfMonthIsoEastern()'s already-resolved
+// year/month/day-1 triple (not a new `now` lookup), so it's exact with no
+// DST edge cases — this UTC Date is standing in for an abstract calendar
+// date, not a real Eastern instant.
+export function lastDayOfPreviousMonthIsoEastern(): string {
+  const [year, month] = firstOfMonthIsoEastern().split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, 1));
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}

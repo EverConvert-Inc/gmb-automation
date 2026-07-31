@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sendDailyCallQualityEmail } from "@/lib/call-quality-email";
 import { yesterdayIso } from "@/lib/ppc-sync";
+import { firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -10,13 +11,6 @@ function checkCronAuth(req: Request): boolean {
   if (!expected) return false;
   const header = req.headers.get("authorization");
   return header === `Bearer ${expected}`;
-}
-
-// First day of the current month in UTC (YYYY-MM-01).
-function monthStartIso(now = new Date()): string {
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-  return `${y}-${m}-01`;
 }
 
 // Vercel cron entry. Fires daily at 10:10 UTC, after both the PPC and LSA
@@ -30,7 +24,7 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const dryRun = url.searchParams.get("dry") === "1";
-  const from = url.searchParams.get("from") ?? monthStartIso();
+  const from = url.searchParams.get("from") ?? firstOfMonthIsoEastern();
   const to = url.searchParams.get("to") ?? yesterdayIso();
 
   try {

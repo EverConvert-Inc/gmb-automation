@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   daysAgoIsoEastern,
   firstOfMonthIsoEastern,
+  firstOfPreviousMonthIsoEastern,
+  lastDayOfPreviousMonthIsoEastern,
   todayIsoEastern,
   yesterdayIsoEastern,
 } from "./date-utils";
@@ -74,5 +76,36 @@ describe("date-utils — Eastern-time date boundaries", () => {
     vi.setSystemTime(new Date("2026-07-30T09:40:00Z")); // Eastern: 2026-07-30
 
     expect(daysAgoIsoEastern(30)).toBe("2026-06-30");
+  });
+
+  it("firstOfPreviousMonthIsoEastern() rolls back a month, including a year boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-30T09:40:00Z")); // Eastern: 2026-07-30
+    expect(firstOfPreviousMonthIsoEastern()).toBe("2026-06-01");
+
+    vi.setSystemTime(new Date("2026-01-15T09:40:00Z")); // Eastern: 2026-01-15
+    expect(firstOfPreviousMonthIsoEastern()).toBe("2025-12-01");
+  });
+
+  it("lastDayOfPreviousMonthIsoEastern() is the day before the current Eastern-local month started, including a short-February/year boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-30T09:40:00Z")); // Eastern: 2026-07-30
+    expect(lastDayOfPreviousMonthIsoEastern()).toBe("2026-06-30");
+
+    vi.setSystemTime(new Date("2026-01-15T09:40:00Z")); // Eastern: 2026-01-15
+    expect(lastDayOfPreviousMonthIsoEastern()).toBe("2025-12-31");
+
+    vi.setSystemTime(new Date("2026-03-15T09:40:00Z")); // Eastern: 2026-03-15
+    expect(lastDayOfPreviousMonthIsoEastern()).toBe("2026-02-28");
+  });
+
+  it("firstOfPreviousMonthIsoEastern()/lastDayOfPreviousMonthIsoEastern() use the Eastern-local month across a UTC month boundary", () => {
+    // 2026-08-01T02:30:00Z = 2026-07-31 22:30 Eastern — still July in
+    // Eastern time, even though UTC has already rolled into August.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T02:30:00Z"));
+
+    expect(firstOfPreviousMonthIsoEastern()).toBe("2026-06-01");
+    expect(lastDayOfPreviousMonthIsoEastern()).toBe("2026-06-30");
   });
 });
