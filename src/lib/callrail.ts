@@ -162,15 +162,19 @@ export type CallrailDailyTotals = {
   // Business Profile, so tracker-name matching alone can't tell paid PMax
   // traffic apart from organic GMB traffic. Any call already in scope for
   // this client — GMB-tracker OR the caller's own PPC/LSA-tracker — is
-  // reclassified into "PMax" when it cross-references to a Google Ads
-  // call_view row (see createGmbAdMatcher below), regardless of which
-  // bucket its tracker name would otherwise put it in. Confirmed real:
-  // an ad-driven call landing on a "PPC - Google Map" tracker matched a
-  // call_view row Google itself labels "Ad" source for the same PMax
-  // campaign — tracker naming is a human-configured label and can be
-  // wrong; call_view cross-reference is the authoritative signal. GMB's
-  // (and PPC/LSA's) totals reflect non-PMax traffic only once a call has
-  // been pulled out into PMax; a call is never counted in both.
+  // reclassified when it cross-references to a Google Ads call_view row
+  // (see createGmbAdMatcher below), regardless of which bucket its
+  // tracker name would otherwise put it in — into "PMax" specifically
+  // when the matched row's campaign is PERFORMANCE_MAX, or "PPC" for any
+  // other ad-driven campaign type (SEARCH, etc.) that call_view also
+  // surfaces. Confirmed real (via pmax-campaign-type-audit) that non-PMax
+  // campaigns DO show up in call_view for at least one real account —
+  // tracker naming is a human-configured label and can be wrong;
+  // call_view cross-reference is the authoritative signal, and campaign
+  // type is what actually decides PMax vs PPC once cross-referenced.
+  // GMB's totals reflect non-ad-driven traffic only, once a call has been
+  // pulled out into PMax or PPC; a call is never counted in more than one
+  // channel.
   channelBreakdown: Record<string, CallrailChannelBucket> | null;
 };
 
@@ -256,6 +260,9 @@ export type GmbAdMatchResult = {
     callViewAreaCodeAvailable: boolean;
     campaignId: string;
     campaignName: string;
+    // e.g. "PERFORMANCE_MAX", "SEARCH" — decides PMax vs PPC on a match,
+    // see the channel-classification block in pullCallsForCompany below.
+    campaignAdvertisingChannelType: string;
     matchedStartCallDateTime: string;
     matchedCallDurationSeconds: number;
   };
@@ -349,6 +356,7 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
       callViewAreaCodeAvailable: best.areaCodeAvailable,
       campaignId: best.entry.row.campaignId,
       campaignName: best.entry.row.campaignName,
+      campaignAdvertisingChannelType: best.entry.row.campaignAdvertisingChannelType,
       matchedStartCallDateTime: best.entry.row.startCallDateTime,
       matchedCallDurationSeconds: best.entry.row.callDurationSeconds,
     };
@@ -579,13 +587,17 @@ export async function pullCallsForCompany(
     // can't reliably distinguish ad-driven traffic from organic/direct
     // traffic on its own (see CallrailDailyTotals' channelBreakdown
     // comment for the confirmed real case: a call on a "PPC"-named
-    // tracker that was actually ad-driven PMax traffic). A match pulls
-    // the call into "PMax" from whichever bucket it would've landed in;
-    // a non-match falls back to today's tracker-name classification
-    // unchanged. Unscoped by first_call — ad-attribution is a
-    // traffic-source property of the call itself, not a call-quality
-    // classification, so a repeat caller's PMax call is still
-    // reclassified the same way a first-time one would be.
+    // tracker that was actually ad-driven PMax traffic). A match's
+    // resulting channel depends on the matched call_view row's campaign
+    // type (see pmax-campaign-type-audit — confirmed real accounts have
+    // non-PMax campaigns producing call_view rows too, not just PMax):
+    // PERFORMANCE_MAX becomes "PMax"; any other ad-driven type (SEARCH,
+    // etc.) becomes "PPC", regardless of tracker name or original
+    // channel. A non-match falls back to today's tracker-name
+    // classification unchanged. Unscoped by first_call — ad-attribution
+    // is a traffic-source property of the call itself, not a
+    // call-quality classification, so a repeat caller's ad-driven call
+    // is still reclassified the same way a first-time one would be.
     if (bucket.channelBreakdown) {
       const isGmbTracker =
         !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
@@ -598,7 +610,11 @@ export async function pullCallsForCompany(
           call.customer_phone_number,
         );
         if (matchResult.matched) {
-          channel = "PMax";
+          channel =
+            matchResult.bestCandidate?.campaignAdvertisingChannelType ===
+            "PERFORMANCE_MAX"
+              ? "PMax"
+              : "PPC";
         } else if (isGmbTracker) {
           channel = "GMB";
         } else {

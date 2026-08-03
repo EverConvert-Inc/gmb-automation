@@ -237,6 +237,205 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
   });
 });
 
+describe("pullCallsForCompany — PMax vs PPC by matched campaign type", () => {
+  beforeEach(() => {
+    process.env.CALLRAIL_API_KEY = "test-key";
+    process.env.CALLRAIL_ACCOUNT_ID = "AC1";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CALLRAIL_API_KEY;
+    delete process.env.CALLRAIL_ACCOUNT_ID;
+  });
+
+  it("classifies a GMB-tracker call matching a non-PMax (SEARCH) call_view row as PPC, not PMax — matched campaign type wins over tracker name/original channel", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-a",
+        start_time: "2026-07-28T14:10:05-04:00",
+        duration: 249,
+        tags: [],
+        source_name: "GMB - Raleigh",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const callViewRows: CallViewRow[] = [
+      {
+        startCallDateTime: "2026-07-28 14:10:05",
+        callDurationSeconds: 249,
+        callerAreaCode: "678",
+        campaignId: "1",
+        campaignName: "Brand Search Terms",
+        callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "SEARCH",
+      },
+    ];
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+
+    expect(day.channelBreakdown?.PPC?.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.GMB).toBeUndefined();
+    // A PMax key can still exist (call_view reconciliation always records
+    // the row's consumption there — see the third test below), but no
+    // call actually landed in it.
+    expect(day.channelBreakdown?.PMax?.totalCalls ?? 0).toBe(0);
+  });
+
+  it("classifies a non-GMB-tracker (own-channel) call matching a non-PMax call_view row as PPC too — same outcome as its tracker-name fallback would've given, just confirming the matched path agrees", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-a",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: [],
+        source_name: "PPC - Brand",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const callViewRows: CallViewRow[] = [
+      {
+        startCallDateTime: "2026-07-28 09:00:00",
+        callDurationSeconds: 30,
+        callerAreaCode: "678",
+        campaignId: "1",
+        campaignName: "Brand Search Terms",
+        callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "SEARCH",
+      },
+    ];
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+
+    expect(day.channelBreakdown?.PPC?.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.PMax?.totalCalls ?? 0).toBe(0);
+  });
+
+  it("still counts a SEARCH-matched call_view row as 'matched' in the PMax bucket's reconciliation fields, even though the call itself lands in PPC — reconciliation tracks call_view-row consumption, not resulting channel label", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-a",
+        start_time: "2026-07-28T14:10:05-04:00",
+        duration: 249,
+        tags: [],
+        source_name: "GMB - Raleigh",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const callViewRows: CallViewRow[] = [
+      {
+        startCallDateTime: "2026-07-28 14:10:05",
+        callDurationSeconds: 249,
+        callerAreaCode: "678",
+        campaignId: "1",
+        campaignName: "Brand Search Terms",
+        callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "SEARCH",
+      },
+    ];
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+
+    expect(day.channelBreakdown?.PPC?.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.PMax?.callViewRowsTotal).toBe(1);
+    expect(day.channelBreakdown?.PMax?.callViewRowsMatched).toBe(1);
+    expect(day.channelBreakdown?.PMax?.callViewRowsUnmatched).toBe(0);
+  });
+
+  it("still falls back to tracker-name classification unchanged when nothing in call_view matches at all — regression guard for the untouched non-match branch", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-gmb",
+        start_time: "2026-07-28T14:10:05-04:00",
+        duration: 249,
+        tags: [],
+        source_name: "GMB - Raleigh",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+      {
+        id: "call-ppc",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: [],
+        source_name: "PPC - Brand",
+        first_call: true,
+        customer_phone_number: "+16787049350",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    // No call_view rows at all near either call — both must fall back to
+    // tracker-name classification exactly as before this change.
+    const callViewRows: CallViewRow[] = [
+      {
+        startCallDateTime: "2026-07-28 23:00:00",
+        callDurationSeconds: 10,
+        callerAreaCode: "404",
+        campaignId: "9",
+        campaignName: "Unrelated Campaign",
+        callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "SEARCH",
+      },
+    ];
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "PPC",
+      callViewRows,
+    );
+
+    expect(day.channelBreakdown?.GMB?.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.PPC?.totalCalls).toBe(1);
+    expect(day.channelBreakdown?.PMax?.totalCalls ?? 0).toBe(0);
+  });
+});
+
 describe("pullCallsForCompany — Real/Junk scoped differently", () => {
   beforeEach(() => {
     process.env.CALLRAIL_API_KEY = "test-key";
