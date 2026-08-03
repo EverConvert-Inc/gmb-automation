@@ -112,7 +112,19 @@ async function resolveCallrailAccountId(): Promise<string> {
 // date range further if a client hits the cap. No DB writes, no changes
 // to production sync logic. Delete once answered.
 //
-// Usage: /api/cron/text-message-audit?client=<ppc_clients.name substring>&from=YYYY-MM-DD&to=YYYY-MM-DD
+// Usage (list mode): /api/cron/text-message-audit?client=<ppc_clients.name substring>&from=YYYY-MM-DD&to=YYYY-MM-DD
+//
+// Usage (single-conversation mode): /api/cron/text-message-audit?client=<...>&conversationId=<id>
+// Hits GET /v3/a/{account_id}/text-messages/{conversationId}.json instead —
+// added to empirically check whether a single-conversation fetch returns
+// more than the list endpoint's "two most recent messages" per
+// conversation (per CallRail's own docs, a fixed property of the
+// conversation resource, not a list-pagination artifact — but worth
+// confirming live rather than trusting a search-result description of the
+// docs, same "ask the live API" approach as everything else here). Pick a
+// conversation id from a prior list-mode response, ideally one with a
+// last_message_at that's clearly much later than when the conversation
+// likely first started.
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -120,13 +132,20 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const clientName = url.searchParams.get("client");
+  const conversationId = url.searchParams.get("conversationId");
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
-  if (!clientName || !from || !to) {
+  if (!clientName) {
+    return NextResponse.json(
+      { error: "client (ppc_clients.name substring) query param is required" },
+      { status: 400 },
+    );
+  }
+  if (!conversationId && (!from || !to)) {
     return NextResponse.json(
       {
         error:
-          "client (ppc_clients.name substring), from, and to (YYYY-MM-DD) query params are required",
+          "either conversationId (single-conversation mode), or both from and to (YYYY-MM-DD, list mode), are required",
       },
       { status: 400 },
     );
@@ -150,18 +169,25 @@ export async function GET(req: Request) {
     }
 
     const accountId = await resolveCallrailAccountId();
-    const fetchUrl = new URL(
-      `${CALLRAIL_BASE_URL}/v3/a/${accountId}/text-messages.json`,
-    );
-    fetchUrl.searchParams.set("company_id", client.callrailCompanyId);
-    fetchUrl.searchParams.set("page", "1");
-    fetchUrl.searchParams.set("per_page", "250");
-    fetchUrl.searchParams.set("start_date", from);
-    fetchUrl.searchParams.set("end_date", to);
-    fetchUrl.searchParams.set(
-      "fields",
-      "tracker_name,lead_status,source,customer_phone_number,recent_messages",
-    );
+
+    const fetchUrl = conversationId
+      ? new URL(
+          `${CALLRAIL_BASE_URL}/v3/a/${accountId}/text-messages/${conversationId}.json`,
+        )
+      : new URL(`${CALLRAIL_BASE_URL}/v3/a/${accountId}/text-messages.json`);
+    if (conversationId) {
+      fetchUrl.searchParams.set("fields", "tracker_name,recent_messages");
+    } else {
+      fetchUrl.searchParams.set("company_id", client.callrailCompanyId);
+      fetchUrl.searchParams.set("page", "1");
+      fetchUrl.searchParams.set("per_page", "250");
+      fetchUrl.searchParams.set("start_date", from!);
+      fetchUrl.searchParams.set("end_date", to!);
+      fetchUrl.searchParams.set(
+        "fields",
+        "tracker_name,lead_status,source,customer_phone_number,recent_messages",
+      );
+    }
 
     const res = await fetch(fetchUrl.toString(), {
       headers: callrailAuthHeaders(),
@@ -175,12 +201,27 @@ export async function GET(req: Request) {
       // page would prove the endpoint/params are wrong outright).
     }
 
+    // Single-conversation mode's whole point — surfaced at the top level
+    // so the answer ("does this exceed 2?") doesn't require digging
+    // through the raw body by hand.
+    const recentMessagesCount =
+      conversationId &&
+      parsedBody &&
+      typeof parsedBody === "object" &&
+      Array.isArray((parsedBody as Record<string, unknown>).recent_messages)
+        ? ((parsedBody as Record<string, unknown>).recent_messages as unknown[])
+            .length
+        : null;
+
     return NextResponse.json(
       {
         clientName: client.name,
         callrailCompanyId: client.callrailCompanyId,
+        mode: conversationId ? "single-conversation" : "list",
+        conversationId,
         from,
         to,
+        recentMessagesCount,
         requestUrl: fetchUrl.toString(),
         responseStatus: res.status,
         responseOk: res.ok,
@@ -190,7 +231,7 @@ export async function GET(req: Request) {
     );
   } catch (err) {
     return NextResponse.json(
-      { clientName, from, to, error: describeError(err) },
+      { clientName, conversationId, from, to, error: describeError(err) },
       { status: 500 },
     );
   }

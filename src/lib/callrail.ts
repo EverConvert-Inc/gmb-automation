@@ -378,6 +378,25 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
   return { match, unconsumedRows };
 }
 
+function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
+  return filters.some((f) => trackerName.includes(f));
+}
+
+// Junk > Real > Unclassified: a junk/spam tag disqualifies a call (or
+// message conversation — see pullTextMessagesForCompany) from counting as
+// Real regardless of what else is tagged on it. Returns null (contributes
+// to no rollup) when nothing matched a configured category at all — same
+// as today's behavior for uncategorized tags. Shared (module-scope, not a
+// closure) since both pullCallsForCompany and pullTextMessagesForCompany
+// need the identical priority resolution.
+function resolveCallRollup(
+  matched: Array<{ rollup: "real" | "junk" }>,
+): "real" | "junk" | null {
+  if (matched.some((c) => c.rollup === "junk")) return "junk";
+  if (matched.some((c) => c.rollup === "real")) return "real";
+  return null;
+}
+
 // Walks every call in the window and groups by (day in UTC). Signed cases =
 // count of calls that (a) carry the configured tag (case-insensitive) and
 // (b) come in on a tracking number whose name contains any of the configured
@@ -479,22 +498,6 @@ export async function pullCallsForCompany(
       tagCategoryBreakdown: {},
       rollupCounts: newRollupCounts(),
     };
-  }
-
-  function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
-    return filters.some((f) => trackerName.includes(f));
-  }
-
-  // Junk > Real > Unclassified: a junk/spam tag disqualifies a call from
-  // counting as Real regardless of what else is tagged on it. Returns
-  // null (contributes to no rollup) when the call matched no configured
-  // category at all — same as today's behavior for uncategorized tags.
-  function resolveCallRollup(
-    matched: Array<{ rollup: "real" | "junk" }>,
-  ): "real" | "junk" | null {
-    if (matched.some((c) => c.rollup === "junk")) return "junk";
-    if (matched.some((c) => c.rollup === "real")) return "real";
-    return null;
   }
 
   const gmbMatcher = createGmbAdMatcher(callViewRows ?? []);
