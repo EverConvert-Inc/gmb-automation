@@ -713,17 +713,13 @@ type CallRailTextMessage = {
 type CallRailConversation = {
   id: string;
   tracker_name?: string | null;
-  // The list endpoint's preview — confirmed live to be capped at the 2
-  // most recent messages, NOT full history (see pullTextMessagesForCompany
-  // below for why that matters).
-  recent_messages?: CallRailTextMessage[] | null;
 };
 
 type CallRailConversationDetail = {
   id: string;
-  // The single-conversation endpoint's field name for the SAME concept —
-  // confirmed live to return full message history, unlike the list
-  // endpoint's `recent_messages`. Different name, different (larger) cap.
+  // The single-conversation endpoint's field name for the same concept as
+  // the list endpoint's `recent_messages` — confirmed live to return full
+  // message history, not a capped preview.
   messages?: CallRailTextMessage[] | null;
 };
 
@@ -733,15 +729,8 @@ function tagNamesOf(thread: CallRailSmsThread | null | undefined): string[] {
   );
 }
 
-function sameTagSet(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sortedA = [...a].sort();
-  const sortedB = [...b].sort();
-  return sortedA.every((t, i) => t === sortedB[i]);
-}
-
 export type TextMessageDailyRollup = {
-  date: string; // YYYY-MM-DD — the conversation's TRUE first message date
+  date: string; // YYYY-MM-DD — the earliest message that itself resolved "real"
   real: number;
 };
 
@@ -754,16 +743,25 @@ export type TextMessageDailyRollup = {
 // first-time-equivalent concept, and this is specifically fixing Real
 // undercounting, not adding a parallel Junk-from-messages metric.
 //
-// Two calls per Signed conversation, not per conversation: the list
-// endpoint's `recent_messages` preview already carries tags (confirmed
-// identical across every message in a conversation), so Junk/null-resolved
-// conversations are filtered out using only the free list-call data — no
-// second call. Only once a conversation resolves to "real" do we fetch its
-// full history (list's `recent_messages` is capped at 2 most recent
-// messages — confirmed live, not the true first message for a
-// longer-running conversation) via the single-conversation endpoint's
-// `messages` field (a different field name, confirmed to return full
-// history) to find the true earliest message and its date.
+// Tags are NOT constant across a conversation — confirmed real: a single
+// conversation id can carry multiple distinct sms_threads with different
+// tags (e.g. an older thread tagged "Signed", a newer one tagged
+// "Duplicate" with no Signed tag at all — CallRail's UI even shows these
+// as two separate conversation rows for the same customer/number, while
+// the API bundles them under one conversation id). That rules out the
+// earlier "cheap list-preview decides Real, only then fetch full history"
+// optimization entirely — the Signed thread can be OLDER than what the
+// 2-message list preview shows, so the preview can't reliably rule
+// anything out. Every tracker-relevant conversation's full history is
+// fetched via the single-conversation endpoint's `messages` field
+// (confirmed to return full history, unlike the list endpoint's capped
+// `recent_messages`) and EACH MESSAGE's own tags are resolved
+// independently — the conversation counts as real if ANY message
+// resolves real, using the earliest such message's date. Junk > Real
+// priority still applies WITHIN a single message's own tags (a message
+// tagged both Signed and Junk still resolves to Junk for that message),
+// but never ACROSS messages — a later message tagged Junk/Duplicate must
+// not retroactively suppress an earlier message that was genuinely Real.
 export async function pullTextMessagesForCompany(
   companyId: string,
   fromDate: string,
@@ -781,7 +779,7 @@ export async function pullTextMessagesForCompany(
     url.searchParams.set("per_page", "250");
     url.searchParams.set("start_date", fromDate);
     url.searchParams.set("end_date", toDate);
-    url.searchParams.set("fields", "tracker_name,recent_messages");
+    url.searchParams.set("fields", "tracker_name");
     const res = await fetch(url.toString(), { headers: authHeaders() });
     if (!res.ok) {
       throw new Error(
@@ -812,18 +810,6 @@ export async function pullTextMessagesForCompany(
     const trackerName = (convo.tracker_name ?? "").toLowerCase();
     if (!matchesAnyFilter(trackerName, filtersLower)) continue;
 
-    const preview = convo.recent_messages ?? [];
-    if (preview.length === 0) continue;
-    const previewTags = tagNamesOf(preview[0].sms_thread);
-    const matchedCategories = categories.filter((c) =>
-      previewTags.includes(c.tag),
-    );
-    const rollup = resolveCallRollup(matchedCategories);
-    if (rollup !== "real") continue;
-
-    // Only reached for a conversation that's actually Signed — the list
-    // preview's date would be wrong for anything but a very short
-    // conversation, so fetch full history for the true first message.
     const detailUrl = new URL(
       `${BASE_URL}/v3/a/${accountId}/text-messages/${convo.id}.json`,
     );
@@ -833,7 +819,7 @@ export async function pullTextMessagesForCompany(
     });
     if (!detailRes.ok) {
       console.warn(
-        `[pullTextMessagesForCompany] detail fetch failed for conversation ${convo.id}: ${detailRes.status} — this Signed conversation is not counted this run`,
+        `[pullTextMessagesForCompany] detail fetch failed for conversation ${convo.id}: ${detailRes.status} — skipped this run`,
       );
       continue;
     }
@@ -841,21 +827,19 @@ export async function pullTextMessagesForCompany(
     const allMessages = detail.messages ?? [];
     if (allMessages.length === 0) continue;
 
-    // Sanity check: tags are confirmed constant across the 2-message
-    // preview — this extends that assumption to the full history, which
-    // hasn't been independently verified. Log rather than silently trust
-    // it if it's ever wrong; the preview's tags (already used to reach
-    // "real" above) still stand either way.
-    const allTagsMatch = allMessages.every((m) =>
-      sameTagSet(tagNamesOf(m.sms_thread), previewTags),
-    );
-    if (!allTagsMatch) {
-      console.warn(
-        `[pullTextMessagesForCompany] tags differ across messages within conversation ${convo.id} — assumption of conversation-constant tags violated; using the list preview's tags`,
-      );
-    }
+    // Resolve each message's own tags independently (Junk > Real >
+    // Unclassified within that message only) — real messages only, then
+    // take the earliest one. A message that doesn't resolve real (Junk,
+    // unclassified, or untagged) never suppresses a different message
+    // that does.
+    const realMessages = allMessages.filter((m) => {
+      const tags = tagNamesOf(m.sms_thread);
+      const matchedCategories = categories.filter((c) => tags.includes(c.tag));
+      return resolveCallRollup(matchedCategories) === "real";
+    });
+    if (realMessages.length === 0) continue;
 
-    const earliest = allMessages.reduce((min, m) =>
+    const earliest = realMessages.reduce((min, m) =>
       m.created_at < min.created_at ? m : min,
     );
     // Same "already account-local, no UTC conversion needed" convention as
