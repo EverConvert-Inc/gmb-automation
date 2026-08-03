@@ -439,6 +439,13 @@ export type CallViewRow = {
   // doesn't recognize the value, rather than risking a wrong/nonexistent
   // enum name silently mislabeling it.
   callTrackingDisplayLocation: string;
+  // e.g. "PERFORMANCE_MAX", "SEARCH", "LOCAL_SERVICES" — added to audit
+  // whether call_view ever carries a non-PMax campaign (createGmbAdMatcher
+  // reclassifies ANY matched call_view row to "PMax" today, regardless of
+  // what kind of campaign actually produced it — see
+  // pmax-campaign-type-audit). Not yet used to gate or filter matching
+  // itself; purely diagnostic until that's confirmed one way or the other.
+  campaignAdvertisingChannelType: string;
 };
 
 function decodeCallTrackingDisplayLocation(raw: unknown): string {
@@ -448,15 +455,25 @@ function decodeCallTrackingDisplayLocation(raw: unknown): string {
   return enumMap?.[raw] ?? String(raw);
 }
 
+// Same decode pattern as pullDailyMetrics' campaign.status handling —
+// e.g. "PERFORMANCE_MAX", "SEARCH", "LOCAL_SERVICES".
+function decodeAdvertisingChannelType(raw: unknown): string {
+  if (typeof raw !== "number") return String(raw ?? "");
+  const enumMap = (enums as Record<string, Record<number, string> | undefined>)
+    .AdvertisingChannelType;
+  return enumMap?.[raw] ?? String(raw);
+}
+
 // Pulls Google Ads' call_view resource — calls placed via a call
 // extension/call-only ad — for cross-referencing against CallRail calls to
 // determine ad-driven vs organic (see callrail.ts). Confirmed live against
 // a real account: call_view rejects segments.date entirely in SELECT or
 // WHERE (PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE) — it isn't
 // date-filterable the way campaign/local_services_lead are. campaign.id/
-// campaign.name are call_view's documented "Attributed Resources"
-// (selectable/filterable, but don't segment the result set), which is why
-// only those two (not segments.*) appear in the WHERE-less query below.
+// campaign.name/campaign.status/campaign.advertising_channel_type are
+// call_view's documented "Attributed Resources" (selectable/filterable,
+// but don't segment the result set), which is why only those (not
+// segments.*) appear in the WHERE-less query below.
 //
 // Since there's no server-side date bound, we pull the most recent rows
 // instead (capped + ordered) and let the caller bucket by date itself —
@@ -487,7 +504,8 @@ export async function pullCallViewRows(
       call_view.call_tracking_display_location,
       campaign.id,
       campaign.name,
-      campaign.status
+      campaign.status,
+      campaign.advertising_channel_type
     FROM call_view
     WHERE campaign.status = 'ENABLED'
     ORDER BY call_view.start_call_date_time DESC
@@ -515,6 +533,9 @@ export async function pullCallViewRows(
       campaignName: String(campaign.name ?? ""),
       callTrackingDisplayLocation: decodeCallTrackingDisplayLocation(
         callView.call_tracking_display_location,
+      ),
+      campaignAdvertisingChannelType: decodeAdvertisingChannelType(
+        campaign.advertising_channel_type,
       ),
     };
   });

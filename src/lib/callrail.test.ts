@@ -99,6 +99,7 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
         campaignId: "1",
         campaignName: "Local PMax Map | Calls",
         callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
       {
         // Different time/area — present in the pool but shouldn't match
@@ -109,6 +110,7 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
         campaignId: "2",
         campaignName: "Other Campaign",
         callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
     ];
 
@@ -180,6 +182,7 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
         campaignId: "1",
         campaignName: "Local PMAX | Phone Calls",
         callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
     ];
 
@@ -398,6 +401,7 @@ describe("createGmbAdMatcher — diagnostic delta reporting", () => {
       campaignId: "1",
       campaignName: "Local PMax Map | Calls",
       callTrackingDisplayLocation: "AD",
+      campaignAdvertisingChannelType: "PERFORMANCE_MAX",
     },
   ];
 
@@ -496,6 +500,7 @@ describe("createGmbAdMatcher — blank call_view area code fallback", () => {
       campaignId: "1",
       campaignName: "Local PMax Map | Calls",
       callTrackingDisplayLocation: "LANDING_PAGE",
+      campaignAdvertisingChannelType: "PERFORMANCE_MAX",
     },
   ];
 
@@ -558,6 +563,7 @@ describe("createGmbAdMatcher — blank call_view area code fallback", () => {
         campaignId: "1",
         campaignName: "Local PMax Map | Calls",
         callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
     ]);
     const result = matcher.match(
@@ -606,6 +612,7 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
         campaignId: "1",
         campaignName: "Local PMax Map | Calls",
         callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
       {
         // Same day, no CallRail call anywhere near it — stays unmatched.
@@ -615,6 +622,7 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
         campaignId: "2",
         campaignName: "Other Campaign",
         callTrackingDisplayLocation: "AD",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
       {
         // A day with a call_view row but ZERO CallRail calls at all —
@@ -625,6 +633,7 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
         campaignId: "3",
         campaignName: "Other Campaign",
         callTrackingDisplayLocation: "LANDING_PAGE",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
     ];
 
@@ -670,6 +679,7 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
         campaignId: "1",
         campaignName: "Old Campaign",
         callTrackingDisplayLocation: "LANDING_PAGE",
+        campaignAdvertisingChannelType: "PERFORMANCE_MAX",
       },
     ];
 
