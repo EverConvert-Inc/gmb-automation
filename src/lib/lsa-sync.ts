@@ -10,7 +10,7 @@ import {
 } from "./db/schema";
 import { decryptString } from "./crypto";
 import { pullLocalServicesCost, pullLocalServicesLeads } from "./google-ads";
-import { pullCallsForCompany } from "./callrail";
+import { pullCallsForCompany, pullTextMessagesForCompany } from "./callrail";
 import { yesterdayIsoEastern, daysAgoIsoEastern } from "./date-utils";
 
 type SyncOpts = {
@@ -305,6 +305,73 @@ export async function syncLsaForClient(
           b.firstTimeCalls = r.firstTimeCalls;
         }
         b.callrailFetched = true;
+      }
+
+      // Text/message conversations — a separate CallRail resource
+      // (/text-messages.json) pullCallsForCompany never touches, so a
+      // Signed tag applied to a message conversation was silently
+      // uncounted (confirmed real via manual CallRail UI inspection).
+      // Wrapped in its own try/catch — a failure here shouldn't block the
+      // calls-derived data above from being written, same per-source
+      // resilience already applied to the ads-vs-callrail split.
+      try {
+        const messageRollups = await pullTextMessagesForCompany(
+          client.callrailCompanyId,
+          opts.fromDate,
+          opts.toDate,
+          client.signedCaseNameFilters,
+          tagCategories,
+        );
+        for (const r of messageRollups) {
+          const b = bucket(r.date);
+          const current = b.rollupCounts as Record<string, unknown>;
+          // Detect shape from the bucket's OWN current value, not from
+          // gmbNameFilters — even a channel-splitting client can have a
+          // genuinely flat rollupCounts for a given date (the calls loop
+          // above falls back to flat whenever that day's calls matched no
+          // channel at all), and queries-call-quality.ts's
+          // normalizeLsaBreakdown already reads a flat day as 100% "LSA"
+          // at report time. Same detection rule as that function: nested
+          // iff some value is itself an object.
+          const isNested = Object.values(current).some(
+            (v) => v !== null && typeof v === "object",
+          );
+          if (isNested) {
+            // Fold into the "LSA" channel specifically (never GMB/PPC/
+            // PMax — a Signed message conversation is an LSA-tracker
+            // concept), preserving every other channel key untouched.
+            const nested = current as Record<
+              string,
+              { real: number; junk: number; unclassified: number }
+            >;
+            const existingLsa = nested.LSA ?? {
+              real: 0,
+              junk: 0,
+              unclassified: 0,
+            };
+            b.rollupCounts = {
+              ...nested,
+              LSA: { ...existingLsa, real: existingLsa.real + r.real },
+            };
+          } else {
+            const flat = current as {
+              real?: number;
+              junk?: number;
+              unclassified?: number;
+            };
+            b.rollupCounts = {
+              real: (flat.real ?? 0) + r.real,
+              junk: flat.junk ?? 0,
+              unclassified: flat.unclassified ?? 0,
+            };
+          }
+          b.callrailFetched = true;
+        }
+      } catch (err) {
+        console.error(
+          `[lsa-sync] text-message pull failed for lsa_client ${lsaClientId}:`,
+          (err as Error).message,
+        );
       }
 
       await db

@@ -700,3 +700,172 @@ export async function pullCallsForCompany(
     a.date.localeCompare(b.date),
   );
 }
+
+type CallRailSmsThread = {
+  tags?: Array<{ id: number; name: string } | string> | null;
+};
+
+type CallRailTextMessage = {
+  created_at: string;
+  sms_thread?: CallRailSmsThread | null;
+};
+
+type CallRailConversation = {
+  id: string;
+  tracker_name?: string | null;
+  // The list endpoint's preview — confirmed live to be capped at the 2
+  // most recent messages, NOT full history (see pullTextMessagesForCompany
+  // below for why that matters).
+  recent_messages?: CallRailTextMessage[] | null;
+};
+
+type CallRailConversationDetail = {
+  id: string;
+  // The single-conversation endpoint's field name for the SAME concept —
+  // confirmed live to return full message history, unlike the list
+  // endpoint's `recent_messages`. Different name, different (larger) cap.
+  messages?: CallRailTextMessage[] | null;
+};
+
+function tagNamesOf(thread: CallRailSmsThread | null | undefined): string[] {
+  return (thread?.tags ?? []).map((t) =>
+    (typeof t === "string" ? t : t.name).toLowerCase(),
+  );
+}
+
+function sameTagSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((t, i) => t === sortedB[i]);
+}
+
+export type TextMessageDailyRollup = {
+  date: string; // YYYY-MM-DD — the conversation's TRUE first message date
+  real: number;
+};
+
+// Text/message conversations are a separate CallRail resource from calls
+// (/text-messages.json, not /calls.json) — pullCallsForCompany never sees
+// them, so a Signed tag applied to a message conversation (confirmed real:
+// CallRail's UI supports tagging text conversations the same as calls) was
+// silently uncounted. Only Real (Signed) is derived from messages — same
+// scope decision as calls' first-time-vs-real split: messages have no
+// first-time-equivalent concept, and this is specifically fixing Real
+// undercounting, not adding a parallel Junk-from-messages metric.
+//
+// Two calls per Signed conversation, not per conversation: the list
+// endpoint's `recent_messages` preview already carries tags (confirmed
+// identical across every message in a conversation), so Junk/null-resolved
+// conversations are filtered out using only the free list-call data — no
+// second call. Only once a conversation resolves to "real" do we fetch its
+// full history (list's `recent_messages` is capped at 2 most recent
+// messages — confirmed live, not the true first message for a
+// longer-running conversation) via the single-conversation endpoint's
+// `messages` field (a different field name, confirmed to return full
+// history) to find the true earliest message and its date.
+export async function pullTextMessagesForCompany(
+  companyId: string,
+  fromDate: string,
+  toDate: string,
+  nameFilters: string[],
+  tagCategories: CallrailTagCategoryConfig[] = [],
+): Promise<TextMessageDailyRollup[]> {
+  const accountId = await resolveAccountId();
+  const conversations: CallRailConversation[] = [];
+  let page = 1;
+  while (true) {
+    const url = new URL(`${BASE_URL}/v3/a/${accountId}/text-messages.json`);
+    url.searchParams.set("company_id", companyId);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", "250");
+    url.searchParams.set("start_date", fromDate);
+    url.searchParams.set("end_date", toDate);
+    url.searchParams.set("fields", "tracker_name,recent_messages");
+    const res = await fetch(url.toString(), { headers: authHeaders() });
+    if (!res.ok) {
+      throw new Error(
+        `CallRail text-messages fetch failed: ${res.status} ${await res.text()}`,
+      );
+    }
+    const body = (await res.json()) as {
+      conversations?: CallRailConversation[];
+      total_pages?: number;
+    };
+    for (const c of body.conversations ?? []) conversations.push(c);
+    if (!body.total_pages || page >= body.total_pages) break;
+    page += 1;
+  }
+
+  const filtersLower = nameFilters
+    .map((f) => f.trim().toLowerCase())
+    .filter(Boolean);
+  const categories = tagCategories.map((c) => ({
+    label: c.label,
+    tag: c.callrailTagName.trim().toLowerCase(),
+    rollup: c.rollup,
+  }));
+
+  const byDate = new Map<string, number>();
+
+  for (const convo of conversations) {
+    const trackerName = (convo.tracker_name ?? "").toLowerCase();
+    if (!matchesAnyFilter(trackerName, filtersLower)) continue;
+
+    const preview = convo.recent_messages ?? [];
+    if (preview.length === 0) continue;
+    const previewTags = tagNamesOf(preview[0].sms_thread);
+    const matchedCategories = categories.filter((c) =>
+      previewTags.includes(c.tag),
+    );
+    const rollup = resolveCallRollup(matchedCategories);
+    if (rollup !== "real") continue;
+
+    // Only reached for a conversation that's actually Signed — the list
+    // preview's date would be wrong for anything but a very short
+    // conversation, so fetch full history for the true first message.
+    const detailUrl = new URL(
+      `${BASE_URL}/v3/a/${accountId}/text-messages/${convo.id}.json`,
+    );
+    detailUrl.searchParams.set("fields", "messages");
+    const detailRes = await fetch(detailUrl.toString(), {
+      headers: authHeaders(),
+    });
+    if (!detailRes.ok) {
+      console.warn(
+        `[pullTextMessagesForCompany] detail fetch failed for conversation ${convo.id}: ${detailRes.status} — this Signed conversation is not counted this run`,
+      );
+      continue;
+    }
+    const detail = (await detailRes.json()) as CallRailConversationDetail;
+    const allMessages = detail.messages ?? [];
+    if (allMessages.length === 0) continue;
+
+    // Sanity check: tags are confirmed constant across the 2-message
+    // preview — this extends that assumption to the full history, which
+    // hasn't been independently verified. Log rather than silently trust
+    // it if it's ever wrong; the preview's tags (already used to reach
+    // "real" above) still stand either way.
+    const allTagsMatch = allMessages.every((m) =>
+      sameTagSet(tagNamesOf(m.sms_thread), previewTags),
+    );
+    if (!allTagsMatch) {
+      console.warn(
+        `[pullTextMessagesForCompany] tags differ across messages within conversation ${convo.id} — assumption of conversation-constant tags violated; using the list preview's tags`,
+      );
+    }
+
+    const earliest = allMessages.reduce((min, m) =>
+      m.created_at < min.created_at ? m : min,
+    );
+    // Same "already account-local, no UTC conversion needed" convention as
+    // pullCallsForCompany's call.start_time.slice(0, 10) — confirmed live
+    // that created_at has the same timezone-offset shape as start_time.
+    const date = earliest.created_at.slice(0, 10);
+    byDate.set(date, (byDate.get(date) ?? 0) + 1);
+  }
+
+  return Array.from(byDate.entries())
+    .map(([date, real]) => ({ date, real }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGmbAdMatcher, pullCallsForCompany } from "./callrail";
+import {
+  createGmbAdMatcher,
+  pullCallsForCompany,
+  pullTextMessagesForCompany,
+} from "./callrail";
 import type { CallViewRow } from "./google-ads";
 
 type MockCall = {
@@ -895,5 +899,260 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
     );
 
     expect(days).toEqual([]);
+  });
+});
+
+type MockConversation = {
+  id: string;
+  tracker_name?: string | null;
+  recent_messages?: Array<{ created_at: string; sms_thread?: { tags?: string[] } }>;
+};
+
+function mockListResponse(conversations: MockConversation[]) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ conversations, total_pages: 1 }),
+    text: async () => "",
+  };
+}
+
+function mockDetailResponse(
+  messages: Array<{ created_at: string; sms_thread?: { tags?: string[] } }>,
+) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ messages }),
+    text: async () => "",
+  };
+}
+
+// Routes to the list response for /text-messages.json and the detail
+// response for /text-messages/{id}.json — the two calls
+// pullTextMessagesForCompany makes are distinguished by URL shape, same
+// as CallRail's own routing (a bare .json vs a /{id}.json path segment).
+function mockTextMessageFetch(
+  listResponse: ReturnType<typeof mockListResponse>,
+  detailResponse?: ReturnType<typeof mockDetailResponse>,
+) {
+  return vi.fn(async (url: string) => {
+    if (url.includes("/text-messages.json")) return listResponse;
+    if (url.includes("/text-messages/")) {
+      if (!detailResponse) {
+        throw new Error(`Unexpected detail fetch: ${url}`);
+      }
+      return detailResponse;
+    }
+    throw new Error(`Unmocked fetch: ${url}`);
+  });
+}
+
+const TAG_CATEGORIES_MESSAGES = [
+  { label: "Signed", callrailTagName: "Signed", rollup: "real" as const },
+  { label: "Spam", callrailTagName: "Spam", rollup: "junk" as const },
+];
+
+describe("pullTextMessagesForCompany — Signed message conversations", () => {
+  beforeEach(() => {
+    process.env.CALLRAIL_API_KEY = "test-key";
+    process.env.CALLRAIL_ACCOUNT_ID = "AC1";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CALLRAIL_API_KEY;
+    delete process.env.CALLRAIL_ACCOUNT_ID;
+  });
+
+  it("counts a Real-tagged conversation using the detail endpoint's true earliest message date, not the list preview's capped dates", async () => {
+    const listResponse = mockListResponse([
+      {
+        id: "convo-1",
+        tracker_name: "LSA 5156 Charlotte",
+        recent_messages: [
+          { created_at: "2026-07-30T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+          { created_at: "2026-07-31T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ],
+      },
+    ]);
+    // Full history goes back further than the 2-message preview showed —
+    // this is the whole point of the detail fetch.
+    const detailResponse = mockDetailResponse([
+      { created_at: "2026-07-01T13:38:01.427-04:00", sms_thread: { tags: ["Signed"] } },
+      { created_at: "2026-07-30T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+      { created_at: "2026-07-31T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+    ]);
+    const fetchMock = mockTextMessageFetch(listResponse, detailResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rollups = await pullTextMessagesForCompany(
+      "COMPANY1",
+      "2026-07-01",
+      "2026-07-31",
+      ["LSA"],
+      TAG_CATEGORIES_MESSAGES,
+    );
+
+    expect(rollups).toEqual([{ date: "2026-07-01", real: 1 }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // list + one detail call
+  });
+
+  it("skips a conversation whose tracker doesn't match nameFilters — no detail call made at all", async () => {
+    const listResponse = mockListResponse([
+      {
+        id: "convo-1",
+        tracker_name: "PPC - Brand",
+        recent_messages: [
+          { created_at: "2026-07-30T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ],
+      },
+    ]);
+    const fetchMock = mockTextMessageFetch(listResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rollups = await pullTextMessagesForCompany(
+      "COMPANY1",
+      "2026-07-01",
+      "2026-07-31",
+      ["LSA"],
+      TAG_CATEGORIES_MESSAGES,
+    );
+
+    expect(rollups).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // list only
+  });
+
+  it("skips a conversation that resolves to no rollup (untagged, or tags matching no category) — no detail call made", async () => {
+    const listResponse = mockListResponse([
+      {
+        id: "convo-1",
+        tracker_name: "LSA 5156 Charlotte",
+        recent_messages: [
+          { created_at: "2026-07-30T09:00:00.000-04:00", sms_thread: { tags: ["Opportunity"] } },
+        ],
+      },
+    ]);
+    const fetchMock = mockTextMessageFetch(listResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rollups = await pullTextMessagesForCompany(
+      "COMPANY1",
+      "2026-07-01",
+      "2026-07-31",
+      ["LSA"],
+      TAG_CATEGORIES_MESSAGES,
+    );
+
+    expect(rollups).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count a conversation tagged both Signed and Spam — Junk beats Real via the same priority as calls, no detail call made", async () => {
+    const listResponse = mockListResponse([
+      {
+        id: "convo-1",
+        tracker_name: "LSA 5156 Charlotte",
+        recent_messages: [
+          {
+            created_at: "2026-07-30T09:00:00.000-04:00",
+            sms_thread: { tags: ["Signed", "Spam"] },
+          },
+        ],
+      },
+    ]);
+    const fetchMock = mockTextMessageFetch(listResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rollups = await pullTextMessagesForCompany(
+      "COMPANY1",
+      "2026-07-01",
+      "2026-07-31",
+      ["LSA"],
+      TAG_CATEGORIES_MESSAGES,
+    );
+
+    expect(rollups).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs a warning and skips (without crashing) when the detail fetch for a Real-resolved conversation fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const listResponse = mockListResponse([
+      {
+        id: "convo-1",
+        tracker_name: "LSA 5156 Charlotte",
+        recent_messages: [
+          { created_at: "2026-07-30T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ],
+      },
+    ]);
+    const failingDetail = {
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+      text: async () => "server error",
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/text-messages.json")) return listResponse;
+      return failingDetail;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rollups = await pullTextMessagesForCompany(
+      "COMPANY1",
+      "2026-07-01",
+      "2026-07-31",
+      ["LSA"],
+      TAG_CATEGORIES_MESSAGES,
+    );
+
+    expect(rollups).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("detail fetch failed for conversation convo-1"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("sums multiple Real conversations landing on the same true-first-message date", async () => {
+    const listResponse = mockListResponse([
+      {
+        id: "convo-1",
+        tracker_name: "LSA 5156 Charlotte",
+        recent_messages: [
+          { created_at: "2026-07-30T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ],
+      },
+      {
+        id: "convo-2",
+        tracker_name: "LSA 5156 Charlotte",
+        recent_messages: [
+          { created_at: "2026-07-30T10:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ],
+      },
+    ]);
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/text-messages.json")) return listResponse;
+      if (url.includes("/text-messages/convo-1"))
+        return mockDetailResponse([
+          { created_at: "2026-07-15T09:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ]);
+      if (url.includes("/text-messages/convo-2"))
+        return mockDetailResponse([
+          { created_at: "2026-07-15T11:00:00.000-04:00", sms_thread: { tags: ["Signed"] } },
+        ]);
+      throw new Error(`Unmocked fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rollups = await pullTextMessagesForCompany(
+      "COMPANY1",
+      "2026-07-01",
+      "2026-07-31",
+      ["LSA"],
+      TAG_CATEGORIES_MESSAGES,
+    );
+
+    expect(rollups).toEqual([{ date: "2026-07-15", real: 2 }]);
   });
 });
