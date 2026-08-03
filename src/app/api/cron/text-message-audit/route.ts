@@ -80,25 +80,37 @@ async function resolveCallrailAccountId(): Promise<string> {
 
 // Temporary read-only diagnostic: does CallRail's text-message conversation
 // resource — distinct from /calls.json, which is all pullCallsForCompany
-// ever fetches — carry the same tags/tracker-name/customer-phone fields we
-// already match on for calls? Real gap under investigation: at least 2
-// real conversations have been manually confirmed tagged "Signed" in
-// CallRail's own text-conversation view, using an LSA client's tracking
-// number, but the sync never pulls message conversations at all — those
-// signed leads are silently uncounted today.
+// ever fetches — carry enough signal to tell a Signed message conversation
+// apart from others? Real gap under investigation: at least 2 real
+// conversations have been manually confirmed tagged "Signed" in CallRail's
+// own text-conversation view, using an LSA client's tracking number, but
+// the sync never pulls message conversations at all — those signed leads
+// are silently uncounted today.
 //
-// Same "ask the live API, don't trust docs" approach already used for
-// calls.json's first_call/customer_phone_number fields (see callrail.ts) —
-// requests exactly the field set /calls.json already uses
-// (tags, source_name, formatted_tracking_source, customer_phone_number)
-// against /v3/a/{account_id}/text-messages.json and returns CallRail's
-// response completely unprocessed (not re-shaped into our own types) —
-// a clean response confirms the field names/resource shape; a non-200
-// confirms which assumption is wrong. Single page only (per_page=250, no
-// pagination loop) — this is a one-off sample for one client/date range,
-// not a production puller; narrow the date range further if a client hits
-// the cap. No DB writes, no changes to production sync logic. Delete once
-// answered.
+// First run (requesting tags/source_name/formatted_tracking_source,
+// mirroring /calls.json's fields) 400'd — CallRail confirmed this
+// resource has NO `tags` field at all, despite the UI showing a "Tags"
+// column for text conversations. Valid fields per that error: id,
+// initial_tracker_id, current_tracker_id, customer_name,
+// customer_phone_number, initial_tracking_number, current_tracking_number,
+// last_message_at, state, formatted_customer_phone_number,
+// formatted_initial_tracking_number, formatted_current_tracking_number,
+// formatted_customer_name, company_time_zone, tracker_name, company_name,
+// company_id, recent_messages, lead_status, source. This request now asks
+// for tracker_name/lead_status/source/customer_phone_number/
+// recent_messages — lead_status is the candidate for where a message's
+// Signed-equivalent status actually lives (the UI's "Tags" column may be
+// synthesized client-side from lead_status, or from something in
+// recent_messages, rather than a real per-conversation tags array), and
+// source is the candidate tracker/channel-type signal. Still the same
+// "ask the live API, don't trust docs" approach already used for
+// calls.json's first_call/customer_phone_number fields (see callrail.ts):
+// returns CallRail's response completely unprocessed (not re-shaped into
+// our own types) so lead_status's actual values are visible directly.
+// Single page only (per_page=250, no pagination loop) — this is a one-off
+// sample for one client/date range, not a production puller; narrow the
+// date range further if a client hits the cap. No DB writes, no changes
+// to production sync logic. Delete once answered.
 //
 // Usage: /api/cron/text-message-audit?client=<ppc_clients.name substring>&from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: Request) {
@@ -148,7 +160,7 @@ export async function GET(req: Request) {
     fetchUrl.searchParams.set("end_date", to);
     fetchUrl.searchParams.set(
       "fields",
-      "tags,source_name,formatted_tracking_source,customer_phone_number",
+      "tracker_name,lead_status,source,customer_phone_number,recent_messages",
     );
 
     const res = await fetch(fetchUrl.toString(), {
