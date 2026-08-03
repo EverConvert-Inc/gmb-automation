@@ -125,6 +125,13 @@ async function resolveCallrailAccountId(): Promise<string> {
 // conversation id from a prior list-mode response, ideally one with a
 // last_message_at that's clearly much later than when the conversation
 // likely first started.
+//
+// This endpoint rejected `recent_messages` as a field name (400) — the
+// valid field on the single-conversation resource is `messages` instead.
+// Different name, and possibly a genuinely different (fuller) list than
+// the list endpoint's 2-message preview — that's exactly what this mode
+// exists to check, so the count is read from `messages` here, not
+// `recent_messages`.
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -176,7 +183,7 @@ export async function GET(req: Request) {
         )
       : new URL(`${CALLRAIL_BASE_URL}/v3/a/${accountId}/text-messages.json`);
     if (conversationId) {
-      fetchUrl.searchParams.set("fields", "tracker_name,recent_messages");
+      fetchUrl.searchParams.set("fields", "tracker_name,messages");
     } else {
       fetchUrl.searchParams.set("company_id", client.callrailCompanyId);
       fetchUrl.searchParams.set("page", "1");
@@ -203,14 +210,15 @@ export async function GET(req: Request) {
 
     // Single-conversation mode's whole point — surfaced at the top level
     // so the answer ("does this exceed 2?") doesn't require digging
-    // through the raw body by hand.
-    const recentMessagesCount =
+    // through the raw body by hand. Reads `messages` here (this
+    // resource's actual field name), not `recent_messages` (the list
+    // endpoint's field, rejected as invalid on this one).
+    const messagesCount =
       conversationId &&
       parsedBody &&
       typeof parsedBody === "object" &&
-      Array.isArray((parsedBody as Record<string, unknown>).recent_messages)
-        ? ((parsedBody as Record<string, unknown>).recent_messages as unknown[])
-            .length
+      Array.isArray((parsedBody as Record<string, unknown>).messages)
+        ? ((parsedBody as Record<string, unknown>).messages as unknown[]).length
         : null;
 
     return NextResponse.json(
@@ -221,7 +229,7 @@ export async function GET(req: Request) {
         conversationId,
         from,
         to,
-        recentMessagesCount,
+        messagesCount,
         requestUrl: fetchUrl.toString(),
         responseStatus: res.status,
         responseOk: res.ok,
