@@ -35,11 +35,15 @@
 //   unlike calls.json's REST response (Array<{id,name}|string>) — no
 //   tag-object-vs-string branching needed here.
 //
-// STILL UNCONFIRMED (needs the real per-company secret to test end-to-end):
-// whether the signed bytes are exactly the raw request body with no
-// transformation. This is the standard construction for this style of
-// webhook signing and is assumed here; verifyCallrailWebhookSignature takes
-// the raw body string directly.
+// FULLY CONFIRMED end-to-end against that same real call's actual secret
+// (obtained from CallRail's webhook config screen for this company): HMAC-
+// SHA1 of the exact raw request body (UTF-8 bytes, no transformation),
+// keyed with the secret as a plain string, base64-encoded, reproduces the
+// captured signature byte-for-byte. Verified two ways — via
+// verifyCallrailWebhookSignature directly, and via a full POST through the
+// actual route handler against a scratch DB, which correctly wrote one
+// call_signed_events row for this call. Nothing about this construction is
+// assumed anymore.
 
 import { createHmac } from "node:crypto";
 import { timingSafeEqual } from "./crypto";
