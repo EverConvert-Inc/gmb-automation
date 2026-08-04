@@ -9,6 +9,7 @@ import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ComboBox } from "@/components/ui/combobox";
 import { Input, Label } from "@/components/ui/form";
+import { CallrailWebhookSecretField } from "@/components/callrail-webhook-secret-field";
 
 type CallrailCompanyOption = { id: string; name: string };
 type ExistingAdsCredential = {
@@ -37,6 +38,8 @@ export type PpcClientAdminProps = {
   lastSyncError: string | null;
   callrailCompanyChoices: CallrailCompanyOption[] | null;
   callrailListError: string | null;
+  webhookSecretConfigured: boolean;
+  webhookSecretUpdatedAt: string | null;
   existingAdsCredentials: ExistingAdsCredential[];
   // customerId / companyId → names of OTHER PPC clients already linked.
   // Surfaced as "Already linked to: X" hints in the comboboxes.
@@ -609,6 +612,13 @@ export function PpcClientAdminCard(props: PpcClientAdminProps) {
               automatically.
             </p>
           </div>
+
+          <CallrailWebhookSecretField
+            companyId={props.callrailCompanyId}
+            configured={props.webhookSecretConfigured}
+            updatedAt={props.webhookSecretUpdatedAt}
+          />
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label htmlFor="signedTag">Signed-case tag</Label>

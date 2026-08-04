@@ -5,7 +5,7 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { LsaClientAdminCard } from "@/components/lsa-client-admin-card";
 import { LsaCallrailTagCategoriesCard } from "@/components/lsa-callrail-tag-categories-card";
 import { db } from "@/lib/db/client";
-import { lsaCallrailTagCategories, lsaClients } from "@/lib/db/schema";
+import { callrailWebhookSecrets, lsaCallrailTagCategories, lsaClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
 import { listExistingAdsCredentials } from "@/lib/queries";
 import {
@@ -57,6 +57,16 @@ export default async function LsaClientDetailPage({
     getLinkedLsaAdsCustomerMap(id),
     getLinkedLsaCallrailCompanyMap(id),
   ]);
+
+  // Webhook secret status only — never the decrypted secret itself. Keyed
+  // by CallRail company id, not this client's id, since the secret can be
+  // shared with a ppc_clients row on the same company (see
+  // callrailWebhookSecrets in schema.ts).
+  const webhookSecretRow = row.callrailCompanyId
+    ? await db.query.callrailWebhookSecrets.findFirst({
+        where: eq(callrailWebhookSecrets.callrailCompanyId, row.callrailCompanyId),
+      })
+    : null;
 
   // Auto-attach the most-recently-used Google Ads credential when an LSA
   // client is loaded with nothing connected yet, same rationale as PPC:
@@ -164,6 +174,8 @@ export default async function LsaClientDetailPage({
         lastSyncError={row.lastSyncError}
         callrailCompanyChoices={callrailCompanyChoices}
         callrailListError={callrailListError}
+        webhookSecretConfigured={!!webhookSecretRow}
+        webhookSecretUpdatedAt={webhookSecretRow?.updatedAt.toISOString() ?? null}
         existingAdsCredentials={existingAdsCredentials}
         linkedAdsCustomerMap={linkedAdsCustomerMap}
         linkedCallrailCompanyMap={linkedCallrailCompanyMap}

@@ -6,7 +6,7 @@ import { Banner } from "@/components/ui/banner";
 import { PpcClientAdminCard } from "@/components/ppc-client-admin-card";
 import { PpcCallrailTagCategoriesCard } from "@/components/ppc-callrail-tag-categories-card";
 import { db } from "@/lib/db/client";
-import { ppcCallrailTagCategories, ppcClients } from "@/lib/db/schema";
+import { callrailWebhookSecrets, ppcCallrailTagCategories, ppcClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
 import {
   getLinkedAdsCustomerMap,
@@ -67,6 +67,16 @@ export default async function PpcClientDetailPage({
     getLinkedAdsCustomerMap(id),
     getLinkedCallrailCompanyMap(id),
   ]);
+
+  // Webhook secret status only — never the decrypted secret itself. Keyed
+  // by CallRail company id, not this client's id, since the secret can be
+  // shared with an lsa_clients row on the same company (see
+  // callrailWebhookSecrets in schema.ts).
+  const webhookSecretRow = row.callrailCompanyId
+    ? await db.query.callrailWebhookSecrets.findFirst({
+        where: eq(callrailWebhookSecrets.callrailCompanyId, row.callrailCompanyId),
+      })
+    : null;
 
   // rollup is stored as plain text (no DB-level enum); narrowed here since
   // the API routes are the only writers and always validate it against
@@ -194,6 +204,8 @@ export default async function PpcClientDetailPage({
         lastSyncError={row.lastSyncError}
         callrailCompanyChoices={callrailCompanyChoices}
         callrailListError={callrailListError}
+        webhookSecretConfigured={!!webhookSecretRow}
+        webhookSecretUpdatedAt={webhookSecretRow?.updatedAt.toISOString() ?? null}
         existingAdsCredentials={existingAdsCredentials}
         linkedAdsCustomerMap={linkedAdsCustomerMap}
         linkedCallrailCompanyMap={linkedCallrailCompanyMap}

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ComboBox } from "@/components/ui/combobox";
 import { Input, Label } from "@/components/ui/form";
+import { CallrailWebhookSecretField } from "@/components/callrail-webhook-secret-field";
 
 type ExistingAdsCredential = {
   id: string;
@@ -38,6 +39,8 @@ export type LsaClientAdminProps = {
   lastSyncError: string | null;
   callrailCompanyChoices: CallrailCompanyOption[] | null;
   callrailListError: string | null;
+  webhookSecretConfigured: boolean;
+  webhookSecretUpdatedAt: string | null;
   existingAdsCredentials: ExistingAdsCredential[];
   linkedAdsCustomerMap: Record<string, string[]>;
   linkedCallrailCompanyMap: Record<string, string[]>;
@@ -596,6 +599,13 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
               automatically.
             </p>
           </div>
+
+          <CallrailWebhookSecretField
+            companyId={props.callrailCompanyId}
+            configured={props.webhookSecretConfigured}
+            updatedAt={props.webhookSecretUpdatedAt}
+          />
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label htmlFor="signedTag">Signed-case tag</Label>
