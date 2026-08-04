@@ -176,6 +176,32 @@ export type CallrailDailyTotals = {
   // pulled out into PMax or PPC; a call is never counted in more than one
   // channel.
   channelBreakdown: Record<string, CallrailChannelBucket> | null;
+  // Additive, LSA-only consumption (see lsa-sync.ts's true-sign-date
+  // correction) — PPC's ppc-sync.ts never reads this field, and every
+  // other field above is computed identically regardless of whether a
+  // caller reads it. One entry per call landing on this date that
+  // INDEPENDENTLY qualifies as a signed case and/or a rollup="real" call
+  // under this client's own existing criteria (the same hasTag/nameMatches
+  // and resolveCallRollup logic that already produced signedCases/
+  // rollupCounts above) — NOT filtered by whether call_signed_events has a
+  // row for it; that lookup happens downstream, in lsa-sync.ts, so a call
+  // call_signed_events has never heard of is entirely unaffected there
+  // (falls back to counting toward this date, exactly as today).
+  signedRealCandidates: CallrailSignedCandidate[];
+};
+
+export type CallrailSignedCandidate = {
+  callId: string;
+  // The call's own date (call.start_time.slice(0, 10)) — what it counts
+  // toward absent any signed_at-based correction.
+  date: string;
+  isSignedCase: boolean;
+  isRollupReal: boolean;
+  // Which channelBreakdown bucket this call's rollupReal contribution (if
+  // any) landed in — null when channel splitting isn't active for this
+  // client/call. Preserved so a downstream correction redirects the call
+  // into the SAME channel on its new date, not a different one.
+  channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
 };
 
 // --- GMB ad-vs-organic matching (call_view cross-reference) ---
@@ -517,6 +543,7 @@ export async function pullCallsForCompany(
       tagCategoryBreakdown: {},
       rollupCounts: newRollupCounts(),
       channelBreakdown: gmbFiltersLower ? {} : null,
+      signedRealCandidates: [],
     };
     bucket.totalCalls += 1;
 
@@ -534,11 +561,10 @@ export async function pullCallsForCompany(
     // gmbNameFilters existed. Empty filtersLower still means "no
     // restriction" here — this gate's behavior is untouched.
     const hasTag = tagNamesLower.some((t) => t === wantTag);
-    if (hasTag) {
-      const nameMatches =
-        filtersLower.length === 0 || matchesAnyFilter(trackerName, filtersLower);
-      if (nameMatches) bucket.signedCases += 1;
-    }
+    const isSignedCase =
+      hasTag &&
+      (filtersLower.length === 0 || matchesAnyFilter(trackerName, filtersLower));
+    if (isSignedCase) bucket.signedCases += 1;
 
     const matchedCategories = categories.filter((c) =>
       tagNamesLower.includes(c.tag),
@@ -557,7 +583,13 @@ export async function pullCallsForCompany(
     // honestly-empty report instead of silently absorbing every call in
     // the CallRail company.
     const isRelevantForReport = matchesAnyFilter(trackerName, filtersLower);
+    // Captured (not just scoped inside the block below) so the candidate
+    // record near the end of this loop can read it — gating stays
+    // IDENTICAL to before (only computed/applied when isRelevantForReport),
+    // this is purely visibility, not a behavior change.
+    let flatRollup: "real" | "junk" | null = null;
     if (isRelevantForReport) {
+      flatRollup = resolveCallRollup(matchedCategories);
       if (isFirstTime) bucket.firstTimeCalls += 1;
       // tagCategoryBreakdown stays scoped to first-time calls only, same
       // population as firstTimeCalls itself. A repeat caller's tagged call
@@ -573,10 +605,9 @@ export async function pullCallsForCompany(
       // CallrailRollupCounts comment above. Real counts regardless of
       // first-time status (a Signed tag can land on a repeat call); Junk
       // stays first-time-only, so it can never exceed firstTimeCalls.
-      const rollup = resolveCallRollup(matchedCategories);
-      if (rollup === "real") {
+      if (flatRollup === "real") {
         bucket.rollupCounts.real += 1;
-      } else if (rollup === "junk" && isFirstTime) {
+      } else if (flatRollup === "junk" && isFirstTime) {
         bucket.rollupCounts.junk += 1;
       }
     }
@@ -605,10 +636,21 @@ export async function pullCallsForCompany(
     // is a traffic-source property of the call itself, not a
     // call-quality classification, so a repeat caller's ad-driven call
     // is still reclassified the same way a first-time one would be.
+    // Hoisted to function scope (not just the channelBreakdown block below)
+    // so the candidate record has access to it regardless of whether
+    // channel splitting is active for this call — stays null when it
+    // isn't, which is exactly the "no channel nesting" signal the
+    // downstream signed-date correction needs.
+    let channel: "GMB" | "PPC" | "LSA" | "PMax" | null = null;
+    // Same visibility-only capture as flatRollup above — the channel
+    // block below computes this UNCONDITIONALLY (independent of
+    // isRelevantForReport, deliberately — see the comment inside), which
+    // must stay exactly as it was; only exposing it for the candidate
+    // record is new.
+    let channelRollup: "real" | "junk" | null = null;
     if (bucket.channelBreakdown) {
       const isGmbTracker =
         !!gmbFiltersLower?.length && matchesAnyFilter(trackerName, gmbFiltersLower);
-      let channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
       if (isGmbTracker || isRelevantForReport) {
         const matchResult = gmbMatcher.match(
           date,
@@ -644,15 +686,46 @@ export async function pullCallsForCompany(
           }
         }
         // Real/Junk: same differently-scoped treatment as the flat block
-        // above (see the CallrailRollupCounts comment).
-        const rollup = resolveCallRollup(matchedCategories);
-        if (rollup === "real") {
+        // above (see the CallrailRollupCounts comment). Deliberately its
+        // OWN resolveCallRollup call, unconditional on isRelevantForReport
+        // — a GMB-tracker call that doesn't match this client's own
+        // filters (isRelevantForReport false) can still land in the GMB
+        // channel bucket via isGmbTracker above, and its rollup here must
+        // still be evaluated independently of that flag, exactly as
+        // before this comment was added.
+        channelRollup = resolveCallRollup(matchedCategories);
+        if (channelRollup === "real") {
           channelBucket.rollupCounts.real += 1;
-        } else if (rollup === "junk" && isFirstTime) {
+        } else if (channelRollup === "junk" && isFirstTime) {
           channelBucket.rollupCounts.junk += 1;
         }
         bucket.channelBreakdown[channel] = channelBucket;
       }
+    }
+
+    // Candidate record for the LSA true-sign-date correction (see
+    // lsa-sync.ts) — mirrors whichever computation is actually
+    // AUTHORITATIVE for this client's configuration: when channel
+    // splitting is active, lsa-sync.ts stores the NESTED (per-channel)
+    // rollupBreakdown whenever channelBreakdown has any entries that day,
+    // making the flat bucket.rollupCounts effectively unused for such a
+    // client — so the channel block's own classification (channel,
+    // channelRollup) is what must be recorded here, not the flat one.
+    // Without channel splitting, the flat computation is the only one
+    // that ran at all. Only recorded when the call matters to at least
+    // one of the two metrics — nothing for lsa-sync.ts to look at
+    // otherwise.
+    const isRollupRealForCandidate = bucket.channelBreakdown
+      ? channel !== null && channelRollup === "real"
+      : flatRollup === "real";
+    if (isSignedCase || isRollupRealForCandidate) {
+      bucket.signedRealCandidates.push({
+        callId: call.id,
+        date,
+        isSignedCase,
+        isRollupReal: isRollupRealForCandidate,
+        channel: bucket.channelBreakdown ? channel : null,
+      });
     }
 
     byDate.set(date, bucket);
@@ -689,6 +762,7 @@ export async function pullCallsForCompany(
         tagCategoryBreakdown: {},
         rollupCounts: newRollupCounts(),
         channelBreakdown: {},
+        signedRealCandidates: [],
       };
       const channelBucket = bucket.channelBreakdown?.PMax ?? newChannelBucket();
       const unmatchedCount = rows.filter((r) => unconsumed.has(r)).length;

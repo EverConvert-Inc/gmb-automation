@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
+  callSignedEvents,
   lsaCallrailTagCategories,
   lsaClients,
   lsaLeadsDaily,
@@ -9,10 +10,15 @@ import {
   oauthCredentials,
   ppcClients,
   textConversationSignedEvents,
+  type LsaClient,
 } from "./db/schema";
 import { decryptString } from "./crypto";
 import { pullLocalServicesCost, pullLocalServicesLeads } from "./google-ads";
-import { pullCallsForCompany, pullTextMessagesForCompany } from "./callrail";
+import {
+  pullCallsForCompany,
+  pullTextMessagesForCompany,
+  type CallrailDailyTotals,
+} from "./callrail";
 import { yesterdayIsoEastern, daysAgoIsoEastern } from "./date-utils";
 
 type SyncOpts = {
@@ -103,6 +109,302 @@ function emptyBucket(date: string): DayBucket {
     adsFetched: false,
     callrailFetched: false,
   };
+}
+
+// Merges a delta (+1/-1) into a real/junk/unclassified rollup value that
+// may be flat or channel-nested — same shape convention as
+// normalizeLsaBreakdown (queries-call-quality.ts) and the text-message
+// merge below: nested iff some existing value is itself an object. When
+// `current` has no keys at all yet (a date with no stored row/bucket to
+// detect shape from), there's nothing to infer from, so the shape to
+// CREATE follows whether `channel` is non-null (this client owns a GMB
+// split — use nested, keyed by that channel) or null (flat).
+export function adjustRollupReal(
+  current: Record<string, unknown>,
+  channel: "GMB" | "PPC" | "LSA" | "PMax" | null,
+  delta: number,
+): Record<string, unknown> {
+  const hasAnyValue = Object.keys(current).length > 0;
+  const isNested = hasAnyValue
+    ? Object.values(current).some((v) => v !== null && typeof v === "object")
+    : channel !== null;
+  if (isNested) {
+    const nested = current as Record<
+      string,
+      { real: number; junk: number; unclassified: number }
+    >;
+    const key = channel ?? "LSA";
+    const existing = nested[key] ?? { real: 0, junk: 0, unclassified: 0 };
+    return { ...nested, [key]: { ...existing, real: existing.real + delta } };
+  }
+  const flat = current as { real?: number; junk?: number; unclassified?: number };
+  return {
+    real: (flat.real ?? 0) + delta,
+    junk: flat.junk ?? 0,
+    unclassified: flat.unclassified ?? 0,
+  };
+}
+
+// Shared by syncLsaForClient's regular per-day loop and
+// recomputeLsaCallrailDay's targeted single-day recompute (see below) —
+// fetches this client's CallRail calls for [fromDate, toDate], writes their
+// (uncorrected) contribution into `bucket()`'s day buckets exactly as
+// before this feature existed, and returns both the fetched rows (for the
+// signed-date redistribution step) and the resolved tag categories (the
+// full sync also needs these for its text-message pull).
+async function fetchAndBucketLsaCalls(
+  client: LsaClient,
+  fromDate: string,
+  toDate: string,
+  bucket: (date: string) => DayBucket,
+): Promise<{
+  rows: CallrailDailyTotals[];
+  tagCategories: Array<{ label: string; callrailTagName: string; rollup: "real" | "junk" }>;
+}> {
+  // rollup is stored as plain text (no DB-level enum); narrowed here since
+  // the tag-category API routes are the only writers and always validate
+  // it against z.enum(["real", "junk"]) before insert/update.
+  const tagCategories = (
+    await db.query.lsaCallrailTagCategories.findMany({
+      where: eq(lsaCallrailTagCategories.lsaClientId, client.id),
+    })
+  ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
+
+  // GMB classification is only ever done from one side of a shared
+  // CallRail company — see syncLsaForClient's original comment on this
+  // exact check.
+  const hasMatchingPpcClient = !!(
+    await db.query.ppcClients.findFirst({
+      where: eq(ppcClients.callrailCompanyId, client.callrailCompanyId!),
+      columns: { id: true },
+    })
+  );
+  const gmbNameFilters =
+    hasMatchingPpcClient || client.gmbCallrailNameFilters.length === 0
+      ? undefined
+      : client.gmbCallrailNameFilters;
+
+  const rows = await pullCallsForCompany(
+    client.callrailCompanyId!,
+    fromDate,
+    toDate,
+    client.signedCaseTag,
+    client.signedCaseNameFilters,
+    tagCategories,
+    gmbNameFilters,
+    "LSA",
+  );
+  for (const r of rows) {
+    const b = bucket(r.date);
+    b.signedCases = r.signedCases;
+    // A day where this client had calls but none matched either the LSA
+    // or GMB filter leaves channelBreakdown genuinely empty ({}) — still
+    // truthy, so also checking its key count here to fall through to the
+    // flat branch below instead of writing three ambiguous empty objects
+    // (which the reader would otherwise have to reconstruct a zero value
+    // from, rather than a clean 0/{}).
+    if (r.channelBreakdown && Object.keys(r.channelBreakdown).length > 0) {
+      // No matching PPC record — this client owns its own GMB split.
+      // Store channel-nested, mirroring ppc_callrail_daily's shape.
+      b.tagCategoryBreakdown = Object.fromEntries(
+        Object.entries(r.channelBreakdown).map(([channel, cb]) => [
+          channel,
+          cb.tagCategoryBreakdown,
+        ]),
+      );
+      b.rollupCounts = Object.fromEntries(
+        Object.entries(r.channelBreakdown).map(([channel, cb]) => [
+          channel,
+          cb.rollupCounts,
+        ]),
+      );
+      b.firstTimeCalls = Object.fromEntries(
+        Object.entries(r.channelBreakdown).map(([channel, cb]) => [
+          channel,
+          cb.firstTimeCalls,
+        ]),
+      );
+    } else {
+      // Shared-company client — unchanged, flat shape.
+      b.tagCategoryBreakdown = r.tagCategoryBreakdown;
+      b.rollupCounts = r.rollupCounts;
+      b.firstTimeCalls = r.firstTimeCalls;
+    }
+    b.callrailFetched = true;
+  }
+
+  return { rows, tagCategories };
+}
+
+// The "true sign date" correction — redirects a call's signedCases/
+// rollupReal contribution from its own date to the date it was ACTUALLY
+// signed (per call_signed_events), for every candidate pullCallsForCompany
+// flagged as independently qualifying for at least one of those two
+// metrics. A call with no call_signed_events row, or whose signed_at falls
+// on the same date it already counts toward, is left completely untouched
+// — today's behavior, unchanged; this is the explicit "no matching row —
+// fall back to current behavior" and "same-month — no visible change"
+// requirement.
+//
+// The candidate's OWN date is always one of `bucket()`'s in-memory buckets
+// (it came from a row just fetched in this run) — decremented there
+// in-memory, upserted normally at the end of the caller's own flow. The
+// signed-at TARGET date might be outside this run's fetched range
+// entirely (the whole reason this feature exists — a call from months ago
+// getting signed today), so it's merged in-memory ONLY when it's already
+// part of `byDate` (e.g. within a wide backfill's own range); otherwise
+// it's corrected via a standalone increment-upsert, since we have no fresh
+// data for that day here and must not blow away whatever's already
+// correctly stored there with a wholesale replace.
+async function applySignedDateCorrections(
+  lsaClientId: string,
+  rows: CallrailDailyTotals[],
+  byDate: Map<string, DayBucket>,
+  bucket: (date: string) => DayBucket,
+): Promise<void> {
+  const candidates = rows.flatMap((r) => r.signedRealCandidates);
+  if (candidates.length === 0) return;
+
+  const events = await db.query.callSignedEvents.findMany({
+    where: inArray(
+      callSignedEvents.callrailCallId,
+      candidates.map((c) => c.callId),
+    ),
+  });
+  const signedDateByCallId = new Map(
+    events.map((e) => [e.callrailCallId, e.signedAt.toISOString().slice(0, 10)]),
+  );
+
+  for (const c of candidates) {
+    const signedDate = signedDateByCallId.get(c.callId);
+    if (!signedDate || signedDate === c.date) continue;
+
+    const origin = bucket(c.date);
+    if (c.isSignedCase) origin.signedCases -= 1;
+    if (c.isRollupReal) {
+      origin.rollupCounts = adjustRollupReal(origin.rollupCounts, c.channel, -1);
+    }
+
+    if (byDate.has(signedDate)) {
+      const target = bucket(signedDate);
+      if (c.isSignedCase) target.signedCases += 1;
+      if (c.isRollupReal) {
+        target.rollupCounts = adjustRollupReal(target.rollupCounts, c.channel, 1);
+      }
+      target.callrailFetched = true;
+    } else {
+      await incrementStoredLsaCallrailDay(lsaClientId, signedDate, {
+        signedCasesDelta: c.isSignedCase ? 1 : 0,
+        rollupRealDelta: c.isRollupReal ? 1 : 0,
+        channel: c.channel,
+      });
+    }
+  }
+}
+
+// Direct read-modify-write increment against whatever's ALREADY stored for
+// (lsaClientId, date) — used only for a signed-date redirect target that
+// falls outside the current run's fetched range (see
+// applySignedDateCorrections above). Wrapped in a transaction: unlike the
+// "replace with freshly computed total" upsert used elsewhere in this
+// file (idempotent — a lost update there just gets overwritten correctly
+// on the next resync), this is a true delta on a date that may NEVER be
+// resynced again, so a lost update here would silently under/over-count
+// forever.
+async function incrementStoredLsaCallrailDay(
+  lsaClientId: string,
+  date: string,
+  delta: {
+    signedCasesDelta: number;
+    rollupRealDelta: number;
+    channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
+  },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const existing = await tx.query.lsaLeadsDaily.findFirst({
+      where: and(eq(lsaLeadsDaily.lsaClientId, lsaClientId), eq(lsaLeadsDaily.date, date)),
+    });
+    const newSignedCases = (existing?.signedCases ?? 0) + delta.signedCasesDelta;
+    const newRollup =
+      delta.rollupRealDelta !== 0
+        ? adjustRollupReal(
+            (existing?.rollupBreakdown ?? {}) as Record<string, unknown>,
+            delta.channel,
+            delta.rollupRealDelta,
+          )
+        : ((existing?.rollupBreakdown ?? {}) as Record<string, unknown>);
+    const now = new Date();
+    await tx
+      .insert(lsaLeadsDaily)
+      .values({
+        lsaClientId,
+        date,
+        signedCases: newSignedCases,
+        rollupBreakdown: newRollup,
+        ingestedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [lsaLeadsDaily.lsaClientId, lsaLeadsDaily.date],
+        set: { signedCases: newSignedCases, rollupBreakdown: newRollup, ingestedAt: now },
+      });
+  });
+}
+
+// CallRail-only, single-date recompute — called by the Call Modified
+// webhook receiver immediately after a NEW call_signed_events row is
+// recorded (see callrail-webhook.ts), to correct the call's OWN date right
+// away instead of waiting for a full sync that will never revisit it (the
+// regular daily cron only ever processes "yesterday" — it has no reason to
+// ever look at an old date again on its own). Deliberately does NOT touch
+// Google Ads at all, unlike syncLsaForClient — this is triggered by a
+// CallRail-only event and re-running an unrelated Ads pull for a single
+// historical day would be pure waste inside a webhook's response cycle.
+export async function recomputeLsaCallrailDay(
+  lsaClientId: string,
+  date: string,
+): Promise<void> {
+  const client = await db.query.lsaClients.findFirst({
+    where: eq(lsaClients.id, lsaClientId),
+  });
+  if (!client?.callrailCompanyId) return;
+
+  const byDate = new Map<string, DayBucket>();
+  function bucket(d: string): DayBucket {
+    const existing = byDate.get(d);
+    if (existing) return existing;
+    const created = emptyBucket(d);
+    byDate.set(d, created);
+    return created;
+  }
+
+  const { rows } = await fetchAndBucketLsaCalls(client, date, date, bucket);
+  await applySignedDateCorrections(lsaClientId, rows, byDate, bucket);
+
+  for (const row of byDate.values()) {
+    if (!row.callrailFetched) continue;
+    const now = new Date();
+    await db
+      .insert(lsaLeadsDaily)
+      .values({
+        lsaClientId,
+        date: row.date,
+        signedCases: row.signedCases,
+        tagCategoryBreakdown: row.tagCategoryBreakdown,
+        rollupBreakdown: row.rollupCounts,
+        firstTimeCalls: row.firstTimeCalls,
+        ingestedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [lsaLeadsDaily.lsaClientId, lsaLeadsDaily.date],
+        set: {
+          signedCases: row.signedCases,
+          tagCategoryBreakdown: row.tagCategoryBreakdown,
+          rollupBreakdown: row.rollupCounts,
+          firstTimeCalls: row.firstTimeCalls,
+          ingestedAt: now,
+        },
+      });
+  }
 }
 
 // Pulls Google Ads (local_services_lead + LOCAL_SERVICES campaign cost) and
@@ -226,87 +528,27 @@ export async function syncLsaForClient(
   if (client.callrailCompanyId) {
     callrailJobId = await startJob(lsaClientId, "callrail", triggeredBy);
     try {
-      // rollup is stored as plain text (no DB-level enum); narrowed here
-      // since the tag-category API routes are the only writers and
-      // always validate it against z.enum(["real", "junk"]) before
-      // insert/update.
-      const tagCategories = (
-        await db.query.lsaCallrailTagCategories.findMany({
-          where: eq(lsaCallrailTagCategories.lsaClientId, lsaClientId),
-        })
-      ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
-
-      // GMB classification is only ever done from one side of a shared
-      // CallRail company — if a ppc_clients row shares this company_id,
-      // PPC already classifies GMB for it, and doing it here too would
-      // double-count the same calls under both channels (confirmed: every
-      // client sharing a company has disjoint, single-channel tracker
-      // names, so this is purely about not re-deriving the same GMB calls
-      // twice, not about tracker-name ambiguity). Only pass gmbNameFilters
-      // — and only then does channelBreakdown/the nested storage shape
-      // apply — when no such PPC row exists.
-      const hasMatchingPpcClient = !!(
-        await db.query.ppcClients.findFirst({
-          where: eq(ppcClients.callrailCompanyId, client.callrailCompanyId),
-          columns: { id: true },
-        })
-      );
-      // Also gated on an actual filter being configured — a client with no
-      // PPC match but an empty gmbCallrailNameFilters (not yet set up)
-      // keeps today's flat storage shape rather than switching to a
-      // channel-nested one containing only "LSA", with nothing to gain.
-      const gmbNameFilters =
-        hasMatchingPpcClient || client.gmbCallrailNameFilters.length === 0
-          ? undefined
-          : client.gmbCallrailNameFilters;
-
-      const rows = await pullCallsForCompany(
-        client.callrailCompanyId,
+      const { rows, tagCategories } = await fetchAndBucketLsaCalls(
+        client,
         opts.fromDate,
         opts.toDate,
-        client.signedCaseTag,
-        client.signedCaseNameFilters,
-        tagCategories,
-        gmbNameFilters,
-        "LSA",
+        bucket,
       );
-      for (const r of rows) {
-        const b = bucket(r.date);
-        b.signedCases = r.signedCases;
-        // A day where this client had calls but none matched either the
-        // LSA or GMB filter leaves channelBreakdown genuinely empty ({}) —
-        // still truthy, so also checking its key count here to fall
-        // through to the flat branch below instead of writing three
-        // ambiguous empty objects (which the reader would otherwise have
-        // to reconstruct a zero value from, rather than a clean 0/{}).
-        if (r.channelBreakdown && Object.keys(r.channelBreakdown).length > 0) {
-          // No matching PPC record — this client owns its own GMB split.
-          // Store channel-nested, mirroring ppc_callrail_daily's shape.
-          b.tagCategoryBreakdown = Object.fromEntries(
-            Object.entries(r.channelBreakdown).map(([channel, cb]) => [
-              channel,
-              cb.tagCategoryBreakdown,
-            ]),
-          );
-          b.rollupCounts = Object.fromEntries(
-            Object.entries(r.channelBreakdown).map(([channel, cb]) => [
-              channel,
-              cb.rollupCounts,
-            ]),
-          );
-          b.firstTimeCalls = Object.fromEntries(
-            Object.entries(r.channelBreakdown).map(([channel, cb]) => [
-              channel,
-              cb.firstTimeCalls,
-            ]),
-          );
-        } else {
-          // Shared-company client — unchanged, flat shape.
-          b.tagCategoryBreakdown = r.tagCategoryBreakdown;
-          b.rollupCounts = r.rollupCounts;
-          b.firstTimeCalls = r.firstTimeCalls;
-        }
-        b.callrailFetched = true;
+
+      // True-sign-date correction (see applySignedDateCorrections) —
+      // redirects any call whose call_signed_events entry points at a
+      // different date than the one it was just bucketed under above.
+      // Wrapped in its own try/catch: a failure here must not block the
+      // calls-derived data that's already been correctly bucketed (falls
+      // back to counting toward each call's own date, same as before this
+      // feature existed).
+      try {
+        await applySignedDateCorrections(lsaClientId, rows, byDate, bucket);
+      } catch (err) {
+        console.error(
+          `[lsa-sync] signed-date correction failed for lsa_client ${lsaClientId}:`,
+          (err as Error).message,
+        );
       }
 
       // Text/message conversations — a separate CallRail resource

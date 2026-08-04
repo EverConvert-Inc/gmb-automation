@@ -16,6 +16,7 @@ import {
   verifyCallrailWebhookSignature,
   type CallModifiedWebhookPayload,
 } from "@/lib/callrail-webhook";
+import { recomputeLsaCallrailDay } from "@/lib/lsa-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -87,29 +88,59 @@ export async function POST(req: Request) {
       break;
     }
   }
-  if (!isReal) {
-    for (const client of lsaCandidates) {
-      const tagCategories = (
-        await db.query.lsaCallrailTagCategories.findMany({
-          where: eq(lsaCallrailTagCategories.lsaClientId, client.id),
-        })
-      ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
-      if (resolveCallIsReal(trackerName, tags, client.signedCaseNameFilters, tagCategories)) {
-        isReal = true;
-        break;
-      }
+  // Checked independently of the PPC loop above (never short-circuited by
+  // it) — this only decides which LSA clients get their true-sign-date
+  // correction triggered below (see recomputeLsaCallrailDay); it never
+  // changes whether the call_signed_events row itself gets inserted
+  // (still governed entirely by `isReal`'s final value, unaffected by
+  // whether this loop runs — PPC is untouched by this feature).
+  const matchedLsaClientIds: string[] = [];
+  for (const client of lsaCandidates) {
+    const tagCategories = (
+      await db.query.lsaCallrailTagCategories.findMany({
+        where: eq(lsaCallrailTagCategories.lsaClientId, client.id),
+      })
+    ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
+    if (resolveCallIsReal(trackerName, tags, client.signedCaseNameFilters, tagCategories)) {
+      isReal = true;
+      matchedLsaClientIds.push(client.id);
     }
   }
 
   if (isReal) {
-    await db
+    // .returning() distinguishes a genuinely NEW transition from a
+    // repeat delivery/no-op conflict — the true-sign-date correction
+    // below must only ever run once per call, matching the same
+    // once-per-call-id idempotency the insert itself already guarantees.
+    const inserted = await db
       .insert(callSignedEvents)
       .values({
         callrailCallId: body.resource_id,
         callrailCompanyId: companyResourceId,
         signedAt: new Date(),
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted.length > 0 && matchedLsaClientIds.length > 0) {
+      if (!body.start_time) {
+        console.warn(
+          `[callrail-webhook] new signed event for call ${body.resource_id} but payload had no start_time — skipping the true-sign-date correction`,
+        );
+      } else {
+        const callDate = body.start_time.slice(0, 10);
+        for (const lsaClientId of matchedLsaClientIds) {
+          try {
+            await recomputeLsaCallrailDay(lsaClientId, callDate);
+          } catch (err) {
+            console.error(
+              `[callrail-webhook] true-sign-date correction failed for lsa_client ${lsaClientId}, call ${body.resource_id}:`,
+              (err as Error).message,
+            );
+          }
+        }
+      }
+    }
   }
 
   return NextResponse.json({ ok: true, recorded: isReal });

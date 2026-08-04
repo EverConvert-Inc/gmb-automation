@@ -84,6 +84,12 @@ export type CallModifiedWebhookPayload = {
   changes?: string[] | null;
   source_name?: string | null;
   formatted_tracking_source?: string | null;
+  // The call's own date — same field pullCallsForCompany buckets by
+  // (call.start_time.slice(0, 10)). Used by the route to know which
+  // date's LSA true-sign-date correction to trigger (see
+  // recomputeLsaCallrailDay in lsa-sync.ts) — confirmed present in the
+  // real captured payload this route was built against.
+  start_time?: string | null;
 };
 
 // Whether this call currently resolves "real" under ONE candidate client's

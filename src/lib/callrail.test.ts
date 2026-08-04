@@ -595,6 +595,219 @@ describe("pullCallsForCompany — Real/Junk scoped differently", () => {
   });
 });
 
+describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date correction)", () => {
+  beforeEach(() => {
+    process.env.CALLRAIL_API_KEY = "test-key";
+    process.env.CALLRAIL_ACCOUNT_ID = "AC1";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CALLRAIL_API_KEY;
+    delete process.env.CALLRAIL_ACCOUNT_ID;
+  });
+
+  it("records a candidate (both metrics true, no channel) for a call matching both signedCaseTag and a rollup=real category", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-both",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Signed"],
+        source_name: "LSA - Roswell",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["LSA"],
+      TAG_CATEGORIES,
+    );
+
+    expect(day.signedRealCandidates).toEqual([
+      {
+        callId: "call-both",
+        date: "2026-07-28",
+        isSignedCase: true,
+        isRollupReal: true,
+        channel: null,
+      },
+    ]);
+  });
+
+  it("isSignedCase true but isRollupReal false — the tag matches signedCaseTag but no configured category maps it to real", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-tag-only",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Signed"],
+        source_name: "LSA - Roswell",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["LSA"],
+      [], // no tag categories configured at all
+    );
+
+    expect(day.signedRealCandidates).toEqual([
+      {
+        callId: "call-tag-only",
+        date: "2026-07-28",
+        isSignedCase: true,
+        isRollupReal: false,
+        channel: null,
+      },
+    ]);
+  });
+
+  it("isSignedCase false but isRollupReal true — resolves real via a differently-named tag category, but that tag isn't the literal signedCaseTag", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-category-only",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Won"],
+        source_name: "LSA - Roswell",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed", // signedCaseTag — doesn't match "Won"
+      ["LSA"],
+      [{ label: "Won", callrailTagName: "Won", rollup: "real" as const }],
+    );
+
+    expect(day.signedRealCandidates).toEqual([
+      {
+        callId: "call-category-only",
+        date: "2026-07-28",
+        isSignedCase: false,
+        isRollupReal: true,
+        channel: null,
+      },
+    ]);
+  });
+
+  it("records the channel a call's rollupReal contribution landed in, when channel splitting is active", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-ppc-real",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Signed"],
+        source_name: "PPC - Brand",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["PPC"],
+      TAG_CATEGORIES,
+      ["GMB"], // enables channel splitting
+      "PPC",
+    );
+
+    expect(day.signedRealCandidates).toEqual([
+      {
+        callId: "call-ppc-real",
+        date: "2026-07-28",
+        isSignedCase: true,
+        isRollupReal: true,
+        channel: "PPC",
+      },
+    ]);
+  });
+
+  it("records isRollupReal from the channel classification, not the flat one, when a GMB-tracker call doesn't match this client's own filters but still lands in the GMB channel", async () => {
+    const calls: MockCall[] = [
+      {
+        // GMB tracker — not relevant-for-report under this client's own
+        // "LSA" filter, but still classified into the GMB channel bucket
+        // (see the channel block's isGmbTracker-OR-isRelevantForReport
+        // gate) and resolved real there.
+        id: "call-gmb-real",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Signed"],
+        source_name: "GMB - Roswell",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["LSA"],
+      TAG_CATEGORIES,
+      ["GMB"],
+      "LSA",
+    );
+
+    expect(day.signedRealCandidates).toEqual([
+      {
+        callId: "call-gmb-real",
+        date: "2026-07-28",
+        // "Signed" tag present, but tracker name "GMB - Roswell" doesn't
+        // contain "LSA" — signedCases' own nameMatches check fails.
+        isSignedCase: false,
+        isRollupReal: true,
+        channel: "GMB",
+      },
+    ]);
+  });
+
+  it("records no candidate at all for a call that qualifies for neither metric", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-nothing",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Opportunity"],
+        source_name: "LSA - Roswell",
+        first_call: true,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["LSA"],
+      TAG_CATEGORIES,
+    );
+
+    expect(day.signedRealCandidates).toEqual([]);
+  });
+});
+
 describe("createGmbAdMatcher — diagnostic delta reporting", () => {
   const callViewRows: CallViewRow[] = [
     {
