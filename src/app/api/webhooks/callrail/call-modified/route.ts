@@ -20,15 +20,10 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 15;
 
-// CallRail's setup flow appears to probe the URL with a GET before/while
-// saving a webhook (observed alongside the real POST delivery this route
-// was built against) — respond 200 with no verification so the URL passes
-// reachability checks. Unconfirmed whether CallRail expects anything more
-// specific (e.g. an echoed challenge value); revisit if webhook setup in
-// CallRail's UI doesn't actually activate against this route.
-export async function GET() {
-  return NextResponse.json({ ok: true });
-}
+// Confirmed via a real webhook.site capture history: CallRail's Call
+// Modified webhook only ever delivers POST — no GET verification probe
+// (unlike e.g. Facebook's webhook handshake). No GET handler needed;
+// Next.js returns 405 for any GET on this route, which is correct.
 
 export async function POST(req: Request) {
   const rawBody = await req.text();
