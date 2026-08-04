@@ -35,8 +35,17 @@ export async function updateSession(request: NextRequest) {
   const isAuthRoute = request.nextUrl.pathname.startsWith("/login");
   const isApiPostback = request.nextUrl.pathname === "/api/scans/postback";
   const isCron = request.nextUrl.pathname.startsWith("/api/cron");
+  // Server-to-server webhook deliveries (e.g. CallRail's Call Modified
+  // webhook) never carry a Supabase session cookie — they're not a
+  // browser request at all. Every route under this namespace verifies its
+  // own sender (see callrail-webhook.ts's HMAC check) instead of relying
+  // on session auth, same rationale as the cron/postback exemptions above.
+  // Confirmed via real Vercel logs that without this, CallRail's POST was
+  // being 307-redirected to /login before ever reaching the route handler
+  // — the webhook was never actually reachable in production.
+  const isWebhook = request.nextUrl.pathname.startsWith("/api/webhooks/");
 
-  if (!data.user && !isAuthRoute && !isApiPostback && !isCron) {
+  if (!data.user && !isAuthRoute && !isApiPostback && !isCron && !isWebhook) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", request.nextUrl.pathname);
