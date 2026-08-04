@@ -990,7 +990,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups, conversationRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-24",
       "2026-07-24",
@@ -998,7 +998,10 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(conversationRollups).toEqual([
+      { conversationId: "convo-1", rollup: "real" },
+    ]);
   });
 
   it("counts a conversation as real when the NEWEST message resolves real and an older one doesn't — order-independent", async () => {
@@ -1013,7 +1016,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-20",
       "2026-07-24",
@@ -1021,7 +1024,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1 }]);
   });
 
   it("a Junk-tagged later message does NOT retroactively suppress an earlier genuinely Real message — Junk > Real priority applies within a message's own tags only, never across messages", async () => {
@@ -1036,7 +1039,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-24",
       "2026-07-24",
@@ -1044,7 +1047,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1 }]);
   });
 
   it("a single message tagged both Signed and Spam still resolves Junk for THAT message (intra-message priority unchanged) — not counted when no other message is real", async () => {
@@ -1061,7 +1064,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups, conversationRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-24",
       "2026-07-24",
@@ -1069,7 +1072,10 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([]);
+    expect(dailyRollups).toEqual([]);
+    expect(conversationRollups).toEqual([
+      { conversationId: "convo-1", rollup: "junk" },
+    ]);
   });
 
   it("excludes a conversation where no message ever resolves real", async () => {
@@ -1084,7 +1090,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups, conversationRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-24",
       "2026-07-24",
@@ -1092,7 +1098,10 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([]);
+    expect(dailyRollups).toEqual([]);
+    expect(conversationRollups).toEqual([
+      { conversationId: "convo-1", rollup: "unclassified" },
+    ]);
   });
 
   it("skips a conversation whose tracker doesn't match nameFilters — no detail call made at all", async () => {
@@ -1102,7 +1111,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     const fetchMock = mockTextMessageFetch(listResponse);
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups, conversationRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-01",
       "2026-07-31",
@@ -1110,7 +1119,8 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([]);
+    expect(dailyRollups).toEqual([]);
+    expect(conversationRollups).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1); // list only
   });
 
@@ -1124,7 +1134,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups, conversationRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-01",
       "2026-07-31",
@@ -1132,7 +1142,8 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([]);
+    expect(dailyRollups).toEqual([]);
+    expect(conversationRollups).toEqual([]);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("detail fetch failed for conversation convo-1"),
     );
@@ -1154,7 +1165,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const rollups = await pullTextMessagesForCompany(
+    const { dailyRollups, conversationRollups } = await pullTextMessagesForCompany(
       "COMPANY1",
       "2026-07-01",
       "2026-07-31",
@@ -1162,6 +1173,10 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(rollups).toEqual([{ date: "2026-07-15", real: 2 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-15", real: 2 }]);
+    expect(conversationRollups).toEqual([
+      { conversationId: "convo-1", rollup: "real" },
+      { conversationId: "convo-2", rollup: "real" },
+    ]);
   });
 });

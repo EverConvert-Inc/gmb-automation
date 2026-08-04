@@ -762,3 +762,84 @@ export const dataforseoSpendSnapshots = pgTable("dataforseo_spend_snapshots", {
 
 export type DataforseoSpendSnapshot =
   typeof dataforseoSpendSnapshots.$inferSelect;
+
+// --- "True sign date" tracking (additive-only; does not feed any existing
+// report) ---
+//
+// Mutable diffing baseline for the text-message polling approach to
+// approximating a lead's true sign moment (see textConversationSignedEvents
+// below) — one row per (lsa_client, conversation), storing only the LAST
+// rollup observed for that conversation on the most recent sync run, purely
+// so the next run can tell whether anything changed. Never read by any
+// report — this table exists only to support the transition-detection
+// diff in lsa-sync.ts, and is fully separate from lsa_leads_daily's
+// rollup_breakdown (which pullTextMessagesForCompany's existing dailyRollups
+// output continues to feed unchanged).
+export const lsaTextConversationTagState = pgTable(
+  "lsa_text_conversation_tag_state",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    callrailConversationId: text("callrail_conversation_id").notNull(),
+    // "real" | "junk" | "unclassified" — see resolveCallRollup in
+    // callrail.ts. Stored as plain text, same convention as
+    // lsaCallrailTagCategories.rollup.
+    lastRollup: text("last_rollup").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("lsa_text_conversation_tag_state_unique").on(
+      t.lsaClientId,
+      t.callrailConversationId,
+    ),
+  }),
+);
+
+export type LsaTextConversationTagState =
+  typeof lsaTextConversationTagState.$inferSelect;
+
+// Append-only log of observed "became real" transitions for text
+// conversations — the message-side counterpart to callSignedEvents, but
+// necessarily an approximation: CallRail has no webhook for a text
+// conversation's tag changing, so the only available signal is noticing a
+// difference between this sync run and the last one. signedAt is the sync
+// run's own execution time, not the true tag-change moment. Never written
+// on a conversation's first-ever observation (see the seeding rule in
+// lsa-sync.ts) — only on a genuine prior-state-existed-and-differed
+// transition — so a client's first sync (or a wide backfill) doesn't
+// falsely date every already-Signed historical conversation as "signed
+// today". Purely additive: nothing currently reads this table.
+export const textConversationSignedEvents = pgTable(
+  "text_conversation_signed_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    callrailConversationId: text("callrail_conversation_id").notNull(),
+    signedAt: timestamp("signed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    // One transition event per conversation — a conversation that later
+    // reverts (e.g. re-tagged away from Signed) and transitions back to
+    // real again is still the same underlying lead; the first-observed
+    // signed moment is what matters, not every subsequent flip.
+    uniq: unique("text_conversation_signed_events_unique").on(
+      t.lsaClientId,
+      t.callrailConversationId,
+    ),
+    clientIdx: index("text_conversation_signed_events_client_idx").on(
+      t.lsaClientId,
+    ),
+  }),
+);
+
+export type TextConversationSignedEvent =
+  typeof textConversationSignedEvents.$inferSelect;

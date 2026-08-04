@@ -734,6 +734,30 @@ export type TextMessageDailyRollup = {
   real: number;
 };
 
+// Conversation-scoped rollup — one entry per tracker-relevant conversation
+// that had at least one message this run, for the "true sign date"
+// approximation (see lsaTextConversationTagState/textConversationSignedEvents
+// in schema.ts and the diff logic in lsa-sync.ts). Deliberately a DIFFERENT
+// aggregation than dailyRollups above: dailyRollups counts a conversation
+// once, on the date of its earliest real message, for the existing
+// rollup_breakdown report metric; conversationRollups instead reports each
+// conversation's CURRENT overall state (as of this run) for diffing against
+// the previous run's stored state, independent of when any message landed.
+// "real" if any message resolves real (same predicate dailyRollups' count
+// is built on); else "junk" if any message resolves junk; else
+// "unclassified". A conversation skipped by the tracker-name filter, or
+// whose detail fetch failed, or with zero messages, has no entry here —
+// nothing meaningful to diff for it this run.
+export type TextConversationRollup = {
+  conversationId: string;
+  rollup: "real" | "junk" | "unclassified";
+};
+
+export type PullTextMessagesResult = {
+  dailyRollups: TextMessageDailyRollup[];
+  conversationRollups: TextConversationRollup[];
+};
+
 // Text/message conversations are a separate CallRail resource from calls
 // (/text-messages.json, not /calls.json) — pullCallsForCompany never sees
 // them, so a Signed tag applied to a message conversation (confirmed real:
@@ -768,7 +792,7 @@ export async function pullTextMessagesForCompany(
   toDate: string,
   nameFilters: string[],
   tagCategories: CallrailTagCategoryConfig[] = [],
-): Promise<TextMessageDailyRollup[]> {
+): Promise<PullTextMessagesResult> {
   const accountId = await resolveAccountId();
   const conversations: CallRailConversation[] = [];
   let page = 1;
@@ -805,6 +829,7 @@ export async function pullTextMessagesForCompany(
   }));
 
   const byDate = new Map<string, number>();
+  const conversationRollups: TextConversationRollup[] = [];
 
   for (const convo of conversations) {
     const trackerName = (convo.tracker_name ?? "").toLowerCase();
@@ -828,15 +853,25 @@ export async function pullTextMessagesForCompany(
     if (allMessages.length === 0) continue;
 
     // Resolve each message's own tags independently (Junk > Real >
-    // Unclassified within that message only) — real messages only, then
-    // take the earliest one. A message that doesn't resolve real (Junk,
-    // unclassified, or untagged) never suppresses a different message
-    // that does.
-    const realMessages = allMessages.filter((m) => {
+    // Unclassified within that message only). A message that doesn't
+    // resolve real (Junk, unclassified, or untagged) never suppresses a
+    // different message that does.
+    const resolved = allMessages.map((m) => {
       const tags = tagNamesOf(m.sms_thread);
       const matchedCategories = categories.filter((c) => tags.includes(c.tag));
-      return resolveCallRollup(matchedCategories) === "real";
+      return { message: m, rollup: resolveCallRollup(matchedCategories) };
     });
+
+    const hasReal = resolved.some((r) => r.rollup === "real");
+    const hasJunk = resolved.some((r) => r.rollup === "junk");
+    conversationRollups.push({
+      conversationId: convo.id,
+      rollup: hasReal ? "real" : hasJunk ? "junk" : "unclassified",
+    });
+
+    const realMessages = resolved
+      .filter((r) => r.rollup === "real")
+      .map((r) => r.message);
     if (realMessages.length === 0) continue;
 
     const earliest = realMessages.reduce((min, m) =>
@@ -849,7 +884,10 @@ export async function pullTextMessagesForCompany(
     byDate.set(date, (byDate.get(date) ?? 0) + 1);
   }
 
-  return Array.from(byDate.entries())
-    .map(([date, real]) => ({ date, real }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    dailyRollups: Array.from(byDate.entries())
+      .map(([date, real]) => ({ date, real }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    conversationRollups,
+  };
 }

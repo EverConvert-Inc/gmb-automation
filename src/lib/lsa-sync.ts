@@ -1,12 +1,14 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   lsaCallrailTagCategories,
   lsaClients,
   lsaLeadsDaily,
   lsaSyncJobs,
+  lsaTextConversationTagState,
   oauthCredentials,
   ppcClients,
+  textConversationSignedEvents,
 } from "./db/schema";
 import { decryptString } from "./crypto";
 import { pullLocalServicesCost, pullLocalServicesLeads } from "./google-ads";
@@ -315,13 +317,14 @@ export async function syncLsaForClient(
       // calls-derived data above from being written, same per-source
       // resilience already applied to the ads-vs-callrail split.
       try {
-        const messageRollups = await pullTextMessagesForCompany(
-          client.callrailCompanyId,
-          opts.fromDate,
-          opts.toDate,
-          client.signedCaseNameFilters,
-          tagCategories,
-        );
+        const { dailyRollups: messageRollups, conversationRollups } =
+          await pullTextMessagesForCompany(
+            client.callrailCompanyId,
+            opts.fromDate,
+            opts.toDate,
+            client.signedCaseNameFilters,
+            tagCategories,
+          );
         for (const r of messageRollups) {
           const b = bucket(r.date);
           const current = b.rollupCounts as Record<string, unknown>;
@@ -366,6 +369,80 @@ export async function syncLsaForClient(
             };
           }
           b.callrailFetched = true;
+        }
+
+        // "True sign date" approximation for text conversations — purely
+        // additive bookkeeping (see lsaTextConversationTagState /
+        // textConversationSignedEvents in schema.ts). Own try/catch so a
+        // failure here can never affect the message-count merge above,
+        // which has already succeeded by this point, or the calls-derived
+        // data written outside this try block. Never reads or writes
+        // rollup_breakdown/tag_category_breakdown/signed_cases, never
+        // touches lsa_leads_daily, and nothing downstream (report queries,
+        // web/PDF/email) reads these two tables yet.
+        try {
+          if (conversationRollups.length > 0) {
+            const conversationIds = conversationRollups.map(
+              (c) => c.conversationId,
+            );
+            const existingStates =
+              await db.query.lsaTextConversationTagState.findMany({
+                where: and(
+                  eq(lsaTextConversationTagState.lsaClientId, lsaClientId),
+                  inArray(
+                    lsaTextConversationTagState.callrailConversationId,
+                    conversationIds,
+                  ),
+                ),
+              });
+            const priorRollupByConvoId = new Map(
+              existingStates.map((s) => [s.callrailConversationId, s.lastRollup]),
+            );
+            const now = new Date();
+            for (const convo of conversationRollups) {
+              const priorRollup = priorRollupByConvoId.get(convo.conversationId);
+              // Only fire when a prior observation exists AND it wasn't
+              // already "real" AND this run's is "real" — a conversation's
+              // FIRST-EVER observation (priorRollup undefined) never fires
+              // an event, it only seeds state; otherwise a client's first
+              // sync (or a wide backfill) would falsely date every
+              // already-Signed historical conversation as "signed today".
+              if (
+                priorRollup !== undefined &&
+                priorRollup !== "real" &&
+                convo.rollup === "real"
+              ) {
+                await db
+                  .insert(textConversationSignedEvents)
+                  .values({
+                    lsaClientId,
+                    callrailConversationId: convo.conversationId,
+                    signedAt: now,
+                  })
+                  .onConflictDoNothing();
+              }
+              await db
+                .insert(lsaTextConversationTagState)
+                .values({
+                  lsaClientId,
+                  callrailConversationId: convo.conversationId,
+                  lastRollup: convo.rollup,
+                  updatedAt: now,
+                })
+                .onConflictDoUpdate({
+                  target: [
+                    lsaTextConversationTagState.lsaClientId,
+                    lsaTextConversationTagState.callrailConversationId,
+                  ],
+                  set: { lastRollup: convo.rollup, updatedAt: now },
+                });
+            }
+          }
+        } catch (err) {
+          console.error(
+            `[lsa-sync] text-conversation sign-date tracking failed for lsa_client ${lsaClientId}:`,
+            (err as Error).message,
+          );
         }
       } catch (err) {
         console.error(
