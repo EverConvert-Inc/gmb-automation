@@ -378,7 +378,11 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
   return { match, unconsumedRows };
 }
 
-function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
+// Exported (in addition to being used internally below) so the Call
+// Modified webhook receiver (callrail-webhook.ts) can apply the identical
+// tracker-name-filter and Junk>Real priority rules to a webhook payload's
+// tags/source_name, rather than duplicating this logic.
+export function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
   return filters.some((f) => trackerName.includes(f));
 }
 
@@ -389,7 +393,7 @@ function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
 // as today's behavior for uncategorized tags. Shared (module-scope, not a
 // closure) since both pullCallsForCompany and pullTextMessagesForCompany
 // need the identical priority resolution.
-function resolveCallRollup(
+export function resolveCallRollup(
   matched: Array<{ rollup: "real" | "junk" }>,
 ): "real" | "junk" | null {
   if (matched.some((c) => c.rollup === "junk")) return "junk";

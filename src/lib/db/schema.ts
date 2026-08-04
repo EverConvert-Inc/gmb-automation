@@ -843,3 +843,57 @@ export const textConversationSignedEvents = pgTable(
 
 export type TextConversationSignedEvent =
   typeof textConversationSignedEvents.$inferSelect;
+
+// Per-CallRail-company webhook signing secret (CallRail's "Call Modified"
+// webhook is configured per-company in CallRail's own UI, each with its own
+// secret — not agency-wide like CALLRAIL_API_KEY). Keyed by
+// callrail_company_id (CallRail's company_resource_id, e.g.
+// "COM338e6107d0eb4712af2d4f2f8a18c900" — same format already used as
+// ppc_clients.callrail_company_id / lsa_clients.callrail_company_id) rather
+// than a foreign key to either client table, since one CallRail company can
+// be shared by a ppc_clients row and an lsa_clients row at once (see the
+// hasMatchingPpcClient check in lsa-sync.ts) — the secret belongs to the
+// CallRail company, not to either side's client record.
+export const callrailWebhookSecrets = pgTable("callrail_webhook_secrets", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  callrailCompanyId: text("callrail_company_id").notNull().unique(),
+  secretEncrypted: text("secret_encrypted").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type CallrailWebhookSecret = typeof callrailWebhookSecrets.$inferSelect;
+
+// Append-only log of real-time "became real" moments for CALLS, populated
+// by the Call Modified webhook receiver
+// (src/app/api/webhooks/callrail/call-modified/route.ts) — the call-side
+// counterpart to textConversationSignedEvents, but with a real (not
+// approximated) signed_at: the webhook fires at the moment CallRail itself
+// records the tag edit, so signed_at is the true sign moment going forward
+// from whenever the webhook was configured (CallRail has no way to
+// retroactively backfill a historical tag-change timestamp). Keyed by
+// callrail_call_id alone (globally unique, no client foreign key) — a call
+// belongs to exactly one CallRail company, resolvable later via
+// callrail_company_id if ever consumed by a report. Purely additive:
+// nothing currently reads this table.
+export const callSignedEvents = pgTable(
+  "call_signed_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    callrailCallId: text("callrail_call_id").notNull().unique(),
+    callrailCompanyId: text("callrail_company_id").notNull(),
+    signedAt: timestamp("signed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    companyIdx: index("call_signed_events_company_idx").on(t.callrailCompanyId),
+  }),
+);
+
+export type CallSignedEvent = typeof callSignedEvents.$inferSelect;
