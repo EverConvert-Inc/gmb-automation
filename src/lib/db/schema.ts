@@ -887,6 +887,21 @@ export const callSignedEvents = pgTable(
     callrailCallId: text("callrail_call_id").notNull().unique(),
     callrailCompanyId: text("callrail_company_id").notNull(),
     signedAt: timestamp("signed_at", { withTimezone: true }).notNull(),
+    // What this call actually contributed toward the LSA signed-date
+    // correction (lsa-sync.ts's applySignedDateCorrections/
+    // fetchAndBucketLsaCalls) — persisted here, not just derived
+    // transiently from a live CallRail fetch, so a LATER sync of the
+    // redirect's target date can durably reconstruct the same
+    // contribution instead of the correction being erased the next time
+    // that date gets recomputed from CallRail's current state alone.
+    // Nullable because rows written before this column existed (this
+    // table predates it) have no value here — those calls' redirects
+    // simply aren't re-applied until manually backfilled.
+    isSignedCase: boolean("is_signed_case"),
+    isRollupReal: boolean("is_rollup_real"),
+    // "GMB" | "PPC" | "LSA" | "PMax" | null — same convention as
+    // CallrailSignedCandidate.channel in callrail.ts.
+    channel: text("channel"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

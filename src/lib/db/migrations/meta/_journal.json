@@ -253,6 +253,13 @@
       "when": 1785854050249,
       "tag": "0035_call_signed_events_webhook",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1785946705520,
+      "tag": "0036_call_signed_events_classification",
+      "breakpoints": true
     }
   ]
 }

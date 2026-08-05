@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   callSignedEvents,
@@ -246,22 +246,25 @@ async function fetchAndBucketLsaCalls(
 // fall back to current behavior" and "same-month — no visible change"
 // requirement.
 //
-// The candidate's OWN date is always one of `bucket()`'s in-memory buckets
-// (it came from a row just fetched in this run) — decremented there
-// in-memory, upserted normally at the end of the caller's own flow. The
-// signed-at TARGET date might be outside this run's fetched range
-// entirely (the whole reason this feature exists — a call from months ago
-// getting signed today), so it's merged in-memory ONLY when it's already
-// part of `byDate` (e.g. within a wide backfill's own range); otherwise
-// it's corrected via a standalone increment-upsert, since we have no fresh
-// data for that day here and must not blow away whatever's already
-// correctly stored there with a wholesale replace.
+// This only ever handles the ORIGIN side: the candidate's own date is
+// always one of `bucket()`'s in-memory buckets (it came from a row just
+// fetched in this run), so the decrement happens directly in-memory here.
+// The TARGET side (adding the redirected contribution to the signed_at
+// date) is deliberately NOT done here — see applyRedirectedInContributions
+// below, which re-derives every target date's redirected-in total straight
+// from call_signed_events itself. That split is what makes the correction
+// durable: this function also persists the call's classification
+// (isSignedCase/isRollupReal/channel) onto the call_signed_events row it
+// matched, so a LATER sync that only touches the target date (without ever
+// re-fetching this call's origin date again) can still reconstruct the
+// redirect from that persisted row, instead of the one-time in-memory/
+// standalone write silently getting erased by the next regular resync of
+// the target date.
 async function applySignedDateCorrections(
   lsaClientId: string,
   rows: CallrailDailyTotals[],
-  byDate: Map<string, DayBucket>,
   bucket: (date: string) => DayBucket,
-): Promise<void> {
+): Promise<Set<string>> {
   const candidates = rows.flatMap((r) => r.signedRealCandidates);
   console.log(
     `[lsa-sync][signed-correction] lsa_client ${lsaClientId}: ${candidates.length} signedRealCandidate(s) across ${rows.length} fetched day(s)`,
@@ -273,7 +276,8 @@ async function applySignedDateCorrections(
       channel: c.channel,
     })),
   );
-  if (candidates.length === 0) return;
+  const redirectedTargetDates = new Set<string>();
+  if (candidates.length === 0) return redirectedTargetDates;
 
   const events = await db.query.callSignedEvents.findMany({
     where: inArray(
@@ -285,18 +289,17 @@ async function applySignedDateCorrections(
     `[lsa-sync][signed-correction] lsa_client ${lsaClientId}: ${events.length} matching call_signed_events row(s) found for ${candidates.length} candidate(s)`,
     events.map((e) => ({ callId: e.callrailCallId, signedAt: e.signedAt.toISOString() })),
   );
-  const signedDateByCallId = new Map(
-    events.map((e) => [e.callrailCallId, e.signedAt.toISOString().slice(0, 10)]),
-  );
+  const eventByCallId = new Map(events.map((e) => [e.callrailCallId, e]));
 
   for (const c of candidates) {
-    const signedDate = signedDateByCallId.get(c.callId);
-    if (!signedDate) {
+    const event = eventByCallId.get(c.callId);
+    if (!event) {
       console.log(
         `[lsa-sync][signed-correction] call ${c.callId}: no call_signed_events row — no correction, counts toward its own date ${c.date} as before`,
       );
       continue;
     }
+    const signedDate = event.signedAt.toISOString().slice(0, 10);
     if (signedDate === c.date) {
       console.log(
         `[lsa-sync][signed-correction] call ${c.callId}: signed_at date (${signedDate}) matches its own date — no-op, no visible change`,
@@ -310,89 +313,97 @@ async function applySignedDateCorrections(
       origin.rollupCounts = adjustRollupReal(origin.rollupCounts, c.channel, -1);
     }
 
-    if (byDate.has(signedDate)) {
-      const target = bucket(signedDate);
-      if (c.isSignedCase) target.signedCases += 1;
-      if (c.isRollupReal) {
-        target.rollupCounts = adjustRollupReal(target.rollupCounts, c.channel, 1);
-      }
-      target.callrailFetched = true;
-      console.log(
-        `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate} via IN-MEMORY MERGE (target date already part of this run's fetched range)`,
-        { isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel },
+    await db
+      .update(callSignedEvents)
+      .set({ isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel })
+      .where(eq(callSignedEvents.callrailCallId, c.callId));
+
+    redirectedTargetDates.add(signedDate);
+    console.log(
+      `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate}; persisted classification onto call_signed_events for durable redirected-in reconstruction`,
+      { isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel },
+    );
+  }
+  return redirectedTargetDates;
+}
+
+// The TARGET side of the true-sign-date correction — re-derives every
+// redirected-in contribution landing within [fromDate, toDate] straight
+// from call_signed_events's persisted classification (written by
+// applySignedDateCorrections above), and adds it into that date's bucket.
+// Because this reads from the durable source of truth rather than an
+// in-memory value computed earlier in the SAME run, a later sync that only
+// covers the target date (its origin date long out of range, or from a
+// prior run entirely) still reconstructs the correction correctly instead
+// of losing it to a wholesale bucket replace.
+//
+// Only rows with a persisted (non-null) classification are considered —
+// applySignedDateCorrections only ever persists one when it found a
+// genuine redirect (signedDate !== the call's own date), so this can never
+// double-count a call under both its own date (via the normal fresh pull)
+// and its target date.
+async function applyRedirectedInContributions(
+  callrailCompanyId: string,
+  fromDate: string,
+  toDate: string,
+  bucket: (date: string) => DayBucket,
+): Promise<void> {
+  const events = await db.query.callSignedEvents.findMany({
+    where: and(
+      eq(callSignedEvents.callrailCompanyId, callrailCompanyId),
+      isNotNull(callSignedEvents.isSignedCase),
+    ),
+  });
+  for (const e of events) {
+    const targetDate = e.signedAt.toISOString().slice(0, 10);
+    if (targetDate < fromDate || targetDate > toDate) continue;
+
+    const b = bucket(targetDate);
+    if (e.isSignedCase) b.signedCases += 1;
+    if (e.isRollupReal) {
+      b.rollupCounts = adjustRollupReal(
+        b.rollupCounts,
+        e.channel as "GMB" | "PPC" | "LSA" | "PMax" | null,
+        1,
       );
-    } else {
-      console.log(
-        `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate} via STANDALONE INCREMENT (target date outside this run's fetched range — will be lost if a later sync re-fetches ${signedDate} without also re-fetching ${c.date})`,
-        { isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel },
-      );
-      await incrementStoredLsaCallrailDay(lsaClientId, signedDate, {
-        signedCasesDelta: c.isSignedCase ? 1 : 0,
-        rollupRealDelta: c.isRollupReal ? 1 : 0,
-        channel: c.channel,
-      });
     }
+    b.callrailFetched = true;
+    console.log(
+      `[lsa-sync][signed-correction] redirected-in: call ${e.callrailCallId} contributes to ${targetDate}`,
+      { isSignedCase: e.isSignedCase, isRollupReal: e.isRollupReal, channel: e.channel },
+    );
   }
 }
 
-// Direct read-modify-write increment against whatever's ALREADY stored for
-// (lsaClientId, date) — used only for a signed-date redirect target that
-// falls outside the current run's fetched range (see
-// applySignedDateCorrections above). Wrapped in a transaction: unlike the
-// "replace with freshly computed total" upsert used elsewhere in this
-// file (idempotent — a lost update there just gets overwritten correctly
-// on the next resync), this is a true delta on a date that may NEVER be
-// resynced again, so a lost update here would silently under/over-count
-// forever.
-async function incrementStoredLsaCallrailDay(
+// Runs both sides of the true-sign-date correction for a single fetch
+// range: decrement+persist on the origin side (applySignedDateCorrections),
+// then re-derive every redirected-in contribution landing in this same
+// range (applyRedirectedInContributions). A redirect target that falls
+// OUTSIDE [fromDate, toDate] has nothing to merge into here — instead it's
+// handled by fully recomputing that date on its own via
+// recomputeLsaCallrailDay, exactly like a webhook-triggered correction
+// would. `visitedDates` guards that recursion against ever revisiting the
+// same date twice within one top-level trigger.
+async function applyTrueSignDateCorrections(
   lsaClientId: string,
-  date: string,
-  delta: {
-    signedCasesDelta: number;
-    rollupRealDelta: number;
-    channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
-  },
+  callrailCompanyId: string,
+  fromDate: string,
+  toDate: string,
+  rows: CallrailDailyTotals[],
+  bucket: (date: string) => DayBucket,
+  visitedDates: Set<string>,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const existing = await tx.query.lsaLeadsDaily.findFirst({
-      where: and(eq(lsaLeadsDaily.lsaClientId, lsaClientId), eq(lsaLeadsDaily.date, date)),
-    });
+  const redirectedTargetDates = await applySignedDateCorrections(lsaClientId, rows, bucket);
+  await applyRedirectedInContributions(callrailCompanyId, fromDate, toDate, bucket);
+
+  for (const targetDate of redirectedTargetDates) {
+    if (targetDate >= fromDate && targetDate <= toDate) continue; // already merged in above
+    if (visitedDates.has(targetDate)) continue;
     console.log(
-      `[lsa-sync][signed-correction] incrementStoredLsaCallrailDay ${lsaClientId}/${date}: existing row`,
-      existing
-        ? { signedCases: existing.signedCases, rollupBreakdown: existing.rollupBreakdown }
-        : "none (will insert fresh)",
-      "delta:",
-      delta,
+      `[lsa-sync][signed-correction] target date ${targetDate} is outside this run's fetched range [${fromDate}, ${toDate}] — recomputing it directly`,
     );
-    const newSignedCases = (existing?.signedCases ?? 0) + delta.signedCasesDelta;
-    const newRollup =
-      delta.rollupRealDelta !== 0
-        ? adjustRollupReal(
-            (existing?.rollupBreakdown ?? {}) as Record<string, unknown>,
-            delta.channel,
-            delta.rollupRealDelta,
-          )
-        : ((existing?.rollupBreakdown ?? {}) as Record<string, unknown>);
-    console.log(
-      `[lsa-sync][signed-correction] incrementStoredLsaCallrailDay ${lsaClientId}/${date}: writing`,
-      { signedCases: newSignedCases, rollupBreakdown: newRollup },
-    );
-    const now = new Date();
-    await tx
-      .insert(lsaLeadsDaily)
-      .values({
-        lsaClientId,
-        date,
-        signedCases: newSignedCases,
-        rollupBreakdown: newRollup,
-        ingestedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [lsaLeadsDaily.lsaClientId, lsaLeadsDaily.date],
-        set: { signedCases: newSignedCases, rollupBreakdown: newRollup, ingestedAt: now },
-      });
-  });
+    await recomputeLsaCallrailDay(lsaClientId, targetDate, visitedDates);
+  }
 }
 
 // CallRail-only, single-date recompute — called by the Call Modified
@@ -407,7 +418,15 @@ async function incrementStoredLsaCallrailDay(
 export async function recomputeLsaCallrailDay(
   lsaClientId: string,
   date: string,
+  visitedDates: Set<string> = new Set(),
 ): Promise<void> {
+  if (visitedDates.has(date)) {
+    console.log(
+      `[lsa-sync][signed-correction] recomputeLsaCallrailDay skip: lsa_client=${lsaClientId} date=${date} already visited this run (recursion guard)`,
+    );
+    return;
+  }
+  visitedDates.add(date);
   console.log(`[lsa-sync][signed-correction] recomputeLsaCallrailDay start: lsa_client=${lsaClientId} date=${date}`);
   const client = await db.query.lsaClients.findFirst({
     where: eq(lsaClients.id, lsaClientId),
@@ -440,7 +459,15 @@ export async function recomputeLsaCallrailDay(
       signedRealCandidates: r.signedRealCandidates,
     })),
   );
-  await applySignedDateCorrections(lsaClientId, rows, byDate, bucket);
+  await applyTrueSignDateCorrections(
+    lsaClientId,
+    client.callrailCompanyId,
+    date,
+    date,
+    rows,
+    bucket,
+    visitedDates,
+  );
 
   for (const row of byDate.values()) {
     if (!row.callrailFetched) continue;
@@ -602,7 +629,7 @@ export async function syncLsaForClient(
         bucket,
       );
 
-      // True-sign-date correction (see applySignedDateCorrections) —
+      // True-sign-date correction (see applyTrueSignDateCorrections) —
       // redirects any call whose call_signed_events entry points at a
       // different date than the one it was just bucketed under above.
       // Wrapped in its own try/catch: a failure here must not block the
@@ -610,7 +637,15 @@ export async function syncLsaForClient(
       // back to counting toward each call's own date, same as before this
       // feature existed).
       try {
-        await applySignedDateCorrections(lsaClientId, rows, byDate, bucket);
+        await applyTrueSignDateCorrections(
+          lsaClientId,
+          client.callrailCompanyId,
+          opts.fromDate,
+          opts.toDate,
+          rows,
+          bucket,
+          new Set<string>(),
+        );
       } catch (err) {
         console.error(
           `[lsa-sync] signed-date correction failed for lsa_client ${lsaClientId}:`,
