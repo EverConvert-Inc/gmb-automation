@@ -44,6 +44,26 @@ async function startJob(
   return row.id;
 }
 
+// `(err as Error).message` assumes every caught rejection is a real Error
+// instance — not guaranteed (a thrown string, a Google Ads API error
+// array, etc. all lack a `.message`, so that cast silently evaluates to
+// `undefined`). That's exactly what caused a real production crash: an
+// undefined value passed as the ONLY key to a downstream
+// `.set({ lastSyncError: ... })` call gets filtered out by drizzle,
+// leaving zero fields to update, which throws "No values to set" —
+// masking the real error entirely (and, since this function's catch
+// blocks rethrow, becoming the error the caller actually sees). Route
+// every caught error through this instead of casting directly.
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 async function finishJob(
   jobId: string,
   status: "completed" | "failed",
@@ -174,7 +194,7 @@ export async function syncGoogleAdsForClient(
       campaignsIngested: uniqueCampaigns.size,
     };
   } catch (err) {
-    const msg = (err as Error).message;
+    const msg = stringifyError(err);
     await finishJob(jobId, "failed", msg);
     await db
       .update(ppcClients)
@@ -311,7 +331,7 @@ export async function syncCallrailForClient(
     await finishJob(jobId, "completed", null);
     return { jobId, daysIngested: rows.length };
   } catch (err) {
-    const msg = (err as Error).message;
+    const msg = stringifyError(err);
     await finishJob(jobId, "failed", msg);
     await db
       .update(ppcClients)
@@ -349,7 +369,7 @@ export async function syncAllGoogleAds(opts: SyncOpts): Promise<{
       synced += 1;
     } else {
       errored += 1;
-      errors.push({ ppcClientId: candidates[i].id, message: (s.reason as Error).message });
+      errors.push({ ppcClientId: candidates[i].id, message: stringifyError(s.reason) });
     }
   });
   return { synced, errored, errors };
@@ -380,7 +400,7 @@ export async function syncAllCallrail(opts: SyncOpts): Promise<{
       synced += 1;
     } else {
       errored += 1;
-      errors.push({ ppcClientId: candidates[i].id, message: (s.reason as Error).message });
+      errors.push({ ppcClientId: candidates[i].id, message: stringifyError(s.reason) });
     }
   });
   return { synced, errored, errors };

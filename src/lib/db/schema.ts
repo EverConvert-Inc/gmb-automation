@@ -884,8 +884,23 @@ export const callSignedEvents = pgTable(
   "call_signed_events",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-    callrailCallId: text("callrail_call_id").notNull().unique(),
+    callrailCallId: text("callrail_call_id").notNull(),
     callrailCompanyId: text("callrail_company_id").notNull(),
+    // Which LSA client this specific row's classification belongs to —
+    // null only for rows written before this column existed (see below).
+    // Two different lsa_clients can share one CallRail company (nothing
+    // in the schema prevents it), and each independently computes its own
+    // classification for the same call from its own tag-category config —
+    // so this can't be a single shared row per call; it's one row PER
+    // (call, lsa_client) that matched, all sharing the same signedAt
+    // (same real-world sign moment). Without this column,
+    // applyRedirectedInContributions in lsa-sync.ts had no way to tell
+    // whose classification a row held, so EVERY client sharing that
+    // company picked up the same redirect — confirmed via a real scratch
+    // test to double-count the same call across both clients' reports.
+    lsaClientId: uuid("lsa_client_id").references(() => lsaClients.id, {
+      onDelete: "cascade",
+    }),
     signedAt: timestamp("signed_at", { withTimezone: true }).notNull(),
     // What this call actually contributed toward the LSA signed-date
     // correction (lsa-sync.ts's applySignedDateCorrections/
@@ -918,6 +933,16 @@ export const callSignedEvents = pgTable(
   },
   (t) => ({
     companyIdx: index("call_signed_events_company_idx").on(t.callrailCompanyId),
+    // Replaces the old single-column unique(callrail_call_id) — a call
+    // matching more than one lsa_client (shared CallRail company) now
+    // gets one row per matching client instead of a single shared row.
+    // Postgres treats NULL as distinct from NULL in a unique constraint,
+    // so pre-migration rows (lsa_client_id null) don't conflict with each
+    // other despite sharing that null value.
+    callClientUniq: unique("call_signed_events_call_client_unique").on(
+      t.callrailCallId,
+      t.lsaClientId,
+    ),
   }),
 );
 

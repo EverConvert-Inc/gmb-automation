@@ -51,6 +51,25 @@ async function startJob(
   return row.id;
 }
 
+// `(err as Error).message` assumes every caught rejection is a real Error
+// instance — not guaranteed (a thrown string, a Google Ads API error
+// array, etc. all lack a `.message`, so that cast silently evaluates to
+// `undefined`). That's exactly what caused a real production crash: an
+// undefined value passed as the ONLY key to a downstream
+// `.set({ lastSyncError: ... })` call gets filtered out by drizzle,
+// leaving zero fields to update, which throws "No values to set" —
+// masking the real error entirely. Route every caught error through this
+// instead of casting directly.
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 async function finishJob(
   jobId: string,
   status: "completed" | "failed",
@@ -313,10 +332,17 @@ async function applySignedDateCorrections(
   const redirectedTargetDates = new Set<string>();
   if (candidates.length === 0) return redirectedTargetDates;
 
+  // Scoped to THIS client's own rows only — two lsa_clients can share a
+  // CallRail company (each independently classifying the same call from
+  // its own tag-category config), so matching by callId alone would pick
+  // up a sibling client's row here.
   const events = await db.query.callSignedEvents.findMany({
-    where: inArray(
-      callSignedEvents.callrailCallId,
-      candidates.map((c) => c.callId),
+    where: and(
+      inArray(
+        callSignedEvents.callrailCallId,
+        candidates.map((c) => c.callId),
+      ),
+      eq(callSignedEvents.lsaClientId, lsaClientId),
     ),
   });
   console.log(
@@ -363,7 +389,12 @@ async function applySignedDateCorrections(
         channel: c.channel,
         tagCategoryLabels: c.tagCategoryLabels,
       })
-      .where(eq(callSignedEvents.callrailCallId, c.callId));
+      .where(
+        and(
+          eq(callSignedEvents.callrailCallId, c.callId),
+          eq(callSignedEvents.lsaClientId, lsaClientId),
+        ),
+      );
 
     redirectedTargetDates.add(signedDate);
     console.log(
@@ -394,15 +425,22 @@ async function applySignedDateCorrections(
 // genuine redirect (signedDate !== the call's own date), so this can never
 // double-count a call under both its own date (via the normal fresh pull)
 // and its target date.
+//
+// Scoped to lsaClientId, not callrailCompanyId — two lsa_clients can share
+// one CallRail company, each with its own independently-computed
+// classification for the same call (see the lsaClientId comment on
+// callSignedEvents in schema.ts). Scoping by company alone would apply
+// every redirect to every client sharing that company, double-counting
+// the same real-world event across their separate reports.
 async function applyRedirectedInContributions(
-  callrailCompanyId: string,
+  lsaClientId: string,
   fromDate: string,
   toDate: string,
   bucket: (date: string) => DayBucket,
 ): Promise<void> {
   const events = await db.query.callSignedEvents.findMany({
     where: and(
-      eq(callSignedEvents.callrailCompanyId, callrailCompanyId),
+      eq(callSignedEvents.lsaClientId, lsaClientId),
       isNotNull(callSignedEvents.isSignedCase),
     ),
   });
@@ -451,7 +489,6 @@ async function applyRedirectedInContributions(
 // same date twice within one top-level trigger.
 async function applyTrueSignDateCorrections(
   lsaClientId: string,
-  callrailCompanyId: string,
   fromDate: string,
   toDate: string,
   rows: CallrailDailyTotals[],
@@ -459,7 +496,7 @@ async function applyTrueSignDateCorrections(
   visitedDates: Set<string>,
 ): Promise<void> {
   const redirectedTargetDates = await applySignedDateCorrections(lsaClientId, rows, bucket);
-  await applyRedirectedInContributions(callrailCompanyId, fromDate, toDate, bucket);
+  await applyRedirectedInContributions(lsaClientId, fromDate, toDate, bucket);
 
   for (const targetDate of redirectedTargetDates) {
     if (targetDate >= fromDate && targetDate <= toDate) continue; // already merged in above
@@ -524,15 +561,7 @@ export async function recomputeLsaCallrailDay(
       signedRealCandidates: r.signedRealCandidates,
     })),
   );
-  await applyTrueSignDateCorrections(
-    lsaClientId,
-    client.callrailCompanyId,
-    date,
-    date,
-    rows,
-    bucket,
-    visitedDates,
-  );
+  await applyTrueSignDateCorrections(lsaClientId, date, date, rows, bucket, visitedDates);
 
   for (const row of byDate.values()) {
     if (!row.callrailFetched) continue;
@@ -671,7 +700,7 @@ export async function syncLsaForClient(
         .where(eq(lsaClients.id, lsaClientId));
       await finishJob(adsJobId, "completed", null);
     } catch (err) {
-      const msg = (err as Error).message;
+      const msg = stringifyError(err);
       adsError = msg;
       console.error(`[lsa-sync] google_ads failed for lsa_client ${lsaClientId}:`, msg);
       await finishJob(adsJobId, "failed", msg);
@@ -704,7 +733,6 @@ export async function syncLsaForClient(
       try {
         await applyTrueSignDateCorrections(
           lsaClientId,
-          client.callrailCompanyId,
           opts.fromDate,
           opts.toDate,
           rows,
@@ -714,7 +742,7 @@ export async function syncLsaForClient(
       } catch (err) {
         console.error(
           `[lsa-sync] signed-date correction failed for lsa_client ${lsaClientId}:`,
-          (err as Error).message,
+          stringifyError(err),
         );
       }
 
@@ -850,13 +878,13 @@ export async function syncLsaForClient(
         } catch (err) {
           console.error(
             `[lsa-sync] text-conversation sign-date tracking failed for lsa_client ${lsaClientId}:`,
-            (err as Error).message,
+            stringifyError(err),
           );
         }
       } catch (err) {
         console.error(
           `[lsa-sync] text-message pull failed for lsa_client ${lsaClientId}:`,
-          (err as Error).message,
+          stringifyError(err),
         );
       }
 
@@ -866,7 +894,7 @@ export async function syncLsaForClient(
         .where(eq(lsaClients.id, lsaClientId));
       await finishJob(callrailJobId, "completed", null);
     } catch (err) {
-      const msg = (err as Error).message;
+      const msg = stringifyError(err);
       callrailError = msg;
       console.error(`[lsa-sync] callrail failed for lsa_client ${lsaClientId}:`, msg);
       await finishJob(callrailJobId, "failed", msg);
@@ -964,7 +992,7 @@ export async function syncAllLsaClients(opts: SyncOpts): Promise<{
       }
     } else {
       errored += 1;
-      const message = (s.reason as Error).message;
+      const message = stringifyError(s.reason);
       console.error(`[lsa-sync] client ${c.id} failed entirely:`, message);
       errors.push({ lsaClientId: c.id, message });
     }

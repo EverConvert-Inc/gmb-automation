@@ -267,6 +267,13 @@
       "when": 1785950835334,
       "tag": "0037_call_signed_events_tag_labels",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1785954774900,
+      "tag": "0038_call_signed_events_per_client",
+      "breakpoints": true
     }
   ]
 }
