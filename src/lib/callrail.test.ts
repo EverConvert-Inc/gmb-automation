@@ -636,6 +636,7 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
         isSignedCase: true,
         isRollupReal: true,
         channel: null,
+        tagCategoryLabels: ["Signed"],
       },
     ]);
   });
@@ -669,6 +670,9 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
         isSignedCase: true,
         isRollupReal: false,
         channel: null,
+        // No tag categories configured at all — nothing matched, so
+        // nothing was ever counted in tagCategoryBreakdown for this call.
+        tagCategoryLabels: [],
       },
     ]);
   });
@@ -702,6 +706,10 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
         isSignedCase: false,
         isRollupReal: true,
         channel: null,
+        // The real-rollup label is "Won" here, not "Signed" — confirms
+        // tagCategoryLabels reflects whatever the call's tags actually
+        // matched, never a hardcoded label.
+        tagCategoryLabels: ["Won"],
       },
     ]);
   });
@@ -737,6 +745,7 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
         isSignedCase: true,
         isRollupReal: true,
         channel: "PPC",
+        tagCategoryLabels: ["Signed"],
       },
     ]);
   });
@@ -778,6 +787,7 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
         isSignedCase: false,
         isRollupReal: true,
         channel: "GMB",
+        tagCategoryLabels: ["Signed"],
       },
     ]);
   });
@@ -805,6 +815,43 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
     );
 
     expect(day.signedRealCandidates).toEqual([]);
+  });
+
+  it("tagCategoryLabels is empty for a repeat caller even though isRollupReal is true — tagCategoryBreakdown is first-time-calls-only", async () => {
+    const calls: MockCall[] = [
+      {
+        id: "call-repeat-real",
+        start_time: "2026-07-28T09:00:00-04:00",
+        duration: 30,
+        tags: ["Signed"],
+        source_name: "LSA - Roswell",
+        first_call: false,
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockCallsResponse(calls)));
+
+    const [day] = await pullCallsForCompany(
+      "COMPANY1",
+      "2026-07-28",
+      "2026-07-28",
+      "Signed",
+      ["LSA"],
+      TAG_CATEGORIES,
+    );
+
+    expect(day.signedRealCandidates).toEqual([
+      {
+        callId: "call-repeat-real",
+        date: "2026-07-28",
+        isSignedCase: true,
+        isRollupReal: true,
+        channel: null,
+        // Real/junk counts regardless of first-time status, but
+        // tagCategoryBreakdown never got incremented for this call at all
+        // — nothing for a redirect to remove/add on that field.
+        tagCategoryLabels: [],
+      },
+    ]);
   });
 });
 

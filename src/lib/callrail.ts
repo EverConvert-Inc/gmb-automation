@@ -202,6 +202,14 @@ export type CallrailSignedCandidate = {
   // client/call. Preserved so a downstream correction redirects the call
   // into the SAME channel on its new date, not a different one.
   channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
+  // Which lsa_callrail_tag_categories label(s) this call actually
+  // incremented in tagCategoryBreakdown (whichever labels its tags really
+  // matched — never hardcoded to "Signed", since any real-rollup category
+  // can be redirected the same way). Empty when the call never
+  // contributed to tagCategoryBreakdown at all: that field is
+  // first-time-calls-only, so a repeat caller's call yields [] here even
+  // if isRollupReal is true.
+  tagCategoryLabels: string[];
 };
 
 // --- GMB ad-vs-organic matching (call_view cross-reference) ---
@@ -718,6 +726,15 @@ export async function pullCallsForCompany(
     const isRollupRealForCandidate = bucket.channelBreakdown
       ? channel !== null && channelRollup === "real"
       : flatRollup === "real";
+    // Same "which computation is authoritative" gate as isRollupRealForCandidate
+    // above, plus the first-time-calls-only scoping tagCategoryBreakdown
+    // itself uses (see the flat and channel blocks above) — this must match
+    // EXACTLY which label(s) actually got incremented for this call, or the
+    // correction below would remove/add labels that were never counted.
+    const tagCategoryLabelsCounted =
+      isFirstTime && (bucket.channelBreakdown ? channel !== null : isRelevantForReport)
+        ? matchedCategoryLabels
+        : [];
     if (isSignedCase || isRollupRealForCandidate) {
       bucket.signedRealCandidates.push({
         callId: call.id,
@@ -725,6 +742,7 @@ export async function pullCallsForCompany(
         isSignedCase,
         isRollupReal: isRollupRealForCandidate,
         channel: bucket.channelBreakdown ? channel : null,
+        tagCategoryLabels: tagCategoryLabelsCounted,
       });
     }
 

@@ -902,6 +902,16 @@ export const callSignedEvents = pgTable(
     // "GMB" | "PPC" | "LSA" | "PMax" | null — same convention as
     // CallrailSignedCandidate.channel in callrail.ts.
     channel: text("channel"),
+    // Which lsa_callrail_tag_categories label(s) this call actually
+    // incremented in tag_category_breakdown (e.g. ["Signed"],
+    // ["Opportunity"], possibly several) — empty/null when the call never
+    // contributed to tag_category_breakdown at all (a repeat caller, since
+    // that field is first-time-calls-only; or no matched category).
+    // Persisted for the same durability reason as the 3 columns above:
+    // without it, the origin-side decrement has nothing to identify which
+    // label(s) to remove, and a later resync of the target date alone
+    // couldn't reconstruct which label(s) to add back in.
+    tagCategoryLabels: text("tag_category_labels").array(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

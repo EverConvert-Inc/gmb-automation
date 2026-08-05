@@ -145,6 +145,40 @@ export function adjustRollupReal(
   };
 }
 
+// Same flat-vs-channel-nested shape convention as adjustRollupReal above,
+// generalized to an arbitrary set of tag-category labels instead of a
+// fixed real/junk/unclassified shape — used to keep tagCategoryBreakdown
+// in sync with the same redirect that moves signedCases/rollupBreakdown,
+// so a redirected call's row never ends up self-contradictory (a tag count
+// present with no matching rollup/signedCases contribution, or vice
+// versa). No-ops on an empty label list (nothing to adjust).
+export function adjustTagCategoryBreakdown(
+  current: Record<string, unknown>,
+  channel: "GMB" | "PPC" | "LSA" | "PMax" | null,
+  labels: string[],
+  delta: number,
+): Record<string, unknown> {
+  if (labels.length === 0) return current;
+  const hasAnyValue = Object.keys(current).length > 0;
+  const isNested = hasAnyValue
+    ? Object.values(current).some((v) => v !== null && typeof v === "object")
+    : channel !== null;
+  if (isNested) {
+    const nested = current as Record<string, Record<string, number>>;
+    const key = channel ?? "LSA";
+    const existing = { ...(nested[key] ?? {}) };
+    for (const label of labels) {
+      existing[label] = (existing[label] ?? 0) + delta;
+    }
+    return { ...nested, [key]: existing };
+  }
+  const flat = { ...(current as Record<string, number>) };
+  for (const label of labels) {
+    flat[label] = (flat[label] ?? 0) + delta;
+  }
+  return flat;
+}
+
 // Shared by syncLsaForClient's regular per-day loop and
 // recomputeLsaCallrailDay's targeted single-day recompute (see below) —
 // fetches this client's CallRail calls for [fromDate, toDate], writes their
@@ -312,16 +346,34 @@ async function applySignedDateCorrections(
     if (c.isRollupReal) {
       origin.rollupCounts = adjustRollupReal(origin.rollupCounts, c.channel, -1);
     }
+    if (c.tagCategoryLabels.length > 0) {
+      origin.tagCategoryBreakdown = adjustTagCategoryBreakdown(
+        origin.tagCategoryBreakdown,
+        c.channel,
+        c.tagCategoryLabels,
+        -1,
+      );
+    }
 
     await db
       .update(callSignedEvents)
-      .set({ isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel })
+      .set({
+        isSignedCase: c.isSignedCase,
+        isRollupReal: c.isRollupReal,
+        channel: c.channel,
+        tagCategoryLabels: c.tagCategoryLabels,
+      })
       .where(eq(callSignedEvents.callrailCallId, c.callId));
 
     redirectedTargetDates.add(signedDate);
     console.log(
       `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate}; persisted classification onto call_signed_events for durable redirected-in reconstruction`,
-      { isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel },
+      {
+        isSignedCase: c.isSignedCase,
+        isRollupReal: c.isRollupReal,
+        channel: c.channel,
+        tagCategoryLabels: c.tagCategoryLabels,
+      },
     );
   }
   return redirectedTargetDates;
@@ -367,10 +419,23 @@ async function applyRedirectedInContributions(
         1,
       );
     }
+    if (e.tagCategoryLabels && e.tagCategoryLabels.length > 0) {
+      b.tagCategoryBreakdown = adjustTagCategoryBreakdown(
+        b.tagCategoryBreakdown,
+        e.channel as "GMB" | "PPC" | "LSA" | "PMax" | null,
+        e.tagCategoryLabels,
+        1,
+      );
+    }
     b.callrailFetched = true;
     console.log(
       `[lsa-sync][signed-correction] redirected-in: call ${e.callrailCallId} contributes to ${targetDate}`,
-      { isSignedCase: e.isSignedCase, isRollupReal: e.isRollupReal, channel: e.channel },
+      {
+        isSignedCase: e.isSignedCase,
+        isRollupReal: e.isRollupReal,
+        channel: e.channel,
+        tagCategoryLabels: e.tagCategoryLabels,
+      },
     );
   }
 }

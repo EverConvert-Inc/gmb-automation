@@ -1,0 +1,1 @@
+ALTER TABLE "call_signed_events" ADD COLUMN "tag_category_labels" text[];
