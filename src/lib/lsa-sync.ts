@@ -263,6 +263,16 @@ async function applySignedDateCorrections(
   bucket: (date: string) => DayBucket,
 ): Promise<void> {
   const candidates = rows.flatMap((r) => r.signedRealCandidates);
+  console.log(
+    `[lsa-sync][signed-correction] lsa_client ${lsaClientId}: ${candidates.length} signedRealCandidate(s) across ${rows.length} fetched day(s)`,
+    candidates.map((c) => ({
+      callId: c.callId,
+      date: c.date,
+      isSignedCase: c.isSignedCase,
+      isRollupReal: c.isRollupReal,
+      channel: c.channel,
+    })),
+  );
   if (candidates.length === 0) return;
 
   const events = await db.query.callSignedEvents.findMany({
@@ -271,13 +281,28 @@ async function applySignedDateCorrections(
       candidates.map((c) => c.callId),
     ),
   });
+  console.log(
+    `[lsa-sync][signed-correction] lsa_client ${lsaClientId}: ${events.length} matching call_signed_events row(s) found for ${candidates.length} candidate(s)`,
+    events.map((e) => ({ callId: e.callrailCallId, signedAt: e.signedAt.toISOString() })),
+  );
   const signedDateByCallId = new Map(
     events.map((e) => [e.callrailCallId, e.signedAt.toISOString().slice(0, 10)]),
   );
 
   for (const c of candidates) {
     const signedDate = signedDateByCallId.get(c.callId);
-    if (!signedDate || signedDate === c.date) continue;
+    if (!signedDate) {
+      console.log(
+        `[lsa-sync][signed-correction] call ${c.callId}: no call_signed_events row — no correction, counts toward its own date ${c.date} as before`,
+      );
+      continue;
+    }
+    if (signedDate === c.date) {
+      console.log(
+        `[lsa-sync][signed-correction] call ${c.callId}: signed_at date (${signedDate}) matches its own date — no-op, no visible change`,
+      );
+      continue;
+    }
 
     const origin = bucket(c.date);
     if (c.isSignedCase) origin.signedCases -= 1;
@@ -292,7 +317,15 @@ async function applySignedDateCorrections(
         target.rollupCounts = adjustRollupReal(target.rollupCounts, c.channel, 1);
       }
       target.callrailFetched = true;
+      console.log(
+        `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate} via IN-MEMORY MERGE (target date already part of this run's fetched range)`,
+        { isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel },
+      );
     } else {
+      console.log(
+        `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate} via STANDALONE INCREMENT (target date outside this run's fetched range — will be lost if a later sync re-fetches ${signedDate} without also re-fetching ${c.date})`,
+        { isSignedCase: c.isSignedCase, isRollupReal: c.isRollupReal, channel: c.channel },
+      );
       await incrementStoredLsaCallrailDay(lsaClientId, signedDate, {
         signedCasesDelta: c.isSignedCase ? 1 : 0,
         rollupRealDelta: c.isRollupReal ? 1 : 0,
@@ -324,6 +357,14 @@ async function incrementStoredLsaCallrailDay(
     const existing = await tx.query.lsaLeadsDaily.findFirst({
       where: and(eq(lsaLeadsDaily.lsaClientId, lsaClientId), eq(lsaLeadsDaily.date, date)),
     });
+    console.log(
+      `[lsa-sync][signed-correction] incrementStoredLsaCallrailDay ${lsaClientId}/${date}: existing row`,
+      existing
+        ? { signedCases: existing.signedCases, rollupBreakdown: existing.rollupBreakdown }
+        : "none (will insert fresh)",
+      "delta:",
+      delta,
+    );
     const newSignedCases = (existing?.signedCases ?? 0) + delta.signedCasesDelta;
     const newRollup =
       delta.rollupRealDelta !== 0
@@ -333,6 +374,10 @@ async function incrementStoredLsaCallrailDay(
             delta.rollupRealDelta,
           )
         : ((existing?.rollupBreakdown ?? {}) as Record<string, unknown>);
+    console.log(
+      `[lsa-sync][signed-correction] incrementStoredLsaCallrailDay ${lsaClientId}/${date}: writing`,
+      { signedCases: newSignedCases, rollupBreakdown: newRollup },
+    );
     const now = new Date();
     await tx
       .insert(lsaLeadsDaily)
@@ -363,10 +408,16 @@ export async function recomputeLsaCallrailDay(
   lsaClientId: string,
   date: string,
 ): Promise<void> {
+  console.log(`[lsa-sync][signed-correction] recomputeLsaCallrailDay start: lsa_client=${lsaClientId} date=${date}`);
   const client = await db.query.lsaClients.findFirst({
     where: eq(lsaClients.id, lsaClientId),
   });
-  if (!client?.callrailCompanyId) return;
+  if (!client?.callrailCompanyId) {
+    console.log(
+      `[lsa-sync][signed-correction] recomputeLsaCallrailDay abort: lsa_client=${lsaClientId} not found or has no callrail_company_id`,
+    );
+    return;
+  }
 
   const byDate = new Map<string, DayBucket>();
   function bucket(d: string): DayBucket {
@@ -378,10 +429,25 @@ export async function recomputeLsaCallrailDay(
   }
 
   const { rows } = await fetchAndBucketLsaCalls(client, date, date, bucket);
+  console.log(
+    `[lsa-sync][signed-correction] recomputeLsaCallrailDay: pullCallsForCompany(${date}, ${date}) returned ${rows.length} day-row(s) for company ${client.callrailCompanyId}`,
+    rows.map((r) => ({
+      date: r.date,
+      totalCalls: r.totalCalls,
+      signedCases: r.signedCases,
+      rollupCounts: r.rollupCounts,
+      channelBreakdown: r.channelBreakdown,
+      signedRealCandidates: r.signedRealCandidates,
+    })),
+  );
   await applySignedDateCorrections(lsaClientId, rows, byDate, bucket);
 
   for (const row of byDate.values()) {
     if (!row.callrailFetched) continue;
+    console.log(
+      `[lsa-sync][signed-correction] recomputeLsaCallrailDay: upserting lsa_leads_daily for lsa_client=${lsaClientId} date=${row.date}`,
+      { signedCases: row.signedCases, rollupBreakdown: row.rollupCounts, tagCategoryBreakdown: row.tagCategoryBreakdown },
+    );
     const now = new Date();
     await db
       .insert(lsaLeadsDaily)
@@ -405,6 +471,7 @@ export async function recomputeLsaCallrailDay(
         },
       });
   }
+  console.log(`[lsa-sync][signed-correction] recomputeLsaCallrailDay done: lsa_client=${lsaClientId} date=${date}`);
 }
 
 // Pulls Google Ads (local_services_lead + LOCAL_SERVICES campaign cost) and

@@ -107,6 +107,10 @@ export async function POST(req: Request) {
     }
   }
 
+  console.log(
+    `[callrail-webhook] call ${body.resource_id}: isReal=${isReal}, matchedLsaClientIds=${JSON.stringify(matchedLsaClientIds)}, start_time=${body.start_time ?? "(missing)"}, tags=${JSON.stringify(tags)}, tracker=${trackerName}`,
+  );
+
   if (isReal) {
     // .returning() distinguishes a genuinely NEW transition from a
     // repeat delivery/no-op conflict — the true-sign-date correction
@@ -122,6 +126,10 @@ export async function POST(req: Request) {
       .onConflictDoNothing()
       .returning();
 
+    console.log(
+      `[callrail-webhook] call ${body.resource_id}: call_signed_events insert ${inserted.length > 0 ? "NEW (row created)" : "conflict (already existed — no-op)"}`,
+    );
+
     if (inserted.length > 0 && matchedLsaClientIds.length > 0) {
       if (!body.start_time) {
         console.warn(
@@ -130,8 +138,14 @@ export async function POST(req: Request) {
       } else {
         const callDate = body.start_time.slice(0, 10);
         for (const lsaClientId of matchedLsaClientIds) {
+          console.log(
+            `[callrail-webhook] call ${body.resource_id}: triggering recomputeLsaCallrailDay(${lsaClientId}, ${callDate})`,
+          );
           try {
             await recomputeLsaCallrailDay(lsaClientId, callDate);
+            console.log(
+              `[callrail-webhook] call ${body.resource_id}: recomputeLsaCallrailDay(${lsaClientId}, ${callDate}) completed without throwing`,
+            );
           } catch (err) {
             console.error(
               `[callrail-webhook] true-sign-date correction failed for lsa_client ${lsaClientId}, call ${body.resource_id}:`,
@@ -140,6 +154,10 @@ export async function POST(req: Request) {
           }
         }
       }
+    } else {
+      console.log(
+        `[callrail-webhook] call ${body.resource_id}: correction NOT triggered (inserted=${inserted.length}, matchedLsaClientIds=${matchedLsaClientIds.length})`,
+      );
     }
   }
 
