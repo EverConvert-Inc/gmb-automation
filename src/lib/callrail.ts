@@ -87,6 +87,27 @@ export async function listCompanies(): Promise<CallRailCompany[]> {
   return all;
 }
 
+// Looks up a single call by id to get its own date (start_time) —
+// nothing in this app persists that anywhere locally (call_signed_events
+// only stores signed_at, the redirect TARGET date), so a one-off
+// reclassification backfill that needs to recompute a call's ORIGIN date
+// has no other way to find it. Returns null on a 404 (call
+// deleted/purged from CallRail) rather than throwing, since that's a
+// legitimate terminal state for a one-off script to skip past, not a
+// crash-worthy error.
+export async function getCallStartDate(callId: string): Promise<string | null> {
+  const accountId = await resolveAccountId();
+  const url = new URL(`${BASE_URL}/v3/a/${accountId}/calls/${callId}.json`);
+  url.searchParams.set("fields", "start_time");
+  const res = await fetch(url.toString(), { headers: authHeaders() });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`CallRail call fetch failed for ${callId}: ${res.status} ${await res.text()}`);
+  }
+  const call = (await res.json()) as CallRailCall;
+  return call.start_time.slice(0, 10);
+}
+
 export type CallrailTagCategoryConfig = {
   label: string;
   callrailTagName: string;
