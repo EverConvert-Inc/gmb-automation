@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { LsaClientAdminCard } from "@/components/lsa-client-admin-card";
 import { LsaCallrailTagCategoriesCard } from "@/components/lsa-callrail-tag-categories-card";
+import { LsaClientDangerZoneCard } from "@/components/lsa-client-danger-zone-card";
 import { db } from "@/lib/db/client";
 import { callrailWebhookSecrets, lsaCallrailTagCategories, lsaClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
@@ -182,6 +183,8 @@ export default async function LsaClientDetailPage({
       />
 
       <LsaCallrailTagCategoriesCard clientId={row.id} initial={tagCategories} />
+
+      <LsaClientDangerZoneCard id={row.id} name={row.name} />
     </div>
   );
 }

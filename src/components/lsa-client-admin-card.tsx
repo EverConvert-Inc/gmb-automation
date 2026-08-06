@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, ArrowRight, RefreshCw, Trash2, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowRight, RefreshCw, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -256,25 +256,6 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
     } finally {
       setSyncing(false);
     }
-  }
-
-  async function deleteClient() {
-    if (
-      !confirm(
-        `Delete "${props.name}"? All Google Ads and CallRail history for this LSA client will be removed.`,
-      )
-    ) {
-      return;
-    }
-    const res = await fetch(`/api/lsa/clients/${props.id}`, {
-      method: "DELETE",
-    });
-    if (!res.ok) {
-      toast.error("Delete failed");
-      return;
-    }
-    toast.success(`${props.name} deleted`);
-    router.push("/lsa/clients");
   }
 
   return (
@@ -731,24 +712,6 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
               </span>
             )}
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base text-red-700 dark:text-red-400">
-            Danger zone
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button variant="destructive" size="sm" onClick={deleteClient}>
-            <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete LSA client
-          </Button>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Removes the client record and its daily leads/cost/signed-case
-            rollups. The OAuth credential row is kept in case another client
-            reuses it.
-          </p>
         </CardContent>
       </Card>
     </div>

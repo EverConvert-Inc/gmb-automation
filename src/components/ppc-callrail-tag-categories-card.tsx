@@ -198,105 +198,94 @@ export function PpcCallrailTagCategoriesCard({
             show every call as unclassified until at least one is added.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-md border">
-            <table className="w-full text-sm">
-              <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-2 py-1.5 font-medium">Label</th>
-                  <th className="px-2 py-1.5 font-medium">CallRail tag name</th>
-                  <th className="w-28 px-2 py-1.5 font-medium">Rollup</th>
-                  <th className="px-2 py-1.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {categories.map((c, index) => {
-                  const draft = drafts[c.id] ?? draftOf(c);
-                  const dirty = !draftsEqual(draft, draftOf(c));
-                  const busy = busyId === c.id;
-                  return (
-                    <tr key={c.id} className="border-b last:border-0">
-                      <td className="px-2 py-1.5 align-middle">
-                        <Input
-                          aria-label="Label"
-                          value={draft.label}
-                          onChange={(e) =>
-                            setDraft(c.id, { label: e.target.value })
-                          }
-                          className="h-8"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5 align-middle">
-                        <Input
-                          aria-label="CallRail tag name"
-                          value={draft.callrailTagName}
-                          onChange={(e) =>
-                            setDraft(c.id, { callrailTagName: e.target.value })
-                          }
-                          className="h-8"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5 align-middle">
-                        <Select
-                          aria-label="Rollup"
-                          value={draft.rollup}
-                          onChange={(e) =>
-                            setDraft(c.id, {
-                              rollup: e.target.value as "real" | "junk",
-                            })
-                          }
-                          className="h-8"
-                        >
-                          <option value="real">Real</option>
-                          <option value="junk">Junk</option>
-                        </Select>
-                      </td>
-                      <td className="px-2 py-1.5 align-middle">
-                        <div className="flex items-center justify-end gap-0.5 whitespace-nowrap">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => move(index, -1)}
-                            disabled={busy || index === 0}
-                            aria-label={`Move ${c.label} up`}
-                          >
-                            <ArrowUp className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => move(index, 1)}
-                            disabled={busy || index === categories.length - 1}
-                            aria-label={`Move ${c.label} down`}
-                          >
-                            <ArrowDown className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => saveRow(c.id)}
-                            disabled={busy || !dirty}
-                          >
-                            {dirty ? "Save" : "Saved"}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeRow(c.id)}
-                            disabled={busy}
-                            aria-label={`Remove ${c.label}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="flex flex-wrap gap-2">
+            {categories.map((c, index) => {
+              const draft = drafts[c.id] ?? draftOf(c);
+              const dirty = !draftsEqual(draft, draftOf(c));
+              const busy = busyId === c.id;
+              return (
+                <div
+                  key={c.id}
+                  className="flex flex-wrap items-center gap-1 rounded-full border bg-muted/30 py-1 pl-2 pr-1"
+                >
+                  <Input
+                    aria-label="Label"
+                    value={draft.label}
+                    onChange={(e) =>
+                      setDraft(c.id, { label: e.target.value })
+                    }
+                    size={Math.max(4, draft.label.length)}
+                    className="h-6 w-auto min-w-0 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-1"
+                  />
+                  <Input
+                    aria-label="CallRail tag name"
+                    value={draft.callrailTagName}
+                    onChange={(e) =>
+                      setDraft(c.id, { callrailTagName: e.target.value })
+                    }
+                    size={Math.max(4, draft.callrailTagName.length)}
+                    className="h-6 w-auto min-w-0 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-1"
+                  />
+                  <Select
+                    aria-label="Rollup"
+                    value={draft.rollup}
+                    onChange={(e) =>
+                      setDraft(c.id, {
+                        rollup: e.target.value as "real" | "junk",
+                      })
+                    }
+                    className="h-6 w-20 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-1"
+                  >
+                    <option value="real">Real</option>
+                    <option value="junk">Junk</option>
+                  </Select>
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={() => move(index, -1)}
+                      disabled={busy || index === 0}
+                      aria-label={`Move ${c.label} up`}
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={() => move(index, 1)}
+                      disabled={busy || index === categories.length - 1}
+                      aria-label={`Move ${c.label} down`}
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => saveRow(c.id)}
+                      disabled={busy || !dirty}
+                    >
+                      {dirty ? "Save" : "Saved"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={() => removeRow(c.id)}
+                      disabled={busy}
+                      aria-label={`Remove ${c.label}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

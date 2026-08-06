@@ -5,6 +5,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { Banner } from "@/components/ui/banner";
 import { PpcClientAdminCard } from "@/components/ppc-client-admin-card";
 import { PpcCallrailTagCategoriesCard } from "@/components/ppc-callrail-tag-categories-card";
+import { PpcClientDangerZoneCard } from "@/components/ppc-client-danger-zone-card";
 import { db } from "@/lib/db/client";
 import { callrailWebhookSecrets, ppcCallrailTagCategories, ppcClients } from "@/lib/db/schema";
 import { listCompanies } from "@/lib/callrail";
@@ -212,6 +213,8 @@ export default async function PpcClientDetailPage({
       />
 
       <PpcCallrailTagCategoriesCard clientId={row.id} initial={tagCategories} />
+
+      <PpcClientDangerZoneCard id={row.id} name={row.name} />
     </div>
   );
 }
