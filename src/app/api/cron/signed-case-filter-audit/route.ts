@@ -110,7 +110,13 @@ export async function GET(req: Request) {
       matchedCount: number;
       unmatchedCount: number;
       unmatchedTrackerNames: string[];
-      sampleUnmatchedCalls: Array<{ callId: string; date: string; trackerName: string }>;
+      sampleUnmatchedCalls: Array<{
+        callId: string;
+        date: string;
+        trackerName: string;
+        sourceNameRaw: string | null;
+        formattedTrackingSourceRaw: string | null;
+      }>;
       note?: string;
       error?: unknown;
     }> = [];

@@ -114,6 +114,13 @@ export type SignedTaggedCall = {
   // Lowercased already, same normalization pullCallsForCompany applies
   // before calling matchesAnyFilter — callers should NOT re-lowercase.
   trackerName: string;
+  // Un-merged, non-lowercased values exactly as CallRail returned them —
+  // kept alongside the merged trackerName so a filter-mismatch can be
+  // diagnosed as a genuine naming gap vs. an artifact of `??` not
+  // falling through on an empty (but non-null) source_name. See
+  // signed-case-filter-audit's use of these fields.
+  sourceNameRaw: string | null;
+  formattedTrackingSourceRaw: string | null;
 };
 
 // Raw fetch of every call in [fromDate, toDate] carrying the given tag,
@@ -159,6 +166,8 @@ export async function listSignedTaggedCalls(
         callId: c.id,
         date: c.start_time.slice(0, 10),
         trackerName: (c.source_name ?? c.formatted_tracking_source ?? "").toLowerCase(),
+        sourceNameRaw: c.source_name ?? null,
+        formattedTrackingSourceRaw: c.formatted_tracking_source ?? null,
       });
     }
     if (!body.total_pages || page >= body.total_pages) break;
