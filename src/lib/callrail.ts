@@ -108,6 +108,65 @@ export async function getCallStartDate(callId: string): Promise<string | null> {
   return call.start_time.slice(0, 10);
 }
 
+export type SignedTaggedCall = {
+  callId: string;
+  date: string;
+  // Lowercased already, same normalization pullCallsForCompany applies
+  // before calling matchesAnyFilter — callers should NOT re-lowercase.
+  trackerName: string;
+};
+
+// Raw fetch of every call in [fromDate, toDate] carrying the given tag,
+// with only the fields needed to audit signedCaseNameFilters coverage
+// (see signed-case-filter-audit route). Deliberately does not reuse
+// pullCallsForCompany — that function only returns aggregated daily
+// totals gated behind the very filter this is meant to audit, so it
+// can't surface the raw tracker names of calls the filter excludes.
+export async function listSignedTaggedCalls(
+  companyId: string,
+  fromDate: string,
+  toDate: string,
+  signedTag: string,
+): Promise<SignedTaggedCall[]> {
+  const accountId = await resolveAccountId();
+  const wantTag = signedTag.trim().toLowerCase();
+  const calls: SignedTaggedCall[] = [];
+  let page = 1;
+  while (true) {
+    const url = new URL(`${BASE_URL}/v3/a/${accountId}/calls.json`);
+    url.searchParams.set("company_id", companyId);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", "250");
+    url.searchParams.set("start_date", fromDate);
+    url.searchParams.set("end_date", toDate);
+    url.searchParams.set("fields", "tags,source_name,formatted_tracking_source");
+    const res = await fetch(url.toString(), { headers: authHeaders() });
+    if (!res.ok) {
+      throw new Error(
+        `CallRail calls fetch failed: ${res.status} ${await res.text()}`,
+      );
+    }
+    const body = (await res.json()) as {
+      calls?: CallRailCall[];
+      total_pages?: number;
+    };
+    for (const c of body.calls ?? []) {
+      const tagNamesLower = (c.tags ?? []).map((t) =>
+        (typeof t === "string" ? t : t.name).toLowerCase(),
+      );
+      if (!tagNamesLower.includes(wantTag)) continue;
+      calls.push({
+        callId: c.id,
+        date: c.start_time.slice(0, 10),
+        trackerName: (c.source_name ?? c.formatted_tracking_source ?? "").toLowerCase(),
+      });
+    }
+    if (!body.total_pages || page >= body.total_pages) break;
+    page += 1;
+  }
+  return calls;
+}
+
 export type CallrailTagCategoryConfig = {
   label: string;
   callrailTagName: string;
