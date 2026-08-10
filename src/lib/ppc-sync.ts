@@ -18,6 +18,15 @@ type SyncOpts = {
   fromDate: string; // YYYY-MM-DD
   toDate: string; // YYYY-MM-DD
   triggeredBy?: string; // "scheduled" | "manual" | ...
+  // Skips the Google Ads call_view pull in syncCallrailForClient — for a
+  // single-day webhook-triggered recompute where speed matters and
+  // signedCases (the only thing a tag-change event needs corrected)
+  // doesn't depend on channel/call_view data at all. That day's PMax/GMB
+  // channel split just stays whatever it was until the next regular
+  // sync recomputes it with call_view included. Same tradeoff
+  // recomputeLsaCallrailDay already makes for LSA. Ignored by
+  // syncGoogleAdsForClient (not applicable there).
+  skipGoogleAds?: boolean;
 };
 
 // Re-exported under the original names so every existing caller (cron
@@ -236,7 +245,7 @@ export async function syncCallrailForClient(
     // load-bearing than this still-new enrichment, so a Google Ads hiccup
     // shouldn't take down the whole job.
     let callViewRows: CallViewRow[] | undefined;
-    if (client.googleAdsCustomerId && client.googleAdsOauthTokenId) {
+    if (!opts.skipGoogleAds && client.googleAdsCustomerId && client.googleAdsOauthTokenId) {
       try {
         const cred = await db.query.oauthCredentials.findFirst({
           where: eq(oauthCredentials.id, client.googleAdsOauthTokenId),

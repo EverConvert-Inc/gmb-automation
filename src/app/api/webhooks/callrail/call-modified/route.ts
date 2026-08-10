@@ -17,6 +17,7 @@ import {
   type CallModifiedWebhookPayload,
 } from "@/lib/callrail-webhook";
 import { recomputeLsaCallrailDay } from "@/lib/lsa-sync";
+import { syncCallrailForClient } from "@/lib/ppc-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -77,6 +78,11 @@ export async function POST(req: Request) {
   ]);
 
   let isReal = false;
+  // Collected (not short-circuited via break, as this used to do — that
+  // silently ignored every PPC client past the first match when two
+  // shared one CallRail company) so a tag change on a call can trigger a
+  // recompute for every matched PPC client below, not just the first.
+  const matchedPpcClientIds: string[] = [];
   for (const client of ppcCandidates) {
     const tagCategories = (
       await db.query.ppcCallrailTagCategories.findMany({
@@ -85,7 +91,7 @@ export async function POST(req: Request) {
     ).map((c) => ({ ...c, rollup: c.rollup as "real" | "junk" }));
     if (resolveCallIsReal(trackerName, tags, client.signedCaseNameFilters, tagCategories)) {
       isReal = true;
-      break;
+      matchedPpcClientIds.push(client.id);
     }
   }
   // Checked independently of the PPC loop above (never short-circuited by
@@ -112,8 +118,49 @@ export async function POST(req: Request) {
   }
 
   console.log(
-    `[callrail-webhook] call ${body.resource_id}: isReal=${isReal}, matchedLsaClientIds=${JSON.stringify(matchedLsaClientIds)}, start_time=${body.start_time ?? "(missing)"}, tags=${JSON.stringify(tags)}, tracker=${trackerName}`,
+    `[callrail-webhook] call ${body.resource_id}: isReal=${isReal}, matchedPpcClientIds=${JSON.stringify(matchedPpcClientIds)}, matchedLsaClientIds=${JSON.stringify(matchedLsaClientIds)}, start_time=${body.start_time ?? "(missing)"}, tags=${JSON.stringify(tags)}, tracker=${trackerName}`,
   );
+
+  // PPC has no call_signed_events-style redirect (a tag change never
+  // moves a call's contribution to a DIFFERENT date the way LSA's
+  // true-sign-date correction does) — it only ever needs THIS call's own
+  // origin day recomputed, so this is a direct single-day
+  // syncCallrailForClient call per matched client, no persisted event
+  // table needed for dedup. Recomputing the same day twice (e.g. a
+  // second tag added minutes later, or a webhook retry) is a harmless,
+  // idempotent overwrite, not a bug — see syncCallrailForClient's
+  // onConflictDoUpdate. This is the fix for the confirmed staleness bug:
+  // without it, a tag landing after a call's origin day ages out of the
+  // daily cron's yesterday-only window (or the 30-day Sync Now window)
+  // never gets reflected in ppc_callrail_daily at all.
+  if (matchedPpcClientIds.length > 0 && body.start_time) {
+    const callDate = body.start_time.slice(0, 10);
+    for (const ppcClientId of matchedPpcClientIds) {
+      console.log(
+        `[callrail-webhook] call ${body.resource_id}: triggering syncCallrailForClient(${ppcClientId}, ${callDate})`,
+      );
+      try {
+        await syncCallrailForClient(ppcClientId, {
+          fromDate: callDate,
+          toDate: callDate,
+          triggeredBy: "webhook",
+          skipGoogleAds: true,
+        });
+        console.log(
+          `[callrail-webhook] call ${body.resource_id}: syncCallrailForClient(${ppcClientId}, ${callDate}) completed without throwing`,
+        );
+      } catch (err) {
+        console.error(
+          `[callrail-webhook] PPC day recompute failed for ppc_client ${ppcClientId}, call ${body.resource_id}:`,
+          (err as Error).message,
+        );
+      }
+    }
+  } else if (matchedPpcClientIds.length > 0 && !body.start_time) {
+    console.warn(
+      `[callrail-webhook] call ${body.resource_id} matched ${matchedPpcClientIds.length} PPC client(s) but payload had no start_time — skipping the day recompute entirely`,
+    );
+  }
 
   if (isReal) {
     if (matchedLsaClientIds.length === 0) {
