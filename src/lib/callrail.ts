@@ -917,6 +917,15 @@ function tagNamesOf(thread: CallRailSmsThread | null | undefined): string[] {
 export type TextMessageDailyRollup = {
   date: string; // YYYY-MM-DD — the earliest message that itself resolved "real"
   real: number;
+  // One entry per matched tag-category label, per qualifying conversation
+  // landing on this date — same tally convention tagCategoryBreakdown
+  // already uses for calls (a label appearing twice means two
+  // conversations, or one conversation matching it twice, each counting
+  // as 1). Lets the caller (lsa-sync.ts) fold message-derived Signed
+  // conversations into tag_category_breakdown the same way it already
+  // folds them into rollup_breakdown — see the labels comment on
+  // pullTextMessagesForCompany for why this wasn't tracked before.
+  labels: string[];
 };
 
 // Conversation-scoped rollup — one entry per tracker-relevant conversation
@@ -1013,7 +1022,7 @@ export async function pullTextMessagesForCompany(
     rollup: c.rollup,
   }));
 
-  const byDate = new Map<string, number>();
+  const byDate = new Map<string, { real: number; labels: string[] }>();
   const conversationRollups: TextConversationRollup[] = [];
 
   for (const convo of conversations) {
@@ -1040,11 +1049,18 @@ export async function pullTextMessagesForCompany(
     // Resolve each message's own tags independently (Junk > Real >
     // Unclassified within that message only). A message that doesn't
     // resolve real (Junk, unclassified, or untagged) never suppresses a
-    // different message that does.
+    // different message that does. matchedCategories is kept alongside
+    // rollup (not discarded) so the earliest real message's own matched
+    // labels can be recovered below — tag_category_breakdown needs to
+    // know WHICH category matched, not just that something did.
     const resolved = allMessages.map((m) => {
       const tags = tagNamesOf(m.sms_thread);
       const matchedCategories = categories.filter((c) => tags.includes(c.tag));
-      return { message: m, rollup: resolveCallRollup(matchedCategories) };
+      return {
+        message: m,
+        rollup: resolveCallRollup(matchedCategories),
+        matchedLabels: matchedCategories.map((c) => c.label),
+      };
     });
 
     const hasReal = resolved.some((r) => r.rollup === "real");
@@ -1054,24 +1070,26 @@ export async function pullTextMessagesForCompany(
       rollup: hasReal ? "real" : hasJunk ? "junk" : "unclassified",
     });
 
-    const realMessages = resolved
-      .filter((r) => r.rollup === "real")
-      .map((r) => r.message);
-    if (realMessages.length === 0) continue;
+    const realEntries = resolved.filter((r) => r.rollup === "real");
+    if (realEntries.length === 0) continue;
 
-    const earliest = realMessages.reduce((min, m) =>
-      m.created_at < min.created_at ? m : min,
+    const earliest = realEntries.reduce((min, r) =>
+      r.message.created_at < min.message.created_at ? r : min,
     );
     // Same "already account-local, no UTC conversion needed" convention as
     // pullCallsForCompany's call.start_time.slice(0, 10) — confirmed live
     // that created_at has the same timezone-offset shape as start_time.
-    const date = earliest.created_at.slice(0, 10);
-    byDate.set(date, (byDate.get(date) ?? 0) + 1);
+    const date = earliest.message.created_at.slice(0, 10);
+    const existing = byDate.get(date) ?? { real: 0, labels: [] };
+    byDate.set(date, {
+      real: existing.real + 1,
+      labels: [...existing.labels, ...earliest.matchedLabels],
+    });
   }
 
   return {
     dailyRollups: Array.from(byDate.entries())
-      .map(([date, real]) => ({ date, real }))
+      .map(([date, { real, labels }]) => ({ date, real, labels }))
       .sort((a, b) => a.date.localeCompare(b.date)),
     conversationRollups,
   };

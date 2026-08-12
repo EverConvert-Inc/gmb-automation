@@ -793,6 +793,25 @@ export async function syncLsaForClient(
               ...nested,
               LSA: { ...existingLsa, real: existingLsa.real + r.real },
             };
+
+            // tagCategoryBreakdown is ALWAYS the same shape (nested vs
+            // flat) as rollupCounts for a given day — see
+            // fetchAndBucketLsaCalls above, which sets both from the
+            // same condition in lockstep. Folded here the same way, or a
+            // Signed message conversation would keep updating
+            // rollup_breakdown.real (and now signedCases below) while
+            // leaving tag_category_breakdown silently stale — the exact
+            // bug this block fixes.
+            const nestedLabels = b.tagCategoryBreakdown as Record<
+              string,
+              Record<string, number>
+            >;
+            const existingLsaLabels = nestedLabels.LSA ?? {};
+            const updatedLsaLabels = { ...existingLsaLabels };
+            for (const label of r.labels) {
+              updatedLsaLabels[label] = (updatedLsaLabels[label] ?? 0) + 1;
+            }
+            b.tagCategoryBreakdown = { ...nestedLabels, LSA: updatedLsaLabels };
           } else {
             const flat = current as {
               real?: number;
@@ -804,7 +823,19 @@ export async function syncLsaForClient(
               junk: flat.junk ?? 0,
               unclassified: flat.unclassified ?? 0,
             };
+
+            const flatLabels = { ...(b.tagCategoryBreakdown as Record<string, number>) };
+            for (const label of r.labels) {
+              flatLabels[label] = (flatLabels[label] ?? 0) + 1;
+            }
+            b.tagCategoryBreakdown = flatLabels;
           }
+          // Messages have no first-time-equivalent concept (same
+          // rationale as rollupCounts.real above being unconditional
+          // here) — signedCases counts every qualifying conversation,
+          // same as it already counts every qualifying call regardless
+          // of repeat-caller status.
+          b.signedCases += r.real;
           b.callrailFetched = true;
         }
 

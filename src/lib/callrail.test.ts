@@ -1258,7 +1258,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1, labels: ["Signed"] }]);
     expect(conversationRollups).toEqual([
       { conversationId: "convo-1", rollup: "real" },
     ]);
@@ -1284,7 +1284,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1, labels: ["Signed"] }]);
   });
 
   it("a Junk-tagged later message does NOT retroactively suppress an earlier genuinely Real message — Junk > Real priority applies within a message's own tags only, never across messages", async () => {
@@ -1307,7 +1307,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-24", real: 1, labels: ["Signed"] }]);
   });
 
   it("a single message tagged both Signed and Spam still resolves Junk for THAT message (intra-message priority unchanged) — not counted when no other message is real", async () => {
@@ -1433,7 +1433,7 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       TAG_CATEGORIES_MESSAGES,
     );
 
-    expect(dailyRollups).toEqual([{ date: "2026-07-15", real: 2 }]);
+    expect(dailyRollups).toEqual([{ date: "2026-07-15", real: 2, labels: ["Signed", "Signed"] }]);
     expect(conversationRollups).toEqual([
       { conversationId: "convo-1", rollup: "real" },
       { conversationId: "convo-2", rollup: "real" },
