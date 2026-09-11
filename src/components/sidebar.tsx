@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { Activity, Gauge, Map, Megaphone, PhoneCall, Search, Settings, X } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Gauge,
+  Map,
+  Megaphone,
+  PhoneCall,
+  Search,
+  Settings,
+  X,
+} from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { SeoApiSpendIndicator } from "@/components/seo-api-spend-indicator";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -16,6 +26,7 @@ const items = [
   { href: "/lsa", label: "LSA", icon: PhoneCall },
   { href: "/call-quality", label: "Call Quality", icon: Gauge },
   { href: "/scans", label: "Scans", icon: Activity },
+  { href: "/takedowns", label: "Takedowns", icon: AlertTriangle },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

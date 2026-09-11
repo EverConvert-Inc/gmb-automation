@@ -63,6 +63,7 @@ DATABASE_URL=... npx tsx src/lib/db/seed.ts
 | 9. Daily metrics snapshot | done | `vercel.json` cron `5 6 * * *` → `/api/cron/daily-metrics`. Upserts `location_daily_metrics`. |
 | 10. Multi-client dashboard | done | `/clients`, `/clients/[slug]`, `/clients/[slug]/locations/[locationId]`. |
 | 11. Slack alerting | done | `postSlackAlert()` invoked from poll loop for new reviews ≤3★. |
+| 12. Review takedown detection | done | Every poll does a `fullSweep` GBP fetch (no `updatedSince` early-exit) and diffs it against stored reviews. A review missing for `TAKEDOWN_CONFIRM_MINUTES` (60) straight — not just one poll — gets a row in `review_takedown_alerts`, a Slack alert (`postTakedownAlert()`), and shows up on `/takedowns` with the content needed to file Google's reinstatement request. Email alerting intentionally not wired up yet — see "Open work". |
 
 ### Forward-compatible (no migration needed for v2)
 
@@ -98,6 +99,10 @@ client preference; UI knob is open work.
 
 ## Open work (not blocking initial preview)
 
+- Takedown alert email channel: `RESEND_API_KEY` is reserved but unused —
+  Slack is the only wired channel today. Hold off wiring Resend (or
+  whatever actually sends this agency's other client emails today, which
+  wasn't identified in this repo) until confirmed.
 - UI for client/location onboarding (the API routes exist; building the form
   is straightforward).
 - Per-keyword filtering + comparison view on the heat map.

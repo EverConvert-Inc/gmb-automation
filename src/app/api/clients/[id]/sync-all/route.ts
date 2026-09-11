@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { locations, oauthCredentials } from "@/lib/db/schema";
+import { postTakedownAlert } from "@/lib/alerts";
 import { dispatchWithConcurrency } from "@/lib/dataforseo";
 import { findGbpLocationByPlaceId } from "@/lib/gbp";
 import { pullPerformanceForLocation } from "@/lib/performance";
@@ -18,6 +19,7 @@ type LocationResult = {
   ingested: number;
   performanceRows: number;
   performanceError: string | null;
+  takedownsConfirmed: number;
   error: string | null;
 };
 
@@ -30,6 +32,7 @@ async function syncOneLocation(
     ingested: 0,
     performanceRows: 0,
     performanceError: null,
+    takedownsConfirmed: 0,
     error: null,
   };
 
@@ -69,6 +72,10 @@ async function syncOneLocation(
   try {
     const r = await pollReviewsForLocation(loc.id, { full: true });
     result.ingested = r.ingested;
+    for (const t of r.confirmedTakedowns) {
+      await postTakedownAlert({ locationName: loc.name, ...t });
+      result.takedownsConfirmed++;
+    }
   } catch (err) {
     result.error = (err as Error).message;
     return result;
@@ -105,6 +112,7 @@ export async function POST(
       locationsProcessed: 0,
       ingested: 0,
       performanceRows: 0,
+      takedownsConfirmed: 0,
       errors: [],
       results: [],
     });
@@ -128,6 +136,7 @@ export async function POST(
         ingested: 0,
         performanceRows: 0,
         performanceError: null,
+        takedownsConfirmed: 0,
         error: (s.reason as Error)?.message ?? String(s.reason),
       });
     }
@@ -135,6 +144,7 @@ export async function POST(
 
   const ingested = results.reduce((a, r) => a + r.ingested, 0);
   const performanceRows = results.reduce((a, r) => a + r.performanceRows, 0);
+  const takedownsConfirmed = results.reduce((a, r) => a + r.takedownsConfirmed, 0);
   const errors = results
     .filter((r) => r.error != null)
     .map((r) => ({ locationName: r.locationName, error: r.error! }));
@@ -143,6 +153,7 @@ export async function POST(
     locationsProcessed: results.length,
     ingested,
     performanceRows,
+    takedownsConfirmed,
     errors,
     results,
   });

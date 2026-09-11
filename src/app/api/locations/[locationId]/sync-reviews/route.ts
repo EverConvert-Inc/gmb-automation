@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { locations, oauthCredentials } from "@/lib/db/schema";
+import { postTakedownAlert } from "@/lib/alerts";
 import { findGbpLocationByPlaceId } from "@/lib/gbp";
 import { pullPerformanceForLocation } from "@/lib/performance";
 import { pollReviewsForLocation } from "@/lib/reviews";
@@ -69,10 +70,15 @@ export async function POST(
   let ingested = 0;
   let performanceRows = 0;
   let performanceError: string | null = null;
+  let takedownsConfirmed = 0;
 
   try {
     const reviewResult = await pollReviewsForLocation(locationId, { full: true });
     ingested = reviewResult.ingested;
+    for (const t of reviewResult.confirmedTakedowns) {
+      await postTakedownAlert({ locationName: location.name, ...t });
+      takedownsConfirmed++;
+    }
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
@@ -96,5 +102,6 @@ export async function POST(
     ingested,
     performanceRows,
     performanceError,
+    takedownsConfirmed,
   });
 }

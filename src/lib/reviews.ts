@@ -1,7 +1,26 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { locationDailyMetrics, locations, oauthCredentials, reviews } from "./db/schema";
+import {
+  clients,
+  locationDailyMetrics,
+  locations,
+  oauthCredentials,
+  reviewTakedownAlerts,
+  reviews,
+} from "./db/schema";
 import { fetchReviews } from "./gbp";
+
+// How long a review has to be continuously absent from a full GBP sweep
+// before we treat it as a confirmed takedown (vs. a transient API blip or
+// pagination hiccup) and fire an alert. This is elapsed time, not a poll
+// count: the poll cron runs every 15 min but only actually checks a location
+// when its own pollFrequency interval is due (locations default to "daily"),
+// so "4 consecutive 15-min polls" doesn't hold for most locations as
+// configured today. Using elapsed time means detection latency is simply
+// bounded by whatever cadence a location is polled at — for an hourly
+// location that's ~1-2 poll cycles; for a daily one, effectively the next
+// poll after this window has passed.
+export const TAKEDOWN_CONFIRM_MINUTES = 60;
 
 // Mapping from a location's pollFrequency to how long to wait before the
 // next successful poll. "manual" is used by listLocationsDueForPolling to
@@ -33,12 +52,24 @@ export function nextFailurePollDate(
   return new Date(from.getTime() + BACKOFF_MINUTES[idx] * 60_000);
 }
 
+export type ConfirmedTakedown = {
+  reviewId: string;
+  rating: number;
+  reviewerName: string | null;
+  text: string | null;
+  reviewCreatedAt: Date;
+  lastSeenAt: Date;
+  detectedMissingAt: Date;
+  clientName: string;
+};
+
 export async function pollReviewsForLocation(
   locationId: string,
   opts: { full?: boolean } = {},
 ): Promise<{
   ingested: number;
   newLowRated: Array<{ rating: number; reviewerName: string | null; text: string | null }>;
+  confirmedTakedowns: ConfirmedTakedown[];
 }> {
   const location = await db.query.locations.findFirst({
     where: eq(locations.id, locationId),
@@ -54,14 +85,23 @@ export async function pollReviewsForLocation(
     });
     if (!cred) throw new Error(`Missing OAuth credential for this location`);
 
+    // fullSweep: true is what makes takedown detection possible at all — it
+    // fetches every review GBP currently returns instead of only what
+    // changed since the last poll (see fetchReviews' fullSweep doc). At this
+    // scale (~30 locations, typically <50 reviews each) that's still
+    // usually a single API page per location.
     const fresh = await fetchReviews({
       accountId: location.gbpAccountId,
       locationId: location.gbpLocationId,
       refreshTokenEncrypted: cred.refreshTokenEncrypted,
-      // Full re-sync ignores lastPolledAt so we re-walk every review on GBP.
-      // Used by the manual sync buttons so owner replies (which may not bump
-      // the review's updateTime) and any other drift get backfilled.
-      updatedSince: opts.full ? undefined : (location.lastPolledAt ?? undefined),
+      // Always a full sweep now — required for takedown detection (a
+      // review that's still there but unchanged would never reappear
+      // under an incremental updatedSince fetch, so we'd never notice it
+      // was seen — see fetchReviews' fullSweep doc). opts.full predates
+      // this and drove an incremental-vs-full choice via updatedSince;
+      // now moot since every poll is already full, but left on the
+      // signature since the manual sync routes still pass it explicitly.
+      fullSweep: true,
     });
 
     const newLowRated: Array<{
@@ -69,6 +109,9 @@ export async function pollReviewsForLocation(
       reviewerName: string | null;
       text: string | null;
     }> = [];
+
+    const now = new Date();
+    const freshIds = fresh.map((r) => r.reviewId);
 
     for (const r of fresh) {
       const existing = await db.query.reviews.findFirst({
@@ -83,6 +126,8 @@ export async function pollReviewsForLocation(
             updatedAt: new Date(r.updatedAt),
             replyText: r.reply?.text ?? null,
             repliedAt: r.reply ? new Date(r.reply.updatedAt) : null,
+            lastSeenAt: now,
+            missingSinceAt: null,
           })
           .where(eq(reviews.id, existing.id));
       } else {
@@ -97,6 +142,7 @@ export async function pollReviewsForLocation(
           updatedAt: new Date(r.updatedAt),
           replyText: r.reply?.text ?? null,
           repliedAt: r.reply ? new Date(r.reply.updatedAt) : null,
+          lastSeenAt: now,
         });
         if (r.rating <= 3) {
           newLowRated.push({ rating: r.rating, reviewerName: r.reviewerName, text: r.text });
@@ -104,7 +150,24 @@ export async function pollReviewsForLocation(
       }
     }
 
-    const now = new Date();
+    const rawTakedowns = await detectAndConfirmTakedowns({
+      locationId,
+      clientId: location.clientId,
+      freshIds,
+      now,
+    });
+    let confirmedTakedowns: ConfirmedTakedown[] = [];
+    if (rawTakedowns.length > 0) {
+      const clientRow = await db.query.clients.findFirst({
+        where: eq(clients.id, location.clientId),
+        columns: { name: true },
+      });
+      confirmedTakedowns = rawTakedowns.map((t) => ({
+        ...t,
+        clientName: clientRow?.name ?? "Unknown client",
+      }));
+    }
+
     await db
       .update(locations)
       .set({
@@ -118,7 +181,7 @@ export async function pollReviewsForLocation(
 
     await upsertDailyMetricsForToday(locationId);
 
-    return { ingested: fresh.length, newLowRated };
+    return { ingested: fresh.length, newLowRated, confirmedTakedowns };
   } catch (err) {
     const now = new Date();
     const nextFailures = location.consecutivePollFailures + 1;
@@ -135,6 +198,88 @@ export async function pollReviewsForLocation(
   }
 }
 
+// Diffs this poll's full sweep against what we have stored for the location,
+// marks reviews that dropped out as missing (or clears that flag if they
+// reappeared), and returns any review that just crossed the confirmation
+// threshold for the first time — i.e. newly confirmed takedowns this poll,
+// not ones already confirmed on a prior poll.
+async function detectAndConfirmTakedowns({
+  locationId,
+  clientId,
+  freshIds,
+  now,
+}: {
+  locationId: string;
+  clientId: string;
+  freshIds: string[];
+  now: Date;
+}): Promise<Omit<ConfirmedTakedown, "clientName">[]> {
+  const activeBefore = await db.query.reviews.findMany({
+    where: and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)),
+    columns: { id: true, gbpReviewId: true },
+  });
+
+  // Defensive: if the sweep came back empty but we previously had active
+  // reviews for this location, that's far more likely an API/auth glitch
+  // than every review vanishing in one poll. Skip missing-detection this
+  // round rather than flagging the whole location's history at once — a
+  // real mass takedown would still get caught on the next successful sweep.
+  const suspiciousEmptySweep = freshIds.length === 0 && activeBefore.length > 0;
+
+  if (!suspiciousEmptySweep) {
+    const freshIdSet = new Set(freshIds);
+    const stillMissingIds = activeBefore
+      .filter((r) => !freshIdSet.has(r.gbpReviewId))
+      .map((r) => r.id);
+    if (stillMissingIds.length > 0) {
+      await db
+        .update(reviews)
+        .set({ missingSinceAt: now })
+        .where(inArray(reviews.id, stillMissingIds));
+    }
+  }
+
+  const confirmThreshold = new Date(now.getTime() - TAKEDOWN_CONFIRM_MINUTES * 60_000);
+  const candidates = await db.query.reviews.findMany({
+    where: and(
+      eq(reviews.locationId, locationId),
+      isNotNull(reviews.missingSinceAt),
+      lte(reviews.missingSinceAt, confirmThreshold),
+    ),
+  });
+
+  const confirmed: Omit<ConfirmedTakedown, "clientName">[] = [];
+  for (const r of candidates) {
+    const [inserted] = await db
+      .insert(reviewTakedownAlerts)
+      .values({
+        reviewId: r.id,
+        locationId,
+        clientId,
+        rating: r.rating,
+        text: r.text,
+        reviewerName: r.reviewerName,
+        reviewCreatedAt: r.createdAt,
+        lastSeenAt: r.lastSeenAt,
+        detectedMissingAt: r.missingSinceAt!,
+      })
+      .onConflictDoNothing({ target: reviewTakedownAlerts.reviewId })
+      .returning();
+    if (inserted) {
+      confirmed.push({
+        reviewId: r.id,
+        rating: r.rating,
+        reviewerName: r.reviewerName,
+        text: r.text,
+        reviewCreatedAt: r.createdAt,
+        lastSeenAt: r.lastSeenAt,
+        detectedMissingAt: r.missingSinceAt!,
+      });
+    }
+  }
+  return confirmed;
+}
+
 export async function upsertDailyMetricsForToday(locationId: string) {
   const today = new Date().toISOString().slice(0, 10);
   const cutoff30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
@@ -147,20 +292,28 @@ export async function upsertDailyMetricsForToday(locationId: string) {
       last: sql<Date | null>`max(${reviews.createdAt})`,
     })
     .from(reviews)
-    .where(eq(reviews.locationId, locationId));
+    .where(and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)));
 
   const last30 = await db
     .select({ count: sql<number>`count(${reviews.id})::int` })
     .from(reviews)
     .where(
-      and(eq(reviews.locationId, locationId), gte(reviews.createdAt, new Date(cutoff30))),
+      and(
+        eq(reviews.locationId, locationId),
+        gte(reviews.createdAt, new Date(cutoff30)),
+        isNull(reviews.missingSinceAt),
+      ),
     );
 
   const last90 = await db
     .select({ count: sql<number>`count(${reviews.id})::int` })
     .from(reviews)
     .where(
-      and(eq(reviews.locationId, locationId), gte(reviews.createdAt, new Date(cutoff90))),
+      and(
+        eq(reviews.locationId, locationId),
+        gte(reviews.createdAt, new Date(cutoff90)),
+        isNull(reviews.missingSinceAt),
+      ),
     );
 
   const lastReviewAt = agg[0]?.last ?? null;

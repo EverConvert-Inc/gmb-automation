@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   clients,
@@ -11,6 +11,7 @@ import {
   ppcCallrailDaily,
   ppcCampaigns,
   ppcClients,
+  reviewTakedownAlerts,
   reviews,
   scanPoints,
   scans,
@@ -60,6 +61,10 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     .orderBy(clients.name);
   if (baseClients.length === 0) return [];
 
+  // isNull(missingSinceAt) also keeps the left join's "no matching review"
+  // rows (all-null), since that row's missingSinceAt is null too — so
+  // locations with zero (or zero currently-active) reviews still show up
+  // with a 0 count instead of dropping out of the aggregate entirely.
   const reviewAgg = await db
     .select({
       clientId: locations.clientId,
@@ -69,6 +74,7 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     })
     .from(locations)
     .leftJoin(reviews, eq(reviews.locationId, locations.id))
+    .where(isNull(reviews.missingSinceAt))
     .groupBy(locations.clientId);
 
   const { cutoff30, cutoff60 } = velocityCutoffs();
@@ -82,6 +88,7 @@ export async function listClientsWithRollup(): Promise<ClientRow[]> {
     })
     .from(locations)
     .leftJoin(reviews, eq(reviews.locationId, locations.id))
+    .where(isNull(reviews.missingSinceAt))
     .groupBy(locations.clientId);
 
   // Most-recent completed scan per client, with the location's name. Fetch
@@ -174,7 +181,7 @@ export async function listLocationsForClient(clientId: string): Promise<Location
           prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${cutoff60Iso} and ${reviews.createdAt} < ${cutoff30Iso})::int`,
         })
         .from(reviews)
-        .where(eq(reviews.locationId, l.id));
+        .where(and(eq(reviews.locationId, l.id), isNull(reviews.missingSinceAt)));
 
       const lastReview = reviewAgg[0]?.last ?? null;
       const daysSinceLastReview = lastReview
@@ -253,7 +260,7 @@ export async function getLocationReviewStats(locationId: string): Promise<{
       lastAt: sql<Date | null>`max(${reviews.createdAt})`,
     })
     .from(reviews)
-    .where(eq(reviews.locationId, locationId));
+    .where(and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)));
   const lastAt = row?.lastAt ?? null;
   const daysSinceLastReview = lastAt
     ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 86_400_000)
@@ -277,7 +284,13 @@ export async function getLocationWeeklyReviews(
       count: sql<number>`count(*)::int`,
     })
     .from(reviews)
-    .where(and(eq(reviews.locationId, locationId), gte(reviews.createdAt, cutoff)))
+    .where(
+      and(
+        eq(reviews.locationId, locationId),
+        gte(reviews.createdAt, cutoff),
+        isNull(reviews.missingSinceAt),
+      ),
+    )
     .groupBy(sql`date_trunc('week', ${reviews.createdAt})`)
     .orderBy(sql`date_trunc('week', ${reviews.createdAt})`);
 
@@ -321,7 +334,7 @@ export async function getLocationWithLatestScan(locationId: string) {
   ).length;
 
   const recentReviews = await db.query.reviews.findMany({
-    where: eq(reviews.locationId, location.id),
+    where: and(eq(reviews.locationId, location.id), isNull(reviews.missingSinceAt)),
     orderBy: desc(reviews.createdAt),
   });
 
@@ -331,7 +344,7 @@ export async function getLocationWithLatestScan(locationId: string) {
       count: sql<number>`count(${reviews.id})::int`,
     })
     .from(reviews)
-    .where(eq(reviews.locationId, location.id));
+    .where(and(eq(reviews.locationId, location.id), isNull(reviews.missingSinceAt)));
   const rating =
     reviewAgg[0]?.rating !== null && reviewAgg[0]?.rating !== undefined
       ? Number(reviewAgg[0].rating)
@@ -548,7 +561,7 @@ export async function listLocationSnapshots(
       prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()} and ${reviews.createdAt} < ${d30.toISOString()})::int`,
     })
     .from(reviews)
-    .where(inArray(reviews.locationId, locationIds))
+    .where(and(inArray(reviews.locationId, locationIds), isNull(reviews.missingSinceAt)))
     .groupBy(reviews.locationId);
 
   const reviewMap = new Map(reviewAgg.map((r) => [r.locationId, r]));
@@ -716,7 +729,7 @@ export async function getReviewInsights(locationId: string): Promise<ReviewInsig
       prior30: sql<number>`count(*) filter (where ${reviews.createdAt} >= ${d60.toISOString()} and ${reviews.createdAt} < ${d30.toISOString()})::int`,
     })
     .from(reviews)
-    .where(eq(reviews.locationId, locationId));
+    .where(and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)));
 
   const agg = aggRows[0];
   const monthly = await db
@@ -729,6 +742,7 @@ export async function getReviewInsights(locationId: string): Promise<ReviewInsig
       and(
         eq(reviews.locationId, locationId),
         gte(reviews.createdAt, d365),
+        isNull(reviews.missingSinceAt),
       ),
     )
     .groupBy(sql`date_trunc('month', ${reviews.createdAt})`)
@@ -1349,4 +1363,50 @@ export async function getPpcReport({
       a.ppcClientName.localeCompare(b.ppcClientName),
     ),
   };
+export type TakedownAlertRow = {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientSlug: string;
+  locationId: string;
+  locationName: string;
+  rating: number;
+  text: string | null;
+  reviewerName: string | null;
+  reviewCreatedAt: Date;
+  lastSeenAt: Date;
+  detectedMissingAt: Date;
+  confirmedAt: Date;
+  status: string;
+  notes: string | null;
+};
+
+// Cross-client triage list for confirmed review takedowns. Ordered newest
+// first so the most recent (most actionable — reinstatement requests have
+// no hard deadline from Google, but the trail goes cold fast) sort to the
+// top.
+export async function listTakedownAlerts(): Promise<TakedownAlertRow[]> {
+  const rows = await db
+    .select({
+      id: reviewTakedownAlerts.id,
+      clientId: reviewTakedownAlerts.clientId,
+      clientName: clients.name,
+      clientSlug: clients.slug,
+      locationId: reviewTakedownAlerts.locationId,
+      locationName: locations.name,
+      rating: reviewTakedownAlerts.rating,
+      text: reviewTakedownAlerts.text,
+      reviewerName: reviewTakedownAlerts.reviewerName,
+      reviewCreatedAt: reviewTakedownAlerts.reviewCreatedAt,
+      lastSeenAt: reviewTakedownAlerts.lastSeenAt,
+      detectedMissingAt: reviewTakedownAlerts.detectedMissingAt,
+      confirmedAt: reviewTakedownAlerts.confirmedAt,
+      status: reviewTakedownAlerts.status,
+      notes: reviewTakedownAlerts.notes,
+    })
+    .from(reviewTakedownAlerts)
+    .innerJoin(clients, eq(reviewTakedownAlerts.clientId, clients.id))
+    .innerJoin(locations, eq(reviewTakedownAlerts.locationId, locations.id))
+    .orderBy(desc(reviewTakedownAlerts.confirmedAt));
+  return rows;
 }
