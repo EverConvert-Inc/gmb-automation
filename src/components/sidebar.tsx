@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Map, Search, Settings } from "lucide-react";
+import { Activity, AlertTriangle, Map, Search, Settings } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ const items = [
   { href: "/clients", label: "Clients", icon: Map },
   { href: "/rankings", label: "Rankings", icon: Search },
   { href: "/scans", label: "Scans", icon: Activity },
+  { href: "/takedowns", label: "Takedowns", icon: AlertTriangle },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

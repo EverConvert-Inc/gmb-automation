@@ -246,11 +246,18 @@ export async function fetchReviews({
   locationId,
   refreshTokenEncrypted,
   updatedSince,
+  fullSweep = false,
 }: {
   accountId: string;
   locationId: string;
   refreshTokenEncrypted: string;
   updatedSince?: Date;
+  // When true, ignores `updatedSince` and paginates to the end regardless of
+  // updateTime, so the caller gets every review GBP currently returns (not
+  // just what changed since the last poll). Needed for takedown detection:
+  // a review that's still there but unchanged would never show up again
+  // under the updatedSince early-exit, so we'd never notice it was seen.
+  fullSweep?: boolean;
 }): Promise<GbpReview[]> {
   const token = await getAccessToken(refreshTokenEncrypted);
   const out: GbpReview[] = [];
@@ -283,7 +290,7 @@ export async function fetchReviews({
     };
 
     for (const r of json.reviews ?? []) {
-      if (updatedSince && new Date(r.updateTime) <= updatedSince) {
+      if (!fullSweep && updatedSince && new Date(r.updateTime) <= updatedSince) {
         return out;
       }
       out.push({

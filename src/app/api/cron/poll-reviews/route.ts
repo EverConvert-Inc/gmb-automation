@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { listLocationsDueForPolling } from "@/lib/queries";
 import { pollReviewsForLocation } from "@/lib/reviews";
-import { postSlackAlert } from "@/lib/alerts";
+import { postSlackAlert, postTakedownAlert } from "@/lib/alerts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,6 +21,7 @@ export async function GET(req: Request) {
   const due = await listLocationsDueForPolling();
   let totalIngested = 0;
   let totalAlerts = 0;
+  let totalTakedowns = 0;
   const errors: Array<{ locationId: string; error: string }> = [];
 
   for (const loc of due) {
@@ -32,6 +33,10 @@ export async function GET(req: Request) {
         await postSlackAlert({ locationName: loc.name, ...lr });
         totalAlerts++;
       }
+      for (const t of result.confirmedTakedowns) {
+        await postTakedownAlert({ locationName: loc.name, ...t });
+        totalTakedowns++;
+      }
     } catch (err) {
       errors.push({ locationId: loc.id, error: (err as Error).message });
     }
@@ -41,6 +46,7 @@ export async function GET(req: Request) {
     locationsChecked: due.length,
     ingested: totalIngested,
     alertsSent: totalAlerts,
+    takedownsConfirmed: totalTakedowns,
     errors,
   });
 }

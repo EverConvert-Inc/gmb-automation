@@ -178,11 +178,58 @@ export const reviews = pgTable(
     replyText: text("reply_text"),
     replyStatus: text("reply_status"),
     repliedAt: timestamp("replied_at", { withTimezone: true }),
+    // Takedown detection: lastSeenAt is touched every poll GBP still returns
+    // this review. missingSinceAt is set the first poll it's absent from a
+    // full sweep and cleared if it reappears — so "missing continuously for
+    // over the confirmation window" is just missingSinceAt's age, no
+    // separate consecutive-miss counter needed. See src/lib/reviews.ts.
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    missingSinceAt: timestamp("missing_since_at", { withTimezone: true }),
   },
   (t) => ({
     locationIdx: index("reviews_location_idx").on(t.locationId),
     createdIdx: index("reviews_created_idx").on(t.createdAt),
     ratingIdx: index("reviews_rating_idx").on(t.rating),
+    missingIdx: index("reviews_missing_idx").on(t.missingSinceAt),
+  }),
+);
+
+export const reviewTakedownAlerts = pgTable(
+  "review_takedown_alerts",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    reviewId: uuid("review_id")
+      .notNull()
+      .references(() => reviews.id, { onDelete: "cascade" }),
+    locationId: uuid("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    // Snapshot of the review at confirmation time, so the reinstatement
+    // request has everything it needs even if the `reviews` row is ever
+    // pruned later. Google's UI shows nothing for this review by the time
+    // this fires — this snapshot is the only remaining record of it.
+    rating: integer("rating").notNull(),
+    text: text("text"),
+    reviewerName: text("reviewer_name"),
+    reviewCreatedAt: timestamp("review_created_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    detectedMissingAt: timestamp("detected_missing_at", { withTimezone: true }).notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status").notNull().default("confirmed"),
+    slackAlertedAt: timestamp("slack_alerted_at", { withTimezone: true }),
+    emailAlertedAt: timestamp("email_alerted_at", { withTimezone: true }),
+    notes: text("notes"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPerReview: unique("review_takedown_alerts_review_unique").on(t.reviewId),
+    locationIdx: index("review_takedown_alerts_location_idx").on(t.locationId),
+    clientIdx: index("review_takedown_alerts_client_idx").on(t.clientId),
+    statusIdx: index("review_takedown_alerts_status_idx").on(t.status),
+    confirmedIdx: index("review_takedown_alerts_confirmed_idx").on(t.confirmedAt),
   }),
 );
 
@@ -312,6 +359,7 @@ export type GridConfig = typeof gridConfigs.$inferSelect;
 export type Scan = typeof scans.$inferSelect;
 export type ScanPoint = typeof scanPoints.$inferSelect;
 export type Review = typeof reviews.$inferSelect;
+export type ReviewTakedownAlert = typeof reviewTakedownAlerts.$inferSelect;
 export type LocationDailyMetric = typeof locationDailyMetrics.$inferSelect;
 export type LocationPerformanceDaily = typeof locationPerformanceDaily.$inferSelect;
 export type OauthCredential = typeof oauthCredentials.$inferSelect;
