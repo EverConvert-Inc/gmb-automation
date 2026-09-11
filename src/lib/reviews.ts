@@ -82,6 +82,10 @@ export type ConfirmedTakedown = {
   lastSeenAt: Date;
   detectedMissingAt: Date;
   clientName: string;
+  // The business's public Google Maps listing — not a link to the review
+  // itself (GBP's v4 reviews API exposes no per-review URL). Null for
+  // locations onboarded before this field existed; there's no backfill job.
+  mapsUrl: string | null;
 };
 
 export async function pollReviewsForLocation(locationId: string): Promise<{
@@ -184,6 +188,7 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       confirmedTakedowns = rawTakedowns.map((t) => ({
         ...t,
         clientName: clientRow?.name ?? "Unknown client",
+        mapsUrl: location.placeGoogleMapsUri,
       }));
     }
 
@@ -255,7 +260,7 @@ async function detectAndConfirmTakedowns({
   clientId: string;
   freshIds: string[];
   now: Date;
-}): Promise<Omit<ConfirmedTakedown, "clientName">[]> {
+}): Promise<Omit<ConfirmedTakedown, "clientName" | "mapsUrl">[]> {
   const activeBefore = await db.query.reviews.findMany({
     where: and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)),
     columns: { id: true, gbpReviewId: true },
@@ -290,7 +295,7 @@ async function detectAndConfirmTakedowns({
     ),
   });
 
-  const confirmed: Omit<ConfirmedTakedown, "clientName">[] = [];
+  const confirmed: Omit<ConfirmedTakedown, "clientName" | "mapsUrl">[] = [];
   for (const r of candidates) {
     const [inserted] = await db
       .insert(reviewTakedownAlerts)

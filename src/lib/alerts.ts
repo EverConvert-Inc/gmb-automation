@@ -82,6 +82,10 @@ export async function postTakedownAlert(payload: {
   text: string | null;
   reviewCreatedAt: Date;
   lastSeenAt: Date;
+  // The business's public Google Maps listing, when we have one on file —
+  // not a link to the review itself. Google's review API exposes no
+  // per-review URL, so there's nothing more specific to link to.
+  mapsUrl: string | null;
 }): Promise<void> {
   const webhook = process.env.SLACK_WEBHOOK_URL;
   if (!webhook) return;
@@ -110,6 +114,17 @@ export async function postTakedownAlert(payload: {
         },
       ],
     },
+    ...(payload.mapsUrl
+      ? [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `<${payload.mapsUrl}|Open ${payload.locationName} on Google Maps>`,
+            },
+          },
+        ]
+      : []),
   ];
 
   await fetch(webhook, {
