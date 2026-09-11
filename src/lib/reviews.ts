@@ -52,6 +52,27 @@ export function nextFailurePollDate(
   return new Date(from.getTime() + BACKOFF_MINUTES[idx] * 60_000);
 }
 
+// Alert once a location's poll has failed this many times in a row — not on
+// every failure, since backoff already retries on its own and most failures
+// self-heal within a cycle or two. Callers check justCrossedAlertThreshold
+// (true only the poll where the count first reaches this) so a location
+// stuck failing for days doesn't re-alert on every subsequent attempt.
+export const POLL_FAILURE_ALERT_THRESHOLD = 3;
+
+export class LocationPollError extends Error {
+  constructor(
+    message: string,
+    public readonly locationId: string,
+    public readonly locationName: string,
+    public readonly clientName: string,
+    public readonly consecutiveFailures: number,
+    public readonly justCrossedAlertThreshold: boolean,
+  ) {
+    super(message);
+    this.name = "LocationPollError";
+  }
+}
+
 export type ConfirmedTakedown = {
   reviewId: string;
   rating: number;
@@ -192,7 +213,30 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
         nextPollAfter: nextFailurePollDate(nextFailures, now),
       })
       .where(eq(locations.id, locationId));
-    throw err;
+
+    const justCrossedAlertThreshold =
+      location.consecutivePollFailures < POLL_FAILURE_ALERT_THRESHOLD &&
+      nextFailures >= POLL_FAILURE_ALERT_THRESHOLD;
+
+    // Client name is only needed for the alert payload, so only look it up
+    // on the (rare) poll that actually crosses the threshold.
+    let clientName = "";
+    if (justCrossedAlertThreshold) {
+      const clientRow = await db.query.clients.findFirst({
+        where: eq(clients.id, location.clientId),
+        columns: { name: true },
+      });
+      clientName = clientRow?.name ?? "Unknown client";
+    }
+
+    throw new LocationPollError(
+      (err as Error).message,
+      locationId,
+      location.name,
+      clientName,
+      nextFailures,
+      justCrossedAlertThreshold,
+    );
   }
 }
 

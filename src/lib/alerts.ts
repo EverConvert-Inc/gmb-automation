@@ -31,6 +31,44 @@ export async function postSlackAlert(payload: {
   });
 }
 
+// Fired once per location, the poll where consecutivePollFailures first
+// reaches POLL_FAILURE_ALERT_THRESHOLD (see LocationPollError in reviews.ts).
+// Backoff/retry keeps running regardless — this is purely a "someone should
+// look at this" notification, not part of the retry logic itself.
+export async function postPollFailureAlert(payload: {
+  locationName: string;
+  clientName: string;
+  consecutiveFailures: number;
+  lastPollError: string;
+}): Promise<void> {
+  const webhook = process.env.SLACK_WEBHOOK_URL;
+  if (!webhook) return;
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:warning: *Review sync failing — ${payload.clientName} / ${payload.locationName}*\n${payload.consecutiveFailures} consecutive failed polls. Reviews for this location have stopped updating until this is resolved.`,
+      },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `Last error: \`${payload.lastPollError}\``,
+        },
+      ],
+    },
+  ];
+
+  await fetch(webhook, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+  });
+}
+
 // Fired once per review, the first time it's confirmed gone from a GBP full
 // sweep for TAKEDOWN_CONFIRM_MINUTES straight (see detectAndConfirmTakedowns
 // in reviews.ts). By the time this fires the review is already gone from

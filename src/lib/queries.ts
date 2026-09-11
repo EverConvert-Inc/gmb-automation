@@ -502,6 +502,8 @@ export type LocationSnapshot = {
   name: string;
   address: string;
   isGbpConnected: boolean;
+  lastPollError: string | null;
+  consecutivePollFailures: number;
   rating: number | null;
   reviewCount: number;
   lastReviewAt: Date | null;
@@ -665,6 +667,8 @@ export async function listLocationSnapshots(
       name: l.name,
       address: l.address,
       isGbpConnected: l.gbpOauthTokenId !== null,
+      lastPollError: l.lastPollError,
+      consecutivePollFailures: l.consecutivePollFailures,
       rating:
         r?.avgRating !== null && r?.avgRating !== undefined
           ? Number(r.avgRating)

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { listLocationsDueForPolling } from "@/lib/queries";
-import { pollReviewsForLocation } from "@/lib/reviews";
-import { postSlackAlert, postTakedownAlert } from "@/lib/alerts";
+import { LocationPollError, pollReviewsForLocation } from "@/lib/reviews";
+import { postPollFailureAlert, postSlackAlert, postTakedownAlert } from "@/lib/alerts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -39,6 +39,14 @@ export async function GET(req: Request) {
       }
     } catch (err) {
       errors.push({ locationId: loc.id, error: (err as Error).message });
+      if (err instanceof LocationPollError && err.justCrossedAlertThreshold) {
+        await postPollFailureAlert({
+          locationName: err.locationName,
+          clientName: err.clientName,
+          consecutiveFailures: err.consecutiveFailures,
+          lastPollError: err.message,
+        });
+      }
     }
   }
 

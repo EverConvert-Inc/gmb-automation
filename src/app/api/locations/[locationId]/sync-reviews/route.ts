@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { locations, oauthCredentials } from "@/lib/db/schema";
-import { postTakedownAlert } from "@/lib/alerts";
+import { postPollFailureAlert, postTakedownAlert } from "@/lib/alerts";
 import { findGbpLocationByPlaceId } from "@/lib/gbp";
 import { pullPerformanceForLocation } from "@/lib/performance";
-import { pollReviewsForLocation } from "@/lib/reviews";
+import { LocationPollError, pollReviewsForLocation } from "@/lib/reviews";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -80,6 +80,14 @@ export async function POST(
       takedownsConfirmed++;
     }
   } catch (err) {
+    if (err instanceof LocationPollError && err.justCrossedAlertThreshold) {
+      await postPollFailureAlert({
+        locationName: err.locationName,
+        clientName: err.clientName,
+        consecutiveFailures: err.consecutiveFailures,
+        lastPollError: err.message,
+      });
+    }
     return NextResponse.json(
       { error: (err as Error).message },
       { status: 502 },

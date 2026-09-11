@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { locations, oauthCredentials } from "@/lib/db/schema";
-import { postTakedownAlert } from "@/lib/alerts";
+import { postPollFailureAlert, postTakedownAlert } from "@/lib/alerts";
 import { dispatchWithConcurrency } from "@/lib/dataforseo";
 import { findGbpLocationByPlaceId } from "@/lib/gbp";
 import { pullPerformanceForLocation } from "@/lib/performance";
-import { pollReviewsForLocation } from "@/lib/reviews";
+import { LocationPollError, pollReviewsForLocation } from "@/lib/reviews";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -78,6 +78,14 @@ async function syncOneLocation(
     }
   } catch (err) {
     result.error = (err as Error).message;
+    if (err instanceof LocationPollError && err.justCrossedAlertThreshold) {
+      await postPollFailureAlert({
+        locationName: err.locationName,
+        clientName: err.clientName,
+        consecutiveFailures: err.consecutiveFailures,
+        lastPollError: err.message,
+      });
+    }
     return result;
   }
 

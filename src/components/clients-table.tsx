@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, ChevronRight, ExternalLink, MapPin } from "lucide-react";
+import { AlertTriangle, ArrowRight, ChevronRight, ExternalLink, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
@@ -304,6 +304,15 @@ function LocationSnapshotCard({
               <Badge variant="secondary" className="shrink-0 px-1.5 py-px text-[10px]">
                 no GBP
               </Badge>
+            )}
+            {loc.isGbpConnected && loc.lastPollError && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-1.5 py-px text-[10px] font-medium text-red-800"
+                title={`${loc.consecutivePollFailures} consecutive failed sync${loc.consecutivePollFailures === 1 ? "" : "s"} — ${loc.lastPollError}`}
+              >
+                <AlertTriangle className="h-2.5 w-2.5" />
+                sync failing
+              </span>
             )}
           </div>
           <div
