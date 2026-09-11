@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS "review_takedown_alerts" (
 	CONSTRAINT "review_takedown_alerts_review_unique" UNIQUE("review_id")
 );
 --> statement-breakpoint
-ALTER TABLE "reviews" ADD COLUMN "last_seen_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
-ALTER TABLE "reviews" ADD COLUMN "missing_since_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "reviews" ADD COLUMN IF NOT EXISTS "last_seen_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
+ALTER TABLE "reviews" ADD COLUMN IF NOT EXISTS "missing_since_at" timestamp with time zone;--> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "review_takedown_alerts" ADD CONSTRAINT "review_takedown_alerts_review_id_reviews_id_fk" FOREIGN KEY ("review_id") REFERENCES "public"."reviews"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
