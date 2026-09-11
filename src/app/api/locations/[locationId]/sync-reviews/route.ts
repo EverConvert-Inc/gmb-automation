@@ -73,7 +73,7 @@ export async function POST(
   let takedownsConfirmed = 0;
 
   try {
-    const reviewResult = await pollReviewsForLocation(locationId, { full: true });
+    const reviewResult = await pollReviewsForLocation(locationId);
     ingested = reviewResult.ingested;
     for (const t of reviewResult.confirmedTakedowns) {
       await postTakedownAlert({ locationName: location.name, ...t });

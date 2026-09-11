@@ -70,7 +70,7 @@ async function syncOneLocation(
   }
 
   try {
-    const r = await pollReviewsForLocation(loc.id, { full: true });
+    const r = await pollReviewsForLocation(loc.id);
     result.ingested = r.ingested;
     for (const t of r.confirmedTakedowns) {
       await postTakedownAlert({ locationName: loc.name, ...t });

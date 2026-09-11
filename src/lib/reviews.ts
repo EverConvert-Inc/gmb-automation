@@ -63,10 +63,7 @@ export type ConfirmedTakedown = {
   clientName: string;
 };
 
-export async function pollReviewsForLocation(
-  locationId: string,
-  opts: { full?: boolean } = {},
-): Promise<{
+export async function pollReviewsForLocation(locationId: string): Promise<{
   ingested: number;
   newLowRated: Array<{ rating: number; reviewerName: string | null; text: string | null }>;
   confirmedTakedowns: ConfirmedTakedown[];
@@ -94,13 +91,14 @@ export async function pollReviewsForLocation(
       accountId: location.gbpAccountId,
       locationId: location.gbpLocationId,
       refreshTokenEncrypted: cred.refreshTokenEncrypted,
-      // Always a full sweep now — required for takedown detection (a
-      // review that's still there but unchanged would never reappear
-      // under an incremental updatedSince fetch, so we'd never notice it
-      // was seen — see fetchReviews' fullSweep doc). opts.full predates
-      // this and drove an incremental-vs-full choice via updatedSince;
-      // now moot since every poll is already full, but left on the
-      // signature since the manual sync routes still pass it explicitly.
+      // Always a full sweep — required for takedown detection (a review
+      // that's still there but unchanged would never reappear under an
+      // incremental updatedSince fetch, so we'd never notice it was
+      // seen — see fetchReviews' fullSweep doc). This used to be
+      // opt-in via an `opts.full` param (an incremental-vs-full choice
+      // via updatedSince) for the manual sync routes specifically; now
+      // moot since every poll is unconditionally full, so that param
+      // was removed rather than left as dead weight.
       fullSweep: true,
     });
 

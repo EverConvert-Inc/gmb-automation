@@ -1363,6 +1363,8 @@ export async function getPpcReport({
       a.ppcClientName.localeCompare(b.ppcClientName),
     ),
   };
+}
+
 export type TakedownAlertRow = {
   id: string;
   clientId: string;
