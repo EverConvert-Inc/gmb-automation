@@ -281,6 +281,13 @@
       "when": 1789137419182,
       "tag": "0039_nervous_wiccan",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789390792533,
+      "tag": "0040_parched_namor",
+      "breakpoints": true
     }
   ]
 }

@@ -67,6 +67,17 @@ export const locations = pgTable(
     placeReviewCount: integer("place_review_count"),
     placeGoogleMapsUri: text("place_google_maps_uri"),
     placeRefreshedAt: timestamp("place_refreshed_at", { withTimezone: true }),
+    // Cumulative — never reset on a normal successful poll — so this answers
+    // "how often has this fired, ever" directly via SQL, without needing to
+    // check Cloud Console. Deliberately separate from lastPollError/
+    // consecutivePollFailures: a suspicious-partial-sweep poll is NOT a
+    // failure (it didn't throw, backoff/retry logic is untouched) — it's a
+    // content-integrity guard on an otherwise-successful poll, and reusing
+    // the failure fields would misrepresent it as a connectivity/auth
+    // problem in the existing "sync failing" UI badge.
+    partialSweepCount: integer("partial_sweep_count").notNull().default(0),
+    lastPartialSweepAt: timestamp("last_partial_sweep_at", { withTimezone: true }),
+    lastPartialSweepDetail: text("last_partial_sweep_detail"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

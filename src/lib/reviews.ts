@@ -173,12 +173,13 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       }
     }
 
-    const rawTakedowns = await detectAndConfirmTakedowns({
-      locationId,
-      clientId: location.clientId,
-      freshIds,
-      now,
-    });
+    const { confirmed: rawTakedowns, partialSweepDetected, partialSweepDetail } =
+      await detectAndConfirmTakedowns({
+        locationId,
+        clientId: location.clientId,
+        freshIds,
+        now,
+      });
     let confirmedTakedowns: ConfirmedTakedown[] = [];
     if (rawTakedowns.length > 0) {
       const clientRow = await db.query.clients.findFirst({
@@ -200,6 +201,16 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
         lastPollErrorAt: null,
         consecutivePollFailures: 0,
         nextPollAfter: nextSuccessPollDate(location.pollFrequency, now),
+        // partialSweepCount is cumulative — never reset here, only bumped
+        // when this specific poll actually tripped the guard, so it answers
+        // "how often has this ever fired" without needing Cloud Console.
+        ...(partialSweepDetected
+          ? {
+              partialSweepCount: location.partialSweepCount + 1,
+              lastPartialSweepAt: now,
+              lastPartialSweepDetail: partialSweepDetail,
+            }
+          : {}),
       })
       .where(eq(locations.id, locationId));
 
@@ -260,20 +271,44 @@ async function detectAndConfirmTakedowns({
   clientId: string;
   freshIds: string[];
   now: Date;
-}): Promise<Omit<ConfirmedTakedown, "clientName" | "mapsUrl">[]> {
+}): Promise<{
+  confirmed: Omit<ConfirmedTakedown, "clientName" | "mapsUrl">[];
+  partialSweepDetected: boolean;
+  partialSweepDetail: string | null;
+}> {
   const activeBefore = await db.query.reviews.findMany({
     where: and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)),
     columns: { id: true, gbpReviewId: true },
   });
 
-  // Defensive: if the sweep came back empty but we previously had active
-  // reviews for this location, that's far more likely an API/auth glitch
-  // than every review vanishing in one poll. Skip missing-detection this
-  // round rather than flagging the whole location's history at once — a
-  // real mass takedown would still get caught on the next successful sweep.
+  // Defensive: a sweep can come back from Google with res.ok === true (no
+  // thrown error, so this never shows up as a poll failure) while still
+  // silently returning fewer reviews than actually exist — confirmed in
+  // production Sept 2026: dozens of reviews across unrelated locations got
+  // marked missing (and some confirmed as false-positive "takedowns") from
+  // sweeps that quietly came back short, including on locations small enough
+  // that pagination wasn't even involved. A drop has to clear BOTH a
+  // percentage and an absolute-count bar to count as suspicious — percentage
+  // alone over-triggers on small locations (losing 1 of 4 reviews is 25%),
+  // absolute count alone over-triggers on large ones (losing 5 of 500 is
+  // noise). The old "completely empty" check is kept as an unconditional
+  // special case since it protects locations with too few reviews (<=3) for
+  // the percentage+count combination to ever trip on a total wipeout.
+  const PARTIAL_SWEEP_DROP_PCT = 0.15;
+  const PARTIAL_SWEEP_MIN_ABSOLUTE = 3;
+  const droppedCount = activeBefore.length - freshIds.length;
   const suspiciousEmptySweep = freshIds.length === 0 && activeBefore.length > 0;
+  const suspiciousPartialSweep =
+    suspiciousEmptySweep ||
+    (activeBefore.length > 0 &&
+      freshIds.length < activeBefore.length * (1 - PARTIAL_SWEEP_DROP_PCT) &&
+      droppedCount > PARTIAL_SWEEP_MIN_ABSOLUTE);
 
-  if (!suspiciousEmptySweep) {
+  let partialSweepDetail: string | null = null;
+  if (suspiciousPartialSweep) {
+    const dropPct = Math.round((droppedCount / activeBefore.length) * 100);
+    partialSweepDetail = `Sweep returned ${freshIds.length} of ${activeBefore.length} previously-active reviews (${dropPct}% drop) — missing-detection skipped this poll`;
+  } else {
     const freshIdSet = new Set(freshIds);
     const stillMissingIds = activeBefore
       .filter((r) => !freshIdSet.has(r.gbpReviewId))
@@ -324,7 +359,7 @@ async function detectAndConfirmTakedowns({
       });
     }
   }
-  return confirmed;
+  return { confirmed, partialSweepDetected: suspiciousPartialSweep, partialSweepDetail };
 }
 
 export async function upsertDailyMetricsForToday(locationId: string) {
