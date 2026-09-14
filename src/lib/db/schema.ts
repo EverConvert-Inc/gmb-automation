@@ -261,6 +261,34 @@ export const reviewTakedownAlerts = pgTable(
   }),
 );
 
+// TEMPORARY — diagnosing the recurring partial-sweep issue (Sept 2026,
+// suspiciousPartialSweep in reviews.ts). One row per page fetched from GBP's
+// reviews.list, on every full sweep, so the next occurrence gives real
+// per-page data (page size, whether Google said there was more, raw response
+// headers) instead of inference from aggregate before/after counts. Drop
+// this table (and the logging call in fetchReviews/pollReviewsForLocation)
+// once the root cause is confirmed and no longer needs live capture.
+export const gbpFetchDiagnostics = pgTable(
+  "gbp_fetch_diagnostics",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    locationId: uuid("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    gbpAccountId: text("gbp_account_id").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+    pageNumber: integer("page_number").notNull(),
+    pageReviewCount: integer("page_review_count").notNull(),
+    hasNextPageToken: boolean("has_next_page_token").notNull(),
+    responseStatus: integer("response_status").notNull(),
+    responseHeaders: jsonb("response_headers"),
+  },
+  (t) => ({
+    locationIdx: index("gbp_fetch_diagnostics_location_idx").on(t.locationId, t.fetchedAt),
+    accountIdx: index("gbp_fetch_diagnostics_account_idx").on(t.gbpAccountId, t.fetchedAt),
+  }),
+);
+
 export const locationPerformanceDaily = pgTable(
   "location_performance_daily",
   {
@@ -556,6 +584,7 @@ export type Scan = typeof scans.$inferSelect;
 export type ScanPoint = typeof scanPoints.$inferSelect;
 export type Review = typeof reviews.$inferSelect;
 export type ReviewTakedownAlert = typeof reviewTakedownAlerts.$inferSelect;
+export type GbpFetchDiagnostic = typeof gbpFetchDiagnostics.$inferSelect;
 export type LocationDailyMetric = typeof locationDailyMetrics.$inferSelect;
 export type LocationPerformanceDaily = typeof locationPerformanceDaily.$inferSelect;
 export type OauthCredential = typeof oauthCredentials.$inferSelect;

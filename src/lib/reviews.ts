@@ -2,6 +2,7 @@ import { and, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm"
 import { db } from "./db/client";
 import {
   clients,
+  gbpFetchDiagnostics,
   locationDailyMetrics,
   locations,
   oauthCredentials,
@@ -112,7 +113,7 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
     // changed since the last poll (see fetchReviews' fullSweep doc). At this
     // scale (~30 locations, typically <50 reviews each) that's still
     // usually a single API page per location.
-    const fresh = await fetchReviews({
+    const { reviews: fresh, pageDiagnostics } = await fetchReviews({
       accountId: location.gbpAccountId,
       locationId: location.gbpLocationId,
       refreshTokenEncrypted: cred.refreshTokenEncrypted,
@@ -127,13 +128,33 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       fullSweep: true,
     });
 
+    const now = new Date();
+
+    // TEMPORARY — see gbpFetchDiagnostics in schema.ts. Persisted for every
+    // sweep, not just suspicious ones, so we can see what a normal sweep
+    // looks like too (page counts, headers) for comparison once an
+    // incomplete one shows up.
+    if (pageDiagnostics.length > 0) {
+      await db.insert(gbpFetchDiagnostics).values(
+        pageDiagnostics.map((d) => ({
+          locationId,
+          gbpAccountId: location.gbpAccountId!,
+          fetchedAt: now,
+          pageNumber: d.pageNumber,
+          pageReviewCount: d.pageReviewCount,
+          hasNextPageToken: d.hasNextPageToken,
+          responseStatus: d.responseStatus,
+          responseHeaders: d.responseHeaders,
+        })),
+      );
+    }
+
     const newLowRated: Array<{
       rating: number;
       reviewerName: string | null;
       text: string | null;
     }> = [];
 
-    const now = new Date();
     const freshIds = fresh.map((r) => r.reviewId);
 
     for (const r of fresh) {

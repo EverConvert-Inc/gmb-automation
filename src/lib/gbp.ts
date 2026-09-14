@@ -241,6 +241,20 @@ export async function listLocations(
   return out;
 }
 
+// TEMPORARY — one entry per page fetched, so the caller can persist real
+// per-page data instead of inferring from aggregate before/after counts.
+// Drop this (and gbpFetchDiagnostics in schema.ts) once the recurring
+// partial-sweep root cause is confirmed. gbp.ts otherwise never touches the
+// DB — this stays a plain return value so that separation holds; reviews.ts
+// is the one that persists it.
+export type GbpFetchPageDiagnostic = {
+  pageNumber: number;
+  pageReviewCount: number;
+  hasNextPageToken: boolean;
+  responseStatus: number;
+  responseHeaders: Record<string, string>;
+};
+
 export async function fetchReviews({
   accountId,
   locationId,
@@ -258,12 +272,15 @@ export async function fetchReviews({
   // a review that's still there but unchanged would never show up again
   // under the updatedSince early-exit, so we'd never notice it was seen.
   fullSweep?: boolean;
-}): Promise<GbpReview[]> {
+}): Promise<{ reviews: GbpReview[]; pageDiagnostics: GbpFetchPageDiagnostic[] }> {
   const token = await getAccessToken(refreshTokenEncrypted);
   const out: GbpReview[] = [];
+  const pageDiagnostics: GbpFetchPageDiagnostic[] = [];
   let pageToken: string | undefined;
+  let pageNumber = 0;
 
   do {
+    pageNumber++;
     const url = new URL(
       `https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/reviews`,
     );
@@ -288,10 +305,18 @@ export async function fetchReviews({
       }>;
       nextPageToken?: string;
     };
+    const pageReviews = json.reviews ?? [];
+    pageDiagnostics.push({
+      pageNumber,
+      pageReviewCount: pageReviews.length,
+      hasNextPageToken: Boolean(json.nextPageToken),
+      responseStatus: res.status,
+      responseHeaders: Object.fromEntries(res.headers.entries()),
+    });
 
-    for (const r of json.reviews ?? []) {
+    for (const r of pageReviews) {
       if (!fullSweep && updatedSince && new Date(r.updateTime) <= updatedSince) {
-        return out;
+        return { reviews: out, pageDiagnostics };
       }
       out.push({
         reviewId: r.reviewId,
@@ -309,5 +334,5 @@ export async function fetchReviews({
     pageToken = json.nextPageToken;
   } while (pageToken);
 
-  return out;
+  return { reviews: out, pageDiagnostics };
 }
