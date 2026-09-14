@@ -9,8 +9,9 @@ export const metadata: Metadata = {
 };
 
 export default async function TakedownsPage() {
+  // Only open (non-resolved) alerts — resolved ones (real or false-positive)
+  // stay in the DB for the audit trail but are deliberately excluded here.
   const rows = await listTakedownAlerts();
-  const openCount = rows.filter((r) => r.status !== "resolved").length;
 
   return (
     <div className="space-y-6">
@@ -21,9 +22,9 @@ export default async function TakedownsPage() {
           the GBP UI by the time they land here. Use &ldquo;Copy
           details&rdquo; to file a reinstatement request, then mark filed /
           resolved to track it.{" "}
-          {openCount > 0 && (
+          {rows.length > 0 && (
             <>
-              {openCount} open takedown{openCount === 1 ? "" : "s"}.
+              {rows.length} open takedown{rows.length === 1 ? "" : "s"}.
             </>
           )}
         </p>

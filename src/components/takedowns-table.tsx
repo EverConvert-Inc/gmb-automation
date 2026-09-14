@@ -111,11 +111,12 @@ export function TakedownsTable({ rows }: { rows: TakedownAlertRow[] }) {
   if (rows.length === 0) {
     return (
       <div className="rounded-md border bg-muted/10 px-6 py-12 text-center">
-        <p className="text-sm font-medium">No confirmed takedowns.</p>
+        <p className="text-sm font-medium">No open takedowns.</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Reviews get listed here once they&apos;ve been continuously absent
           from a Google Business Profile sweep for over an hour, to rule out
-          a transient API blip before escalating.
+          a transient API blip before escalating. Resolved ones are hidden
+          from this view but not deleted.
         </p>
       </div>
     );

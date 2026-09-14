@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   clients,
@@ -1413,6 +1413,12 @@ export async function listTakedownAlerts(): Promise<TakedownAlertRow[]> {
     .from(reviewTakedownAlerts)
     .innerJoin(clients, eq(reviewTakedownAlerts.clientId, clients.id))
     .innerJoin(locations, eq(reviewTakedownAlerts.locationId, locations.id))
+    // Resolved alerts (real ones already actioned, or false positives from
+    // the Sept 11-13 partial-sweep incident) stay in the table for the audit
+    // trail but shouldn't clutter the working view — this was always the
+    // intent (the page already computed an "open" count) but the query
+    // never actually excluded them from what got rendered.
+    .where(ne(reviewTakedownAlerts.status, "resolved"))
     .orderBy(desc(reviewTakedownAlerts.confirmedAt));
   return rows;
 }
