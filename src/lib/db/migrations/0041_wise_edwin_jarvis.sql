@@ -1,0 +1,2 @@
+ALTER TABLE "review_takedown_alerts" DROP CONSTRAINT IF EXISTS "review_takedown_alerts_review_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "review_takedown_alerts_active_review_idx" ON "review_takedown_alerts" USING btree ("review_id") WHERE "review_takedown_alerts"."status" <> 'resolved';

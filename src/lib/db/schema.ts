@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   index,
 } from "drizzle-orm/pg-core";
@@ -242,7 +243,17 @@ export const reviewTakedownAlerts = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    uniqPerReview: unique("review_takedown_alerts_review_unique").on(t.reviewId),
+    // Partial, not a plain unique(reviewId): only one non-resolved (still
+    // "confirmed" or "filed") alert per review at a time. A plain unique
+    // constraint on reviewId blocked a review from ever getting a fresh
+    // alert again once any row existed for it — including a resolved
+    // false-positive — so a review genuinely taken down for real later
+    // would silently never re-alert. Resolving a row now releases the slot;
+    // detectAndConfirmTakedowns' onConflictDoNothing where clause must match
+    // this predicate exactly for Postgres to target this specific index.
+    uniqActiveReview: uniqueIndex("review_takedown_alerts_active_review_idx")
+      .on(t.reviewId)
+      .where(sql`${t.status} <> 'resolved'`),
     locationIdx: index("review_takedown_alerts_location_idx").on(t.locationId),
     clientIdx: index("review_takedown_alerts_client_idx").on(t.clientId),
     statusIdx: index("review_takedown_alerts_status_idx").on(t.status),

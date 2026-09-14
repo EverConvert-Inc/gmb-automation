@@ -345,7 +345,14 @@ async function detectAndConfirmTakedowns({
         lastSeenAt: r.lastSeenAt,
         detectedMissingAt: r.missingSinceAt!,
       })
-      .onConflictDoNothing({ target: reviewTakedownAlerts.reviewId })
+      // where must exactly match the partial index's predicate
+      // (review_takedown_alerts_active_review_idx in schema.ts) for
+      // Postgres to associate this ON CONFLICT with that specific index —
+      // otherwise a plain `target` alone won't match a partial unique index.
+      .onConflictDoNothing({
+        target: reviewTakedownAlerts.reviewId,
+        where: sql`${reviewTakedownAlerts.status} <> 'resolved'`,
+      })
       .returning();
     if (inserted) {
       confirmed.push({
