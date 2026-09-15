@@ -91,7 +91,12 @@ export type ConfirmedTakedown = {
 
 export async function pollReviewsForLocation(locationId: string): Promise<{
   ingested: number;
-  newLowRated: Array<{ rating: number; reviewerName: string | null; text: string | null }>;
+  newLowRated: Array<{
+    rating: number;
+    reviewerName: string | null;
+    text: string | null;
+    reviewCreatedAt: string;
+  }>;
   confirmedTakedowns: ConfirmedTakedown[];
 }> {
   const location = await db.query.locations.findFirst({
@@ -153,6 +158,7 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       rating: number;
       reviewerName: string | null;
       text: string | null;
+      reviewCreatedAt: string;
     }> = [];
 
     const freshIds = fresh.map((r) => r.reviewId);
@@ -189,7 +195,12 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
           lastSeenAt: now,
         });
         if (r.rating <= 3) {
-          newLowRated.push({ rating: r.rating, reviewerName: r.reviewerName, text: r.text });
+          newLowRated.push({
+            rating: r.rating,
+            reviewerName: r.reviewerName,
+            text: r.text,
+            reviewCreatedAt: r.createdAt,
+          });
         }
       }
     }

@@ -3,6 +3,11 @@ export async function postSlackAlert(payload: {
   rating: number;
   reviewerName: string | null;
   text: string | null;
+  reviewCreatedAt: string;
+  // The business's public Google Maps listing, when we have one on file —
+  // not a link to the review itself. GBP's v4 reviews API exposes no
+  // per-review URL, same limitation as postTakedownAlert.
+  mapsUrl: string | null;
 }): Promise<void> {
   const webhook = process.env.SLACK_WEBHOOK_URL;
   if (!webhook) return;
@@ -22,6 +27,26 @@ export async function postSlackAlert(payload: {
         text: `*${payload.reviewerName ?? "Anonymous"}*\n${payload.text ?? "_(no text)_"}`,
       },
     },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `Posted ${new Date(payload.reviewCreatedAt).toISOString().slice(0, 10)}`,
+        },
+      ],
+    },
+    ...(payload.mapsUrl
+      ? [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `<${payload.mapsUrl}|Open ${payload.locationName} on Google Maps>`,
+            },
+          },
+        ]
+      : []),
   ];
 
   await fetch(webhook, {

@@ -30,7 +30,7 @@ export async function GET(req: Request) {
       const result = await pollReviewsForLocation(loc.id);
       totalIngested += result.ingested;
       for (const lr of result.newLowRated) {
-        await postSlackAlert({ locationName: loc.name, ...lr });
+        await postSlackAlert({ locationName: loc.name, mapsUrl: loc.placeGoogleMapsUri, ...lr });
         totalAlerts++;
       }
       for (const t of result.confirmedTakedowns) {
