@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   date,
   integer,
   jsonb,
@@ -458,11 +459,20 @@ export const ppcClients = pgTable(
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
+    // Fixed 5-state set — a real lookup table would be overkill for a set
+    // this small and this static. Nullable until backfilled; a handful of
+    // clients genuinely operate across more than one of these states under
+    // a single row today (e.g. GMV Law Group: GA + FL, and FL isn't even in
+    // the set) — this column can't represent that, so those rows need an
+    // explicit decision (split into per-state rows, or pick a primary) at
+    // backfill time rather than silently picking one.
+    state: text("state"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     activeIdx: index("ppc_clients_active_idx").on(t.isActive),
+    stateCheck: check("ppc_clients_state_check", sql`${t.state} IS NULL OR ${t.state} IN ('GA','NC','SC','TN','TX')`),
   }),
 );
 
@@ -698,11 +708,17 @@ export const lsaClients = pgTable(
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
+    // Same fixed 5-state set and same caveat as ppc_clients.state — see that
+    // column's comment. ppc_clients and lsa_clients are independent tables
+    // with no FK between them, so a client present in both needs this set
+    // separately in each row; nothing keeps them in sync automatically.
+    state: text("state"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     activeIdx: index("lsa_clients_active_idx").on(t.isActive),
+    stateCheck: check("lsa_clients_state_check", sql`${t.state} IS NULL OR ${t.state} IN ('GA','NC','SC','TN','TX')`),
   }),
 );
 
