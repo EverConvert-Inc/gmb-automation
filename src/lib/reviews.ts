@@ -133,6 +133,40 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       fullSweep: true,
     });
 
+    // Retry-and-merge: Google's legacy v4 API has shown genuine read
+    // inconsistency across separate calls for the same location — two
+    // complete, successfully-paginated sweeps seconds apart can return
+    // meaningfully different totals, each internally consistent with its
+    // own pagination signals (confirmed via gbp_fetch_diagnostics, Sept
+    // 2026 — e.g. WorkInjuryRights.com: 50+50+15 vs 50+18 minutes apart,
+    // both correctly reporting no further pages). Google drops real
+    // reviews rather than fabricating fake ones, so a union of two
+    // independent reads is provably more complete than either alone. Only
+    // retries when the first sweep looks short relative to what we already
+    // trust as active, so the extra API cost is paid only when there's a
+    // concrete reason to suspect one — not on every poll.
+    const [{ count: activeCountBefore }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(reviews)
+      .where(and(eq(reviews.locationId, locationId), isNull(reviews.missingSinceAt)));
+
+    if (fresh.length < activeCountBefore) {
+      const retry = await fetchReviews({
+        accountId: location.gbpAccountId,
+        locationId: location.gbpLocationId,
+        refreshTokenEncrypted: cred.refreshTokenEncrypted,
+        fullSweep: true,
+      });
+      const seenIds = new Set(fresh.map((r) => r.reviewId));
+      for (const r of retry.reviews) {
+        if (!seenIds.has(r.reviewId)) {
+          fresh.push(r);
+          seenIds.add(r.reviewId);
+        }
+      }
+      pageDiagnostics.push(...retry.pageDiagnostics);
+    }
+
     const now = new Date();
 
     // TEMPORARY — see gbpFetchDiagnostics in schema.ts. Persisted for every
