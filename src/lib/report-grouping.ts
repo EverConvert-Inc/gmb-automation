@@ -19,6 +19,19 @@ export type StateCode = (typeof STATE_ORDER)[number];
 // into an existing state.
 export const UNASSIGNED_STATE = "Unassigned";
 
+// Display names for STATE_ORDER, shared by the web state-breakdown section
+// (state-breakdown-section.tsx) and the PPC/LSA email templates — the
+// latter render plain HTML strings server-side, not React, so this can't
+// live in a "use client" component. A code with no entry here is the
+// Unassigned bucket, rendered with no full name/parenthetical code.
+export const STATE_NAMES: Record<StateCode, string> = {
+  GA: "Georgia",
+  NC: "North Carolina",
+  SC: "South Carolina",
+  TN: "Tennessee",
+  TX: "Texas",
+};
+
 export type StateGroup<TClient, TRollup> = {
   state: StateCode | typeof UNASSIGNED_STATE;
   rollup: TRollup;
@@ -77,20 +90,25 @@ export function costPerSignedCase(costMicros: bigint, signedCases: number): numb
 }
 
 // Which section a report should default to expanded: the real state (never
-// "Unassigned") with the most signed cases, ties broken by STATE_ORDER —
-// which is already alphabetical by full state name, so "first match while
-// scanning in order" doubles as the alphabetical tie-break for free. Falls
-// back to the first group overall only in the edge case where every client
-// is Unassigned (no real-state groups at all).
-export function pickDefaultExpandedState<TRollup extends { signedCases: number }>(
+// "Unassigned") with the highest value of the caller-supplied metric, ties
+// broken by STATE_ORDER — which is already alphabetical by full state name,
+// so "first match while scanning in order" doubles as the alphabetical
+// tie-break for free. Falls back to the first group overall only in the
+// edge case where every client is Unassigned (no real-state groups at all).
+// The metric is a selector rather than a hardcoded `.signedCases` field
+// because PPC/LSA's rollups call it that, but Call Quality's equivalent
+// "signed" concept is `.real` (see queries-call-quality.ts) — same ranking
+// logic, different field name per caller.
+export function pickDefaultExpandedState<TRollup>(
   groups: StateGroup<unknown, TRollup>[],
+  metric: (rollup: TRollup) => number,
 ): string | null {
   const realGroups = groups.filter((g) => g.state !== UNASSIGNED_STATE);
   const pool = realGroups.length > 0 ? realGroups : groups;
   if (pool.length === 0) return null;
   let best = pool[0];
   for (const g of pool) {
-    if (g.rollup.signedCases > best.rollup.signedCases) best = g;
+    if (metric(g.rollup) > metric(best.rollup)) best = g;
   }
   return best.state;
 }

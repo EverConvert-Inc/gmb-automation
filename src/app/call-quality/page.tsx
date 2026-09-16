@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { Building2, Megaphone, PhoneCall } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { SectionCard } from "@/components/ui/section-card";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import {
   CallQualityChannelSection,
   CallQualityPpcPmaxSection,
 } from "@/components/call-quality-channel-section";
+import { CallQualityStateBreakdown } from "@/components/call-quality-state-breakdown";
 import { CallQualitySyncNowButton } from "@/components/call-quality-sync-now-button";
 import { EmailCallQualityReportButton } from "@/components/email-call-quality-report-button";
 import { getCallQualityByClientReport } from "@/lib/queries-call-quality";
@@ -74,6 +76,26 @@ export default async function CallQualityPage({
         totals={report.summary.GMB}
         clientRows={report.clients.GMB}
       />
+
+      <SectionCard icon={<Megaphone className="h-4 w-4" />} title="PPC" eyebrow="State breakdown">
+        <CallQualityStateBreakdown stateGroups={report.stateGroups.PPC} showCost />
+      </SectionCard>
+
+      <SectionCard icon={<PhoneCall className="h-4 w-4" />} title="LSA" eyebrow="State breakdown">
+        <CallQualityStateBreakdown stateGroups={report.stateGroups.LSA} showCost />
+      </SectionCard>
+
+      <SectionCard icon={<Building2 className="h-4 w-4" />} title="GMB" eyebrow="State breakdown">
+        <CallQualityStateBreakdown stateGroups={report.stateGroups.GMB} showCost={false} />
+      </SectionCard>
+
+      <SectionCard icon={<Megaphone className="h-4 w-4" />} title="PMax" eyebrow="State breakdown">
+        <CallQualityStateBreakdown
+          stateGroups={report.stateGroups.PMax}
+          showCost={false}
+          showCallViewBreakdown
+        />
+      </SectionCard>
     </div>
   );
 }

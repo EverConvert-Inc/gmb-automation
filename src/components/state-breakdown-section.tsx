@@ -2,14 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-
-const STATE_NAMES: Record<string, string> = {
-  GA: "Georgia",
-  NC: "North Carolina",
-  SC: "South Carolina",
-  TN: "Tennessee",
-  TX: "Texas",
-};
+import { STATE_NAMES } from "@/lib/report-grouping";
 
 // Shared collapsible shell for the per-state sections on /ppc and /lsa —
 // each report supplies its own KPI strip values and nests its own
@@ -28,7 +21,7 @@ export function StateBreakdownSection({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const fullName = STATE_NAMES[state];
+  const fullName = (STATE_NAMES as Record<string, string>)[state];
 
   return (
     <div className="rounded-md border bg-background">

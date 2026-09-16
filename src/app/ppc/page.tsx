@@ -79,7 +79,7 @@ export default async function PpcReportPage({
     if (list) list.push(r);
     else rowsByClientId.set(r.ppcClientId, [r]);
   }
-  const defaultExpandedState = pickDefaultExpandedState(report.stateGroups);
+  const defaultExpandedState = pickDefaultExpandedState(report.stateGroups, (r) => r.signedCases);
 
   if (noClientsYet) {
     return (

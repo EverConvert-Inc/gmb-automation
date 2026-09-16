@@ -4,6 +4,7 @@ import { db } from "./db/client";
 import { ppcReportRecipients } from "./db/schema";
 import { getPpcReport, type PpcReport } from "./queries";
 import { renderPpcReportPdf } from "./ppc-pdf";
+import { STATE_NAMES } from "./report-grouping";
 
 const DEFAULT_APP_URL = "https://gmb-automation.vercel.app";
 
@@ -44,6 +45,22 @@ function fmtMicros(microsBig: bigint): string {
     maximumFractionDigits: 0,
   }).format(dollars);
 }
+function fmtUsd(dollars: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(dollars);
+}
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+function fmtAdsIdLast4(id: string | null): string {
+  return id ? id.slice(-4) : "—";
+}
 
 function fmtRange(fromIso: string, toIso: string): string {
   const f = new Date(fromIso + "T00:00:00Z");
@@ -71,6 +88,97 @@ function fmtSubject(fromIso: string, toIso: string): string {
     return `PPC report — ${m(f)} ${f.getUTCDate()}–${t.getUTCDate()}, ${t.getUTCFullYear()}`;
   }
   return `PPC report — ${m(f)} ${f.getUTCDate()} – ${m(t)} ${t.getUTCDate()}, ${t.getUTCFullYear()}`;
+}
+
+// Email has no interactivity, so every non-empty state section renders
+// fully expanded (no collapse/expand) — same stateGroups the web page
+// uses, same per-client columns as the web table's default (client-level)
+// row, without the per-campaign drill-down since that's already the PDF
+// attachment's job (see the "attached as a PDF" copy below).
+export function renderStateBreakdownHtml(stateGroups: PpcReport["stateGroups"]): string {
+  if (stateGroups.length === 0) return "";
+  const sections = stateGroups
+    .map((group) => {
+      const fullName = (STATE_NAMES as Record<string, string>)[group.state];
+      const title = fullName ? `${fullName} (${group.state})` : group.state;
+      const r = group.rollup;
+      const kpiText = [
+        `Clicks ${fmtNumber(r.clicks)}`,
+        `Signed ${fmtNumber(r.signedCases)}`,
+        `Phone calls ${fmtNumber(r.phoneCalls)}`,
+        `Cost ${fmtMicros(r.costMicros)}`,
+        `Cost/signed ${r.costPerSignedCase != null ? fmtUsd(r.costPerSignedCase) : "—"}`,
+      ].join(" &nbsp;&middot;&nbsp; ");
+      const rows = group.clients
+        .map(
+          (c) => `
+            <tr>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;">${escapeHtml(c.ppcClientName)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;">${fmtNumber(c.phoneCalls)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;">${fmtConversions(c.conversions)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;">${fmtNumber(c.clicks)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;">${fmtNumber(c.impressions)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;">${fmtMicros(c.costMicros)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;">${c.signedCases === null ? "—" : fmtNumber(c.signedCases)}</td>
+              <td style="padding:5px 8px;border-top:1px solid #e2e8f0;text-align:right;color:#64748b;">${escapeHtml(fmtAdsIdLast4(c.googleAdsCustomerId))}</td>
+            </tr>`,
+        )
+        .join("");
+      return `
+        <div style="border:1px solid #e2e8f0;border-radius:6px;margin-bottom:12px;overflow:hidden;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f1f5f9;">
+            <tr>
+              <td style="padding:8px 10px;font-size:13px;font-weight:600;color:#0f172a;">
+                ${escapeHtml(title)}
+              </td>
+              <td style="padding:8px 10px;font-size:11px;color:#475569;text-align:right;white-space:nowrap;">
+                ${kpiText}
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="font-size:11px;border-collapse:collapse;">
+            <tr style="background:#f8fafc;color:#64748b;text-transform:uppercase;font-size:9px;">
+              <th style="padding:5px 8px;text-align:left;">Client</th>
+              <th style="padding:5px 8px;text-align:right;">Phone calls</th>
+              <th style="padding:5px 8px;text-align:right;">Conv.</th>
+              <th style="padding:5px 8px;text-align:right;">Clicks</th>
+              <th style="padding:5px 8px;text-align:right;">Impr.</th>
+              <th style="padding:5px 8px;text-align:right;">Cost</th>
+              <th style="padding:5px 8px;text-align:right;">Signed</th>
+              <th style="padding:5px 8px;text-align:right;">Ads ID</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>`;
+    })
+    .join("");
+  return `
+      <tr>
+        <td style="padding:0 24px 8px;">
+          <div style="font-size:13px;font-weight:600;color:#0f172a;margin:8px 0 10px;">State breakdown</div>
+          ${sections}
+        </td>
+      </tr>`;
+}
+
+export function renderStateBreakdownText(stateGroups: PpcReport["stateGroups"]): string {
+  if (stateGroups.length === 0) return "";
+  const lines: string[] = ["", "State breakdown", "================", ""];
+  for (const group of stateGroups) {
+    const fullName = (STATE_NAMES as Record<string, string>)[group.state];
+    const title = fullName ? `${fullName} (${group.state})` : group.state;
+    const r = group.rollup;
+    lines.push(
+      `${title} — Clicks ${fmtNumber(r.clicks)} · Signed ${fmtNumber(r.signedCases)} · Phone calls ${fmtNumber(r.phoneCalls)} · Cost ${fmtMicros(r.costMicros)} · Cost/signed ${r.costPerSignedCase != null ? fmtUsd(r.costPerSignedCase) : "—"}`,
+    );
+    for (const c of group.clients) {
+      lines.push(
+        `  - ${c.ppcClientName}: ${fmtNumber(c.phoneCalls)} calls, ${fmtConversions(c.conversions)} conv., ${fmtMicros(c.costMicros)}, ${c.signedCases === null ? "—" : fmtNumber(c.signedCases)} signed`,
+      );
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 // Inline-styled HTML so it renders consistently across mail clients
@@ -122,6 +230,7 @@ function renderEmailHtml({
           </table>
         </td>
       </tr>
+      ${renderStateBreakdownHtml(report.stateGroups)}
       <tr>
         <td style="padding:16px 24px 8px;">
           <p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#334155;">
@@ -163,7 +272,7 @@ function renderEmailText({
     `Conversions  ${fmtConversions(k.conversions)}`,
     `Phone calls  ${fmtNumber(k.phoneCalls)}`,
     `Cost         ${fmtMicros(k.costMicros)}`,
-    ``,
+    renderStateBreakdownText(report.stateGroups),
     `Full per-campaign breakdown across all PPC clients is attached as a PDF.`,
     ``,
     `Open the interactive dashboard:`,

@@ -70,6 +70,8 @@ describe("groupByState", () => {
   });
 });
 
+const bySignedCases = (r: { signedCases: number }) => r.signedCases;
+
 describe("pickDefaultExpandedState", () => {
   it("picks the real state with the most signed cases", () => {
     const groups = groupByState(
@@ -77,7 +79,7 @@ describe("pickDefaultExpandedState", () => {
       zero,
       add,
     );
-    expect(pickDefaultExpandedState(groups)).toBe("NC");
+    expect(pickDefaultExpandedState(groups, bySignedCases)).toBe("NC");
   });
 
   it("never picks Unassigned over a real state, even with more signed cases", () => {
@@ -86,7 +88,7 @@ describe("pickDefaultExpandedState", () => {
       zero,
       add,
     );
-    expect(pickDefaultExpandedState(groups)).toBe("GA");
+    expect(pickDefaultExpandedState(groups, bySignedCases)).toBe("GA");
   });
 
   it("ties break by STATE_ORDER (alphabetical by full name)", () => {
@@ -95,16 +97,33 @@ describe("pickDefaultExpandedState", () => {
       zero,
       add,
     );
-    expect(pickDefaultExpandedState(groups)).toBe("GA");
+    expect(pickDefaultExpandedState(groups, bySignedCases)).toBe("GA");
   });
 
   it("falls back to Unassigned only when there are no real-state groups at all", () => {
     const groups = groupByState([client("a", null, 3)], zero, add);
-    expect(pickDefaultExpandedState(groups)).toBe(UNASSIGNED_STATE);
+    expect(pickDefaultExpandedState(groups, bySignedCases)).toBe(UNASSIGNED_STATE);
   });
 
   it("returns null for an empty report", () => {
-    expect(pickDefaultExpandedState([])).toBeNull();
+    expect(pickDefaultExpandedState([], bySignedCases)).toBeNull();
+  });
+
+  it("supports a differently-named metric field (e.g. Call Quality's `real`)", () => {
+    const realZero = () => ({ real: 0 });
+    const realAdd = (acc: { real: number }, c: { real: number }) => ({
+      real: acc.real + c.real,
+    });
+    type RealClient = { id: string; state: string | null; real: number };
+    const realGroups = groupByState<RealClient, { real: number }>(
+      [
+        { id: "a", state: "GA", real: 1 },
+        { id: "b", state: "NC", real: 4 },
+      ],
+      realZero,
+      realAdd,
+    );
+    expect(pickDefaultExpandedState(realGroups, (r) => r.real)).toBe("NC");
   });
 });
 

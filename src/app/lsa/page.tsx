@@ -66,7 +66,7 @@ export default async function LsaReportPage({
   const noClientsYet = lsaClients.length === 0;
   const costDollars = Number(report.kpis.costMicros / 10_000n) / 100;
   const costDollarsPrior = Number(report.kpisPrior.costMicros / 10_000n) / 100;
-  const defaultExpandedState = pickDefaultExpandedState(report.stateGroups);
+  const defaultExpandedState = pickDefaultExpandedState(report.stateGroups, (r) => r.signedCases);
 
   if (noClientsYet) {
     return (
