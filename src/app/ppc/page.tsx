@@ -1,12 +1,12 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import {
+  BadgeCheck,
   CircleDollarSign,
   Megaphone,
   MousePointerClick,
   PhoneCall,
   Settings as SettingsIcon,
-  Target,
 } from "lucide-react";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,11 +14,12 @@ import { SectionCard } from "@/components/ui/section-card";
 import { StatTile } from "@/components/ui/stat-tile";
 import { DeltaPill } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
-import { PpcPhoneCallsChart } from "@/components/ppc-phone-calls-chart";
 import { PpcReportTable } from "@/components/ppc-report-table";
+import { StateBreakdownSection } from "@/components/state-breakdown-section";
 import { EmailPpcReportButton } from "@/components/email-ppc-report-button";
 import { EmailOptimizationAlertButton } from "@/components/email-optimization-alert-button";
-import { getPpcReport, listPpcClients } from "@/lib/queries";
+import { getPpcReport, listPpcClients, type PpcReportRow } from "@/lib/queries";
+import { pickDefaultExpandedState } from "@/lib/report-grouping";
 import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
@@ -27,8 +28,20 @@ export const metadata: Metadata = {
   title: "PPC report",
 };
 
+const NUMBER_FMT = new Intl.NumberFormat();
+function fmtNumber(n: number): string {
+  return NUMBER_FMT.format(n);
+}
+
 function fmtUsdFromMicros(micros: bigint): string {
   const dollars = Number(micros / 10_000n) / 100;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format(dollars);
+}
+
+function fmtUsdFromDollars(dollars: number): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
     currency: "USD",
@@ -57,6 +70,16 @@ export default async function PpcReportPage({
   const noClientsYet = ppcClients.length === 0;
   const costDollars = Number(report.kpis.costMicros / 10_000n) / 100;
   const costDollarsPrior = Number(report.kpisPrior.costMicros / 10_000n) / 100;
+
+  // Campaign rows grouped by client up front so each state section only
+  // has to flatMap its own clients' campaigns, not filter the whole list.
+  const rowsByClientId = new Map<string, PpcReportRow[]>();
+  for (const r of report.rows) {
+    const list = rowsByClientId.get(r.ppcClientId);
+    if (list) list.push(r);
+    else rowsByClientId.set(r.ppcClientId, [r]);
+  }
+  const defaultExpandedState = pickDefaultExpandedState(report.stateGroups);
 
   if (noClientsYet) {
     return (
@@ -139,19 +162,15 @@ export default async function PpcReportPage({
           tone="brand"
         />
         <StatTile
-          label="Conversions"
-          value={
-            report.kpis.conversions % 1 === 0
-              ? new Intl.NumberFormat().format(report.kpis.conversions)
-              : report.kpis.conversions.toFixed(1)
-          }
+          label="Signed"
+          value={new Intl.NumberFormat().format(report.kpis.signedCases)}
           sublabel={
             <DeltaPill
-              current={Math.round(report.kpis.conversions)}
-              prior={Math.round(report.kpisPrior.conversions)}
+              current={report.kpis.signedCases}
+              prior={report.kpisPrior.signedCases}
             />
           }
-          icon={<Target className="h-4 w-4" />}
+          icon={<BadgeCheck className="h-4 w-4" />}
           tone="brand"
         />
         <StatTile
@@ -181,19 +200,37 @@ export default async function PpcReportPage({
       </div>
 
       <SectionCard
-        icon={<PhoneCall className="h-4 w-4" />}
-        title="Phone calls by day"
-        eyebrow="Pacing"
-      >
-        <PpcPhoneCallsChart byDay={report.byDay} from={from} to={to} />
-      </SectionCard>
-
-      <SectionCard
         icon={<Megaphone className="h-4 w-4" />}
-        title="Campaigns"
+        title="State breakdown"
         eyebrow="Per-client breakdown"
       >
-        <PpcReportTable rows={report.rows} clientTotals={report.clientTotals} />
+        <div className="space-y-3">
+          {report.stateGroups.map((group) => (
+            <StateBreakdownSection
+              key={group.state}
+              state={group.state}
+              defaultOpen={group.state === defaultExpandedState}
+              kpis={[
+                { label: "Clicks", value: fmtNumber(group.rollup.clicks) },
+                { label: "Signed", value: fmtNumber(group.rollup.signedCases) },
+                { label: "Phone calls", value: fmtNumber(group.rollup.phoneCalls) },
+                { label: "Cost", value: fmtUsdFromMicros(group.rollup.costMicros) },
+                {
+                  label: "Cost/signed",
+                  value:
+                    group.rollup.costPerSignedCase != null
+                      ? fmtUsdFromDollars(group.rollup.costPerSignedCase)
+                      : "—",
+                },
+              ]}
+            >
+              <PpcReportTable
+                rows={group.clients.flatMap((c) => rowsByClientId.get(c.ppcClientId) ?? [])}
+                clientTotals={group.clients}
+              />
+            </StateBreakdownSection>
+          ))}
+        </div>
       </SectionCard>
     </div>
   );

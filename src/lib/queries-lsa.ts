@@ -1,6 +1,7 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { lsaClients, lsaLeadsDaily } from "./db/schema";
+import { costPerSignedCase, groupByState, type StateGroup } from "./report-grouping";
 
 export type LsaKpis = {
   phoneCallCount: number;
@@ -13,6 +14,8 @@ export type LsaKpis = {
 export type LsaClientRow = {
   lsaClientId: string;
   lsaClientName: string;
+  state: string | null;
+  googleAdsCustomerId: string | null;
   phoneCallCount: number;
   messageCount: number;
   bookingCount: number;
@@ -20,18 +23,20 @@ export type LsaClientRow = {
   signedCases: number;
 };
 
-export type LsaByDayPoint = {
-  lsaClientId: string;
-  lsaClientName: string;
-  date: string; // YYYY-MM-DD
+export type LsaStateRollup = {
   phoneCallCount: number;
+  messageCount: number;
+  bookingCount: number;
+  costMicros: bigint;
+  signedCases: number;
+  costPerSignedCase: number | null;
 };
 
 export type LsaReport = {
   kpis: LsaKpis;
   kpisPrior: LsaKpis;
   rows: LsaClientRow[];
-  byDay: LsaByDayPoint[];
+  stateGroups: StateGroup<LsaClientRow, LsaStateRollup>[];
 };
 
 export type LsaClientListItem = {
@@ -159,7 +164,7 @@ export async function getLsaReport({
     .slice(0, 10);
   const priorTo = new Date(fromMs - msPerDay).toISOString().slice(0, 10);
 
-  const [kpis, kpisPrior, activeClients, clientRows, byDayRows] = await Promise.all([
+  const [kpis, kpisPrior, activeClients, clientRows] = await Promise.all([
     aggregateLsaKpis(from, to),
     aggregateLsaKpis(priorFrom, priorTo),
     // Every active client is seeded into `rows` below with an all-zero row
@@ -168,13 +173,20 @@ export async function getLsaReport({
     // shows up instead of silently vanishing from the report, same
     // seed-then-render pattern as getCallQualityByClientReport.
     db
-      .select({ id: lsaClients.id, name: lsaClients.name })
+      .select({
+        id: lsaClients.id,
+        name: lsaClients.name,
+        state: lsaClients.state,
+        googleAdsCustomerId: lsaClients.googleAdsCustomerId,
+      })
       .from(lsaClients)
       .where(eq(lsaClients.isActive, true)),
     db
       .select({
         lsaClientId: lsaClients.id,
         lsaClientName: lsaClients.name,
+        state: lsaClients.state,
+        googleAdsCustomerId: lsaClients.googleAdsCustomerId,
         phoneCallCount: sql<number | null>`sum(${lsaLeadsDaily.phoneCallCount})::int`,
         messageCount: sql<number | null>`sum(${lsaLeadsDaily.messageCount})::int`,
         bookingCount: sql<number | null>`sum(${lsaLeadsDaily.bookingCount})::int`,
@@ -184,27 +196,20 @@ export async function getLsaReport({
       .from(lsaLeadsDaily)
       .innerJoin(lsaClients, eq(lsaClients.id, lsaLeadsDaily.lsaClientId))
       .where(and(gte(lsaLeadsDaily.date, from), sql`${lsaLeadsDaily.date} <= ${to}`))
-      .groupBy(lsaClients.id, lsaClients.name),
-    // Phone calls by day, per client — powers the "Phone calls by day"
-    // chart. Same shape as getPpcReport's byDayRows.
-    db
-      .select({
-        lsaClientId: lsaClients.id,
-        lsaClientName: lsaClients.name,
-        date: lsaLeadsDaily.date,
-        phoneCallCount: sql<number | null>`sum(${lsaLeadsDaily.phoneCallCount})::int`,
-      })
-      .from(lsaLeadsDaily)
-      .innerJoin(lsaClients, eq(lsaClients.id, lsaLeadsDaily.lsaClientId))
-      .where(and(gte(lsaLeadsDaily.date, from), sql`${lsaLeadsDaily.date} <= ${to}`))
-      .groupBy(lsaClients.id, lsaClients.name, lsaLeadsDaily.date)
-      .orderBy(lsaLeadsDaily.date),
+      .groupBy(lsaClients.id, lsaClients.name, lsaClients.state, lsaClients.googleAdsCustomerId),
   ]);
 
-  function emptyLsaRow(id: string, name: string): LsaClientRow {
+  function emptyLsaRow(
+    id: string,
+    name: string,
+    state: string | null,
+    googleAdsCustomerId: string | null,
+  ): LsaClientRow {
     return {
       lsaClientId: id,
       lsaClientName: name,
+      state,
+      googleAdsCustomerId,
       phoneCallCount: 0,
       messageCount: 0,
       bookingCount: 0,
@@ -213,11 +218,15 @@ export async function getLsaReport({
     };
   }
   const rowMap = new Map<string, LsaClientRow>();
-  for (const c of activeClients) rowMap.set(c.id, emptyLsaRow(c.id, c.name));
+  for (const c of activeClients) {
+    rowMap.set(c.id, emptyLsaRow(c.id, c.name, c.state, c.googleAdsCustomerId));
+  }
   for (const r of clientRows) {
     rowMap.set(r.lsaClientId, {
       lsaClientId: r.lsaClientId,
       lsaClientName: r.lsaClientName,
+      state: r.state,
+      googleAdsCustomerId: r.googleAdsCustomerId,
       phoneCallCount: r.phoneCallCount ?? 0,
       messageCount: r.messageCount ?? 0,
       bookingCount: r.bookingCount ?? 0,
@@ -237,12 +246,29 @@ export async function getLsaReport({
         a.lsaClientName.localeCompare(b.lsaClientName),
     );
 
-  const byDay: LsaByDayPoint[] = byDayRows.map((r) => ({
-    lsaClientId: r.lsaClientId,
-    lsaClientName: r.lsaClientName,
-    date: r.date,
-    phoneCallCount: r.phoneCallCount ?? 0,
-  }));
+  const stateGroups = groupByState<LsaClientRow, LsaStateRollup>(
+    rows,
+    () => ({
+      phoneCallCount: 0,
+      messageCount: 0,
+      bookingCount: 0,
+      costMicros: 0n,
+      signedCases: 0,
+      costPerSignedCase: null,
+    }),
+    (acc, c) => {
+      const next = {
+        phoneCallCount: acc.phoneCallCount + c.phoneCallCount,
+        messageCount: acc.messageCount + c.messageCount,
+        bookingCount: acc.bookingCount + c.bookingCount,
+        costMicros: acc.costMicros + c.costMicros,
+        signedCases: acc.signedCases + c.signedCases,
+        costPerSignedCase: null as number | null,
+      };
+      next.costPerSignedCase = costPerSignedCase(next.costMicros, next.signedCases);
+      return next;
+    },
+  );
 
-  return { kpis, kpisPrior, rows, byDay };
+  return { kpis, kpisPrior, rows, stateGroups };
 }

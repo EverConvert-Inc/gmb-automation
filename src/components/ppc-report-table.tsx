@@ -77,6 +77,7 @@ function SortHeader({
 type ClientGroup = {
   ppcClientId: string;
   ppcClientName: string;
+  googleAdsCustomerId: string | null;
   clicks: number;
   impressions: number;
   conversions: number;
@@ -85,6 +86,10 @@ type ClientGroup = {
   signedCases: number | null;
   campaigns: PpcReportRow[];
 };
+
+function fmtAdsIdLast4(id: string | null): string {
+  return id ? id.slice(-4) : "—";
+}
 
 // PPC table: default view is one row per client showing totals; click any
 // client row to expand and reveal that client's per-campaign breakdown.
@@ -132,6 +137,7 @@ export function PpcReportTable({
       map.set(c.ppcClientId, {
         ppcClientId: c.ppcClientId,
         ppcClientName: c.ppcClientName,
+        googleAdsCustomerId: c.googleAdsCustomerId,
         clicks: 0,
         impressions: 0,
         conversions: 0,
@@ -142,9 +148,14 @@ export function PpcReportTable({
       });
     }
     for (const r of rows) {
+      // googleAdsCustomerId defaults to null here rather than a lookup —
+      // this fallback only fires for a campaign row whose client isn't in
+      // clientTotals at all, which shouldn't happen for correctly-scoped
+      // input (every row's client is expected to already be seeded above).
       const cur = map.get(r.ppcClientId) ?? {
         ppcClientId: r.ppcClientId,
         ppcClientName: r.ppcClientName,
+        googleAdsCustomerId: null,
         clicks: 0,
         impressions: 0,
         conversions: 0,
@@ -247,7 +258,8 @@ export function PpcReportTable({
                   </div>
                   <div className="mt-1 text-[11px] text-muted-foreground">
                     {g.campaigns.length} campaign
-                    {g.campaigns.length === 1 ? "" : "s"}
+                    {g.campaigns.length === 1 ? "" : "s"} · Ads ID{" "}
+                    {fmtAdsIdLast4(g.googleAdsCustomerId)}
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
                     <div className="text-muted-foreground">Phone calls</div>
@@ -369,6 +381,7 @@ export function PpcReportTable({
                 sortDir={sortDir}
                 onSort={onSort}
               />
+              <th className="px-3 py-2 text-right font-medium">Ads ID</th>
             </tr>
           </thead>
           <tbody>
@@ -441,6 +454,9 @@ function ClientRows({
             fmtNumber(group.signedCases)
           )}
         </td>
+        <td className="px-3 py-2 text-right align-middle tabular-nums text-muted-foreground">
+          {fmtAdsIdLast4(group.googleAdsCustomerId)}
+        </td>
       </tr>
       {open &&
         group.campaigns.map((c) => (
@@ -466,6 +482,9 @@ function ClientRows({
             </td>
             <td className="px-3 py-1.5 text-right align-middle tabular-nums">
               {fmtMicros(c.costMicros)}
+            </td>
+            <td className="px-3 py-1.5 text-right align-middle">
+              <span className="text-muted-foreground/40">·</span>
             </td>
             <td className="px-3 py-1.5 text-right align-middle">
               <span className="text-muted-foreground/40">·</span>

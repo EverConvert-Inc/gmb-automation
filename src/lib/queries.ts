@@ -20,6 +20,7 @@ import {
 } from "./db/schema";
 import { detectCity, stripTrailingSlash } from "./dataforseo";
 import { PERFORMANCE_METRICS, type PerformanceMetric } from "./gbp";
+import { costPerSignedCase, groupByState, type StateGroup } from "./report-grouping";
 
 export type Velocity = { this30: number; prior30: number };
 
@@ -1116,6 +1117,7 @@ export type PpcKpis = {
   conversions: number;
   phoneCalls: number;
   costMicros: bigint;
+  signedCases: number;
 };
 
 export type PpcReportRow = {
@@ -1131,52 +1133,67 @@ export type PpcReportRow = {
   signedCases: number | null; // null = client not linked to CallRail
 };
 
-export type PpcByDayPoint = {
+export type PpcClientTotal = {
   ppcClientId: string;
   ppcClientName: string;
-  date: string; // YYYY-MM-DD
+  state: string | null;
+  googleAdsCustomerId: string | null;
+  clicks: number;
+  impressions: number;
+  conversions: number;
   phoneCalls: number;
+  costMicros: bigint;
+  signedCases: number | null;
+};
+
+export type PpcStateRollup = {
+  clicks: number;
+  impressions: number;
+  conversions: number;
+  phoneCalls: number;
+  costMicros: bigint;
+  signedCases: number;
+  costPerSignedCase: number | null;
 };
 
 export type PpcReport = {
   kpis: PpcKpis;
   kpisPrior: PpcKpis;
   rows: PpcReportRow[];
-  byDay: PpcByDayPoint[];
-  clientTotals: Array<{
-    ppcClientId: string;
-    ppcClientName: string;
-    clicks: number;
-    impressions: number;
-    conversions: number;
-    phoneCalls: number;
-    costMicros: bigint;
-    signedCases: number | null;
-  }>;
+  clientTotals: PpcClientTotal[];
+  stateGroups: StateGroup<PpcClientTotal, PpcStateRollup>[];
 };
 
 async function aggregateKpis(from: string, to: string): Promise<PpcKpis> {
-  const [row] = await db
-    .select({
-      clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
-      impressions: sql<number | null>`sum(${ppcAdsDaily.impressions})::int`,
-      conversions: sql<string | null>`sum(${ppcAdsDaily.conversions})`,
-      phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
-      costMicros: sql<string | null>`sum(${ppcAdsDaily.costMicros})`,
-    })
-    .from(ppcAdsDaily)
-    .where(
-      and(
-        gte(ppcAdsDaily.date, from),
-        sql`${ppcAdsDaily.date} <= ${to}`,
-      ),
-    );
+  // Two tables (ppc_ads_daily for spend/clicks/Ads-conversions, separately
+  // ppc_callrail_daily for signed cases), run concurrently rather than
+  // joined — same reason getPpcReport already keeps campaignRows and
+  // callrailRows as separate queries below.
+  const [[adsRow], [callrailRow]] = await Promise.all([
+    db
+      .select({
+        clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
+        impressions: sql<number | null>`sum(${ppcAdsDaily.impressions})::int`,
+        conversions: sql<string | null>`sum(${ppcAdsDaily.conversions})`,
+        phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
+        costMicros: sql<string | null>`sum(${ppcAdsDaily.costMicros})`,
+      })
+      .from(ppcAdsDaily)
+      .where(and(gte(ppcAdsDaily.date, from), sql`${ppcAdsDaily.date} <= ${to}`)),
+    db
+      .select({
+        signedCases: sql<number | null>`sum(${ppcCallrailDaily.signedCases})::int`,
+      })
+      .from(ppcCallrailDaily)
+      .where(and(gte(ppcCallrailDaily.date, from), sql`${ppcCallrailDaily.date} <= ${to}`)),
+  ]);
   return {
-    clicks: row?.clicks ?? 0,
-    impressions: row?.impressions ?? 0,
-    conversions: row?.conversions ? Number(row.conversions) : 0,
-    phoneCalls: row?.phoneCalls ?? 0,
-    costMicros: row?.costMicros ? BigInt(row.costMicros) : 0n,
+    clicks: adsRow?.clicks ?? 0,
+    impressions: adsRow?.impressions ?? 0,
+    conversions: adsRow?.conversions ? Number(adsRow.conversions) : 0,
+    phoneCalls: adsRow?.phoneCalls ?? 0,
+    costMicros: adsRow?.costMicros ? BigInt(adsRow.costMicros) : 0n,
+    signedCases: callrailRow?.signedCases ?? 0,
   };
 }
 
@@ -1208,6 +1225,8 @@ export async function getPpcReport({
     .select({
       ppcClientId: ppcClients.id,
       ppcClientName: ppcClients.name,
+      state: ppcClients.state,
+      googleAdsCustomerId: ppcClients.googleAdsCustomerId,
       campaignId: ppcCampaigns.id,
       campaignName: ppcCampaigns.name,
       clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
@@ -1228,6 +1247,8 @@ export async function getPpcReport({
     .groupBy(
       ppcClients.id,
       ppcClients.name,
+      ppcClients.state,
+      ppcClients.googleAdsCustomerId,
       ppcCampaigns.id,
       ppcCampaigns.name,
     );
@@ -1272,28 +1293,31 @@ export async function getPpcReport({
   // campaign) via PpcReportTable's own client-side grouping, which is
   // seeded separately in that component.
   const activeClients = await db
-    .select({ id: ppcClients.id, name: ppcClients.name })
+    .select({
+      id: ppcClients.id,
+      name: ppcClients.name,
+      state: ppcClients.state,
+      googleAdsCustomerId: ppcClients.googleAdsCustomerId,
+    })
     .from(ppcClients)
     .where(eq(ppcClients.isActive, true));
 
-  // Phone calls by day for the chart, per client.
-  const byDayRows = await db
-    .select({
-      ppcClientId: ppcClients.id,
-      ppcClientName: ppcClients.name,
-      date: ppcAdsDaily.date,
-      phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
-    })
-    .from(ppcAdsDaily)
-    .innerJoin(ppcClients, eq(ppcClients.id, ppcAdsDaily.ppcClientId))
-    .where(
-      and(
-        gte(ppcAdsDaily.date, from),
-        sql`${ppcAdsDaily.date} <= ${to}`,
-      ),
-    )
-    .groupBy(ppcClients.id, ppcClients.name, ppcAdsDaily.date)
-    .orderBy(ppcAdsDaily.date);
+  // Covers both active clients (from activeClients) and any inactive client
+  // that still has campaign data in range (the clientTotalsMap fallback
+  // below) — campaignRows already carries state/googleAdsCustomerId per
+  // row, so no extra query.
+  const stateByClientId = new Map<string, string | null>();
+  const adsCustomerIdByClientId = new Map<string, string | null>();
+  for (const c of activeClients) {
+    stateByClientId.set(c.id, c.state);
+    adsCustomerIdByClientId.set(c.id, c.googleAdsCustomerId);
+  }
+  for (const r of campaignRows) {
+    if (!stateByClientId.has(r.ppcClientId)) stateByClientId.set(r.ppcClientId, r.state);
+    if (!adsCustomerIdByClientId.has(r.ppcClientId)) {
+      adsCustomerIdByClientId.set(r.ppcClientId, r.googleAdsCustomerId);
+    }
+  }
 
   const rows: PpcReportRow[] = campaignRows.map((r) => ({
     ppcClientId: r.ppcClientId,
@@ -1313,11 +1337,13 @@ export async function getPpcReport({
   // Aggregate per-client totals from campaign rows, seeded from every
   // active client first so one with zero campaign rows in range still
   // gets an all-zero entry instead of being absent.
-  const clientTotalsMap = new Map<string, PpcReport["clientTotals"][number]>();
+  const clientTotalsMap = new Map<string, PpcClientTotal>();
   for (const c of activeClients) {
     clientTotalsMap.set(c.id, {
       ppcClientId: c.id,
       ppcClientName: c.name,
+      state: c.state,
+      googleAdsCustomerId: c.googleAdsCustomerId,
       clicks: 0,
       impressions: 0,
       conversions: 0,
@@ -1332,6 +1358,8 @@ export async function getPpcReport({
     const cur = clientTotalsMap.get(r.ppcClientId) ?? {
       ppcClientId: r.ppcClientId,
       ppcClientName: r.ppcClientName,
+      state: stateByClientId.get(r.ppcClientId) ?? null,
+      googleAdsCustomerId: adsCustomerIdByClientId.get(r.ppcClientId) ?? null,
       clicks: 0,
       impressions: 0,
       conversions: 0,
@@ -1347,12 +1375,39 @@ export async function getPpcReport({
     clientTotalsMap.set(r.ppcClientId, cur);
   }
 
-  const byDay: PpcByDayPoint[] = byDayRows.map((r) => ({
-    ppcClientId: r.ppcClientId,
-    ppcClientName: r.ppcClientName,
-    date: r.date,
-    phoneCalls: r.phoneCalls ?? 0,
-  }));
+  const clientTotals = Array.from(clientTotalsMap.values()).sort((a, b) =>
+    a.ppcClientName.localeCompare(b.ppcClientName),
+  );
+
+  const stateGroups = groupByState<PpcClientTotal, PpcStateRollup>(
+    clientTotals,
+    () => ({
+      clicks: 0,
+      impressions: 0,
+      conversions: 0,
+      phoneCalls: 0,
+      costMicros: 0n,
+      signedCases: 0,
+      costPerSignedCase: null,
+    }),
+    (acc, c) => {
+      const next = {
+        clicks: acc.clicks + c.clicks,
+        impressions: acc.impressions + c.impressions,
+        conversions: acc.conversions + c.conversions,
+        phoneCalls: acc.phoneCalls + c.phoneCalls,
+        costMicros: acc.costMicros + c.costMicros,
+        // Rolled up as "known signed cases in this state" — a client not
+        // linked to CallRail (signedCases: null) contributes 0 rather than
+        // pulling the whole state total to null, same as treating it as
+        // unmeasured instead of zero-and-reported.
+        signedCases: acc.signedCases + (c.signedCases ?? 0),
+        costPerSignedCase: null as number | null,
+      };
+      next.costPerSignedCase = costPerSignedCase(next.costMicros, next.signedCases);
+      return next;
+    },
+  );
 
   return {
     kpis,
@@ -1362,10 +1417,8 @@ export async function getPpcReport({
         a.ppcClientName.localeCompare(b.ppcClientName) ||
         a.campaignName.localeCompare(b.campaignName),
     ),
-    byDay,
-    clientTotals: Array.from(clientTotalsMap.values()).sort((a, b) =>
-      a.ppcClientName.localeCompare(b.ppcClientName),
-    ),
+    clientTotals,
+    stateGroups,
   };
 }
 

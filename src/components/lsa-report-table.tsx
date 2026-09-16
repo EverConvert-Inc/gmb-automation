@@ -23,6 +23,9 @@ function fmtMicros(microsBig: bigint): string {
     currency: "USD",
   }).format(dollars);
 }
+function fmtAdsIdLast4(id: string | null): string {
+  return id ? id.slice(-4) : "—";
+}
 
 function compareNumbers(a: number, b: number, dir: SortDir): number {
   return dir === "asc" ? a - b : b - a;
@@ -138,6 +141,10 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
               </div>
               <div className="text-muted-foreground">Cost</div>
               <div className="text-right font-medium">{fmtMicros(r.costMicros)}</div>
+              <div className="text-muted-foreground">Ads ID</div>
+              <div className="text-right font-medium">
+                {fmtAdsIdLast4(r.googleAdsCustomerId)}
+              </div>
             </div>
           </div>
         ))}
@@ -187,6 +194,7 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
                 sortDir={sortDir}
                 onSort={onSort}
               />
+              <th className="px-3 py-2 text-right font-medium">Ads ID</th>
             </tr>
           </thead>
           <tbody>
@@ -204,6 +212,9 @@ export function LsaReportTable({ rows }: { rows: LsaClientRow[] }) {
                 </td>
                 <td className="px-3 py-2 text-right align-middle tabular-nums">
                   {fmtNumber(r.signedCases)}
+                </td>
+                <td className="px-3 py-2 text-right align-middle tabular-nums text-muted-foreground">
+                  {fmtAdsIdLast4(r.googleAdsCustomerId)}
                 </td>
               </tr>
             ))}

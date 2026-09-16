@@ -9,6 +9,7 @@ import {
   ppcCallrailTagCategories,
   ppcClients,
 } from "./db/schema";
+import { groupByState, type StateGroup } from "./report-grouping";
 
 export type CallQualityChannel = "PPC" | "LSA" | "GMB" | "PMax";
 export type CallQualityGranularity = "day" | "week";
@@ -495,6 +496,21 @@ export async function getCallQualityReport({
 export type CallQualityClientRow = CallQualityChannelTotals & {
   clientId: string;
   clientName: string;
+  state: string | null;
+};
+
+export type CallQualityStateRollup = {
+  firstTimeCalls: number;
+  real: number;
+  junk: number;
+  unclassified: number;
+  costMicros: bigint;
+  // Sum-then-divide, same as finalize()'s realCostPerRealLead below —
+  // deliberately not adsReportedCpa: CallQualityClientRow only exposes that
+  // as an already-divided per-client ratio (its conversions/chargedCount
+  // denominators live only in the internal Accumulator, never exported), so
+  // there's no correct way to roll it up here without averaging ratios.
+  realCostPerRealLead: number | null;
 };
 
 export type CallQualityByClientReport = {
@@ -506,6 +522,12 @@ export type CallQualityByClientReport = {
   // double-count the same calls under two channel rows.
   clients: Record<CallQualityChannel, CallQualityClientRow[]>;
   summary: Record<CallQualityChannel, CallQualityChannelTotals>;
+  // Grouped separately per channel, not collapsed across channels — the
+  // same physical client can carry a PPC row, a GMB row, and a PMax row
+  // simultaneously (see the `clients` comment above), each with its own
+  // numbers, so a combined-across-channels state total would misrepresent
+  // what channel that spend/lead volume actually came from.
+  stateGroups: Record<CallQualityChannel, StateGroup<CallQualityClientRow, CallQualityStateRollup>[]>;
 };
 
 // Per-client version of getCallQualityReport, aggregated over the whole
@@ -538,11 +560,11 @@ export async function getCallQualityByClientReport({
     // this same seeded set) — its real historical performance reappears,
     // which is correct: it's still an active client.
     db
-      .select({ id: ppcClients.id, name: ppcClients.name })
+      .select({ id: ppcClients.id, name: ppcClients.name, state: ppcClients.state })
       .from(ppcClients)
       .where(eq(ppcClients.isActive, true)),
     db
-      .select({ id: lsaClients.id, name: lsaClients.name })
+      .select({ id: lsaClients.id, name: lsaClients.name, state: lsaClients.state })
       .from(lsaClients)
       .where(eq(lsaClients.isActive, true)),
     db
@@ -595,6 +617,9 @@ export async function getCallQualityByClientReport({
   const nameById = new Map<string, string>();
   for (const c of ppcClientRows) nameById.set(c.id, c.name);
   for (const c of lsaClientRows) nameById.set(c.id, c.name);
+  const stateById = new Map<string, string | null>();
+  for (const c of ppcClientRows) stateById.set(c.id, c.state);
+  for (const c of lsaClientRows) stateById.set(c.id, c.state);
 
   const clientAccs: Record<CallQualityChannel, Map<string, Accumulator>> = {
     PPC: new Map(),
@@ -735,9 +760,41 @@ export async function getCallQualityByClientReport({
       .map(([clientId, acc]) => ({
         clientId,
         clientName: nameById.get(clientId) ?? "(unknown)",
+        state: stateById.get(clientId) ?? null,
         ...finalize(channel, acc),
       }))
       .sort((a, b) => b.real - a.real || a.clientName.localeCompare(b.clientName));
+  }
+
+  function buildStateGroups(
+    clientRows: CallQualityClientRow[],
+  ): StateGroup<CallQualityClientRow, CallQualityStateRollup>[] {
+    return groupByState<CallQualityClientRow, CallQualityStateRollup>(
+      clientRows,
+      () => ({
+        firstTimeCalls: 0,
+        real: 0,
+        junk: 0,
+        unclassified: 0,
+        costMicros: 0n,
+        realCostPerRealLead: null,
+      }),
+      (acc, c) => {
+        const next = {
+          firstTimeCalls: acc.firstTimeCalls + c.firstTimeCalls,
+          real: acc.real + c.real,
+          junk: acc.junk + c.junk,
+          unclassified: acc.unclassified + c.unclassified,
+          costMicros: acc.costMicros + c.costMicros,
+          realCostPerRealLead: null as number | null,
+        };
+        // Same formula as finalize()'s realCostPerRealLead above — sum
+        // first, then divide, not an average of each client's own ratio.
+        next.realCostPerRealLead =
+          next.real > 0 ? Number(next.costMicros) / 1_000_000 / next.real : null;
+        return next;
+      },
+    );
   }
 
   const clients: Record<CallQualityChannel, CallQualityClientRow[]> = {
@@ -754,5 +811,12 @@ export async function getCallQualityByClientReport({
     PMax: finalize("PMax", summaryAccs.PMax),
   };
 
-  return { clients, summary };
+  const stateGroups: Record<CallQualityChannel, StateGroup<CallQualityClientRow, CallQualityStateRollup>[]> = {
+    PPC: buildStateGroups(clients.PPC),
+    LSA: buildStateGroups(clients.LSA),
+    GMB: buildStateGroups(clients.GMB),
+    PMax: buildStateGroups(clients.PMax),
+  };
+
+  return { clients, summary, stateGroups };
 }

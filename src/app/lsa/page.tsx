@@ -14,9 +14,10 @@ import { StatTile } from "@/components/ui/stat-tile";
 import { DeltaPill } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { LsaReportTable } from "@/components/lsa-report-table";
-import { LsaPhoneCallsChart } from "@/components/lsa-phone-calls-chart";
+import { StateBreakdownSection } from "@/components/state-breakdown-section";
 import { EmailLsaReportButton } from "@/components/email-lsa-report-button";
 import { getLsaReport, listLsaClients } from "@/lib/queries-lsa";
+import { pickDefaultExpandedState } from "@/lib/report-grouping";
 import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
@@ -25,8 +26,20 @@ export const metadata: Metadata = {
   title: "LSA report",
 };
 
+const NUMBER_FMT = new Intl.NumberFormat();
+function fmtNumber(n: number): string {
+  return NUMBER_FMT.format(n);
+}
+
 function fmtUsdFromMicros(micros: bigint): string {
   const dollars = Number(micros / 10_000n) / 100;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format(dollars);
+}
+
+function fmtUsdFromDollars(dollars: number): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
     currency: "USD",
@@ -53,6 +66,7 @@ export default async function LsaReportPage({
   const noClientsYet = lsaClients.length === 0;
   const costDollars = Number(report.kpis.costMicros / 10_000n) / 100;
   const costDollarsPrior = Number(report.kpisPrior.costMicros / 10_000n) / 100;
+  const defaultExpandedState = pickDefaultExpandedState(report.stateGroups);
 
   if (noClientsYet) {
     return (
@@ -167,18 +181,33 @@ export default async function LsaReportPage({
 
       <SectionCard
         icon={<PhoneCall className="h-4 w-4" />}
-        title="Phone calls by day"
-        eyebrow="Pacing"
-      >
-        <LsaPhoneCallsChart byDay={report.byDay} from={from} to={to} />
-      </SectionCard>
-
-      <SectionCard
-        icon={<PhoneCall className="h-4 w-4" />}
-        title="Clients"
+        title="State breakdown"
         eyebrow="Per-client breakdown"
       >
-        <LsaReportTable rows={report.rows} />
+        <div className="space-y-3">
+          {report.stateGroups.map((group) => (
+            <StateBreakdownSection
+              key={group.state}
+              state={group.state}
+              defaultOpen={group.state === defaultExpandedState}
+              kpis={[
+                { label: "Phone calls", value: fmtNumber(group.rollup.phoneCallCount) },
+                { label: "Messages", value: fmtNumber(group.rollup.messageCount) },
+                { label: "Signed", value: fmtNumber(group.rollup.signedCases) },
+                { label: "Cost", value: fmtUsdFromMicros(group.rollup.costMicros) },
+                {
+                  label: "Cost/signed",
+                  value:
+                    group.rollup.costPerSignedCase != null
+                      ? fmtUsdFromDollars(group.rollup.costPerSignedCase)
+                      : "—",
+                },
+              ]}
+            >
+              <LsaReportTable rows={group.clients} />
+            </StateBreakdownSection>
+          ))}
+        </div>
       </SectionCard>
     </div>
   );
