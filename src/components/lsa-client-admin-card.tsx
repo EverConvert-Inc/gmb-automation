@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ComboBox } from "@/components/ui/combobox";
-import { Input, Label } from "@/components/ui/form";
+import { Input, Label, Select } from "@/components/ui/form";
 import { CallrailWebhookSecretField } from "@/components/callrail-webhook-secret-field";
+import { US_STATES } from "@/lib/us-states";
 
 type ExistingAdsCredential = {
   id: string;
@@ -24,6 +25,7 @@ export type LsaClientAdminProps = {
   name: string;
   slug: string;
   isActive: boolean;
+  state: string | null;
   googleAdsTokenSaved: boolean;
   googleAdsLinked: boolean;
   googleAdsCustomerId: string | null;
@@ -106,6 +108,12 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
     }
     toast.success(successMsg);
     startTransition(() => router.refresh());
+  }
+
+  function handleStatePick(value: string) {
+    saveField({ state: value }, "State updated").catch((e) =>
+      toast.error("Couldn't update state", { description: (e as Error).message }),
+    );
   }
 
   // Auto-save the customer id when the user picks one, then — if this is
@@ -298,6 +306,27 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
             {syncing ? "Syncing…" : "Sync now"}
           </Button>
         </div>
+      </div>
+
+      <div className="max-w-xs">
+        <Label htmlFor="state">State</Label>
+        <Select
+          id="state"
+          value={props.state ?? ""}
+          onChange={(e) => handleStatePick(e.target.value)}
+          disabled={pending}
+        >
+          {!props.state && (
+            <option value="" disabled hidden>
+              Select a state…
+            </option>
+          )}
+          {US_STATES.map((s) => (
+            <option key={s.code} value={s.code}>
+              {s.name} ({s.code})
+            </option>
+          ))}
+        </Select>
       </div>
 
       {props.lastSyncError && (

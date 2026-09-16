@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { FormError, Input, Label } from "@/components/ui/form";
+import { FormError, Input, Label, Select } from "@/components/ui/form";
+import { US_STATES } from "@/lib/us-states";
 
 function slugify(name: string): string {
   return name
@@ -20,6 +21,7 @@ export function NewPpcClientForm() {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
+  const [state, setState] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -36,7 +38,7 @@ export function NewPpcClientForm() {
       const res = await fetch("/api/ppc/clients", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, slug }),
+        body: JSON.stringify({ name, slug, state }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -84,12 +86,30 @@ export function NewPpcClientForm() {
           URL-safe identifier.
         </p>
       </div>
+      <div>
+        <Label htmlFor="state">State</Label>
+        <Select
+          id="state"
+          required
+          value={state}
+          onChange={(e) => setState(e.target.value)}
+        >
+          <option value="" disabled>
+            Select a state…
+          </option>
+          {US_STATES.map((s) => (
+            <option key={s.code} value={s.code}>
+              {s.name} ({s.code})
+            </option>
+          ))}
+        </Select>
+      </div>
       <FormError>{error}</FormError>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
-        <Button type="submit" disabled={busy || !name || !slug}>
+        <Button type="submit" disabled={busy || !name || !slug || !state}>
           {busy ? "Creating…" : "Create PPC client"}
         </Button>
       </div>

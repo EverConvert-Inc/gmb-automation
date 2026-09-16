@@ -15,6 +15,14 @@ import {
   uuid,
   index,
 } from "drizzle-orm/pg-core";
+import { US_STATE_CODES } from "../us-states";
+
+// Built from the single US_STATE_CODES list (us-states.ts) rather than
+// hand-duplicated here, so the DB constraint and every state dropdown in
+// the app can never drift apart into accepting different sets.
+const US_STATE_CHECK_LIST = sql.raw(
+  US_STATE_CODES.map((c) => `'${c}'`).join(","),
+);
 
 export const clients = pgTable(
   "clients",
@@ -459,20 +467,22 @@ export const ppcClients = pgTable(
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
-    // Fixed 5-state set — a real lookup table would be overkill for a set
-    // this small and this static. Nullable until backfilled; a handful of
-    // clients genuinely operate across more than one of these states under
-    // a single row today (e.g. GMV Law Group: GA + FL, and FL isn't even in
-    // the set) — this column can't represent that, so those rows need an
-    // explicit decision (split into per-state rows, or pick a primary) at
-    // backfill time rather than silently picking one.
+    // Any US state (all 50 + DC — see us-states.ts), required on new clients
+    // at the form/API layer but nullable here for any pre-existing row.
+    // Report-side state grouping (report-grouping.ts) only actively buckets
+    // GA/NC/SC/TN/TX — a client set to any other state falls into that
+    // report's "Unassigned" bucket, same as an unset one. A handful of
+    // clients genuinely operate across more than one state under a single
+    // row (e.g. GMV Law Group: GA + FL) — this single column can't
+    // represent that; those rows keep whichever state was chosen at
+    // backfill/creation time as a known simplification.
     state: text("state"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     activeIdx: index("ppc_clients_active_idx").on(t.isActive),
-    stateCheck: check("ppc_clients_state_check", sql`${t.state} IS NULL OR ${t.state} IN ('GA','NC','SC','TN','TX')`),
+    stateCheck: check("ppc_clients_state_check", sql`${t.state} IS NULL OR ${t.state} IN (${US_STATE_CHECK_LIST})`),
   }),
 );
 
@@ -708,7 +718,7 @@ export const lsaClients = pgTable(
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
-    // Same fixed 5-state set and same caveat as ppc_clients.state — see that
+    // Same allowed set and same caveat as ppc_clients.state — see that
     // column's comment. ppc_clients and lsa_clients are independent tables
     // with no FK between them, so a client present in both needs this set
     // separately in each row; nothing keeps them in sync automatically.
@@ -718,7 +728,7 @@ export const lsaClients = pgTable(
   },
   (t) => ({
     activeIdx: index("lsa_clients_active_idx").on(t.isActive),
-    stateCheck: check("lsa_clients_state_check", sql`${t.state} IS NULL OR ${t.state} IN ('GA','NC','SC','TN','TX')`),
+    stateCheck: check("lsa_clients_state_check", sql`${t.state} IS NULL OR ${t.state} IN (${US_STATE_CHECK_LIST})`),
   }),
 );
 

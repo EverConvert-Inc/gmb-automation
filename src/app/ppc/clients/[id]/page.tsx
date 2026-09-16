@@ -185,6 +185,7 @@ export default async function PpcClientDetailPage({
         name={row.name}
         slug={row.slug}
         isActive={row.isActive}
+        state={row.state}
         googleAdsTokenSaved={row.googleAdsOauthTokenId !== null}
         googleAdsLinked={
           row.googleAdsOauthTokenId !== null && row.googleAdsCustomerId !== null

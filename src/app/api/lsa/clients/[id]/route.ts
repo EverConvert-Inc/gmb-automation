@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { lsaClients } from "@/lib/db/schema";
+import { isUsStateCode } from "@/lib/us-states";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,9 @@ const PatchBody = z
     signedCaseTag: z.string().min(1).optional(),
     signedCaseNameFilters: z.array(z.string().min(1)).optional(),
     gmbCallrailNameFilters: z.array(z.string().min(1)).optional(),
+    // Not nullable — every client gets a state at creation now, so editing
+    // it means picking a different valid one, not clearing it.
+    state: z.string().refine(isUsStateCode, "must be a valid US state code").optional(),
   })
   .strict();
 

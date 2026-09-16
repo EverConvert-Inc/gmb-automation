@@ -4,6 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { lsaCallrailTagCategories, lsaClients } from "@/lib/db/schema";
 import { DEFAULT_CALLRAIL_TAG_CATEGORIES } from "@/lib/callrail-tag-categories";
+import { isUsStateCode } from "@/lib/us-states";
 
 export const runtime = "nodejs";
 
@@ -12,9 +13,12 @@ const Slug = z
   .min(1)
   .regex(/^[a-z0-9-]+$/, "slug must be lowercase letters, digits, dashes");
 
+const State = z.string().refine(isUsStateCode, "must be a valid US state code");
+
 const CreateBody = z.object({
   name: z.string().min(1),
   slug: Slug,
+  state: State,
 });
 
 export async function GET() {
@@ -45,7 +49,7 @@ export async function POST(req: Request) {
   }
   const [row] = await db
     .insert(lsaClients)
-    .values({ name: parsed.name, slug: parsed.slug })
+    .values({ name: parsed.name, slug: parsed.slug, state: parsed.state })
     .returning();
   await db.insert(lsaCallrailTagCategories).values(
     DEFAULT_CALLRAIL_TAG_CATEGORIES.map((c) => ({

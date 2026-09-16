@@ -5,14 +5,18 @@
 // per-client row type and the rollup type — callers supply how to zero and
 // fold their own shape.
 
-// Mirrors the CHECK constraint on ppc_clients.state / lsa_clients.state
-// (migration 0043) — the fixed 5-state set this rollout covers.
+// The 5 states this report breakdown actively groups by, out of the full
+// US state list the ppc_clients.state / lsa_clients.state CHECK constraint
+// accepts (see us-states.ts) — a client set to any other valid state (e.g.
+// FL) falls into the Unassigned bucket below, same as one with no state set
+// at all. Expanding this set is a reporting-scope decision, separate from
+// which states the CHECK constraint allows.
 export const STATE_ORDER = ["GA", "NC", "SC", "TN", "TX"] as const;
 export type StateCode = (typeof STATE_ORDER)[number];
 
-// Bucket for any client row whose state hasn't been backfilled yet (or a
-// newly-added client created after the backfill). Kept visible rather than
-// silently dropped or folded into an existing state.
+// Bucket for any client row whose state is null, or set to a valid US state
+// outside STATE_ORDER. Kept visible rather than silently dropped or folded
+// into an existing state.
 export const UNASSIGNED_STATE = "Unassigned";
 
 export type StateGroup<TClient, TRollup> = {
@@ -21,10 +25,17 @@ export type StateGroup<TClient, TRollup> = {
   clients: TClient[];
 };
 
+const STATE_ORDER_SET: ReadonlySet<string> = new Set(STATE_ORDER);
+
 // Groups already-fetched per-client rows by `state` and folds a
 // caller-supplied rollup across each group. Group order follows
 // STATE_ORDER with "Unassigned" last; a state with zero clients in it is
-// omitted rather than rendered as an empty section.
+// omitted rather than rendered as an empty section. A state outside
+// STATE_ORDER folds into Unassigned rather than getting its own bucket —
+// this is what actually enforces the "any state outside the 5" rule above;
+// without it, that client's bucket key would never match anything in the
+// STATE_ORDER/Unassigned scan below and it would silently vanish from the
+// result instead of landing in Unassigned.
 export function groupByState<TClient extends { state: string | null }, TRollup>(
   clients: TClient[],
   zero: () => TRollup,
@@ -32,7 +43,7 @@ export function groupByState<TClient extends { state: string | null }, TRollup>(
 ): StateGroup<TClient, TRollup>[] {
   const buckets = new Map<string, TClient[]>();
   for (const c of clients) {
-    const key = c.state ?? UNASSIGNED_STATE;
+    const key = c.state && STATE_ORDER_SET.has(c.state) ? c.state : UNASSIGNED_STATE;
     const list = buckets.get(key);
     if (list) list.push(c);
     else buckets.set(key, [c]);
