@@ -108,74 +108,6 @@ export async function getCallStartDate(callId: string): Promise<string | null> {
   return call.start_time.slice(0, 10);
 }
 
-export type SignedTaggedCall = {
-  callId: string;
-  date: string;
-  // Lowercased already, same normalization pullCallsForCompany applies
-  // before calling matchesAnyFilter — callers should NOT re-lowercase.
-  trackerName: string;
-  // Un-merged, non-lowercased values exactly as CallRail returned them —
-  // kept alongside the merged trackerName so a filter-mismatch can be
-  // diagnosed as a genuine naming gap vs. an artifact of `??` not
-  // falling through on an empty (but non-null) source_name. See
-  // signed-case-filter-audit's use of these fields.
-  sourceNameRaw: string | null;
-  formattedTrackingSourceRaw: string | null;
-};
-
-// Raw fetch of every call in [fromDate, toDate] carrying the given tag,
-// with only the fields needed to audit signedCaseNameFilters coverage
-// (see signed-case-filter-audit route). Deliberately does not reuse
-// pullCallsForCompany — that function only returns aggregated daily
-// totals gated behind the very filter this is meant to audit, so it
-// can't surface the raw tracker names of calls the filter excludes.
-export async function listSignedTaggedCalls(
-  companyId: string,
-  fromDate: string,
-  toDate: string,
-  signedTag: string,
-): Promise<SignedTaggedCall[]> {
-  const accountId = await resolveAccountId();
-  const wantTag = signedTag.trim().toLowerCase();
-  const calls: SignedTaggedCall[] = [];
-  let page = 1;
-  while (true) {
-    const url = new URL(`${BASE_URL}/v3/a/${accountId}/calls.json`);
-    url.searchParams.set("company_id", companyId);
-    url.searchParams.set("page", String(page));
-    url.searchParams.set("per_page", "250");
-    url.searchParams.set("start_date", fromDate);
-    url.searchParams.set("end_date", toDate);
-    url.searchParams.set("fields", "tags,source_name,formatted_tracking_source");
-    const res = await fetch(url.toString(), { headers: authHeaders() });
-    if (!res.ok) {
-      throw new Error(
-        `CallRail calls fetch failed: ${res.status} ${await res.text()}`,
-      );
-    }
-    const body = (await res.json()) as {
-      calls?: CallRailCall[];
-      total_pages?: number;
-    };
-    for (const c of body.calls ?? []) {
-      const tagNamesLower = (c.tags ?? []).map((t) =>
-        (typeof t === "string" ? t : t.name).toLowerCase(),
-      );
-      if (!tagNamesLower.includes(wantTag)) continue;
-      calls.push({
-        callId: c.id,
-        date: c.start_time.slice(0, 10),
-        trackerName: (c.source_name ?? c.formatted_tracking_source ?? "").toLowerCase(),
-        sourceNameRaw: c.source_name ?? null,
-        formattedTrackingSourceRaw: c.formatted_tracking_source ?? null,
-      });
-    }
-    if (!body.total_pages || page >= body.total_pages) break;
-    page += 1;
-  }
-  return calls;
-}
-
 export type CallrailTagCategoryConfig = {
   label: string;
   callrailTagName: string;
@@ -234,6 +166,15 @@ export type CallrailChannelBucket = {
 export type CallrailDailyTotals = {
   date: string; // YYYY-MM-DD
   totalCalls: number;
+  // Derived AFTER the per-call loop below, from rollupCounts/channelBreakdown
+  // — sum of real across every channel except "GMB" (organic, no ad spend),
+  // or the flat rollupCounts.real when channel splitting isn't active that
+  // day. PMax counts toward this: its spend was never isolated from PPC's
+  // own cost figure, so excluding it here would understate signed cases
+  // against a cost figure that still includes it — see ppc-sync.ts. GMB is
+  // excluded because it's genuinely a different (unpaid) channel. No longer
+  // based on a separate signedCaseTag match — that field (still stored on
+  // ppc_clients/lsa_clients, still editable) no longer feeds this at all.
   signedCases: number;
   firstTimeCalls: number;
   // Flat, blended across all calls that day — keyed by tagCategories[].label.
@@ -268,14 +209,16 @@ export type CallrailDailyTotals = {
   // Additive, LSA-only consumption (see lsa-sync.ts's true-sign-date
   // correction) — PPC's ppc-sync.ts never reads this field, and every
   // other field above is computed identically regardless of whether a
-  // caller reads it. One entry per call landing on this date that
-  // INDEPENDENTLY qualifies as a signed case and/or a rollup="real" call
-  // under this client's own existing criteria (the same hasTag/nameMatches
-  // and resolveCallRollup logic that already produced signedCases/
-  // rollupCounts above) — NOT filtered by whether call_signed_events has a
-  // row for it; that lookup happens downstream, in lsa-sync.ts, so a call
-  // call_signed_events has never heard of is entirely unaffected there
-  // (falls back to counting toward this date, exactly as today).
+  // caller reads it. One entry per call landing on this date that resolves
+  // rollup="real" under this client's own tag-category config (the same
+  // resolveCallRollup logic that already produced rollupCounts above) — NOT
+  // filtered by whether call_signed_events has a row for it; that lookup
+  // happens downstream, in lsa-sync.ts, so a call call_signed_events has
+  // never heard of is entirely unaffected there (falls back to counting
+  // toward this date, exactly as today). Every entry here IS a real call by
+  // construction (only pushed when resolveCallRollup says "real") — there's
+  // no separate "signed but not real" case anymore, so there's nothing to
+  // store beyond which channel it landed in and which label(s) it matched.
   signedRealCandidates: CallrailSignedCandidate[];
 };
 
@@ -284,12 +227,14 @@ export type CallrailSignedCandidate = {
   // The call's own date (call.start_time.slice(0, 10)) — what it counts
   // toward absent any signed_at-based correction.
   date: string;
-  isSignedCase: boolean;
-  isRollupReal: boolean;
-  // Which channelBreakdown bucket this call's rollupReal contribution (if
-  // any) landed in — null when channel splitting isn't active for this
+  // Which channelBreakdown bucket this call's real contribution (if any)
+  // landed in — null when channel splitting isn't active for this
   // client/call. Preserved so a downstream correction redirects the call
-  // into the SAME channel on its new date, not a different one.
+  // into the SAME channel on its new date, not a different one. A
+  // correction adjusts rollupCounts for every channel including "GMB"
+  // (Call Quality's GMB channel needs it), but must skip adjusting
+  // signedCases specifically when channel === "GMB" — see the
+  // signedCases field comment above.
   channel: "GMB" | "PPC" | "LSA" | "PMax" | null;
   // Which lsa_callrail_tag_categories label(s) this call actually
   // incremented in tagCategoryBreakdown (whichever labels its tags really
@@ -297,7 +242,7 @@ export type CallrailSignedCandidate = {
   // can be redirected the same way). Empty when the call never
   // contributed to tagCategoryBreakdown at all: that field is
   // first-time-calls-only, so a repeat caller's call yields [] here even
-  // if isRollupReal is true.
+  // though it's still a real candidate.
   tagCategoryLabels: string[];
 };
 
@@ -524,17 +469,21 @@ export function resolveCallRollup(
   return null;
 }
 
-// Walks every call in the window and groups by (day in UTC). Signed cases =
-// count of calls that (a) carry the configured tag (case-insensitive) and
-// (b) come in on a tracking number whose name contains any of the configured
-// substring filters (case-insensitive). An empty filter list disables (b).
-// This signed-case computation is completely unchanged from before —
-// tagCategories/gmbNameFilters below are additive, for the separate Ads
-// Conversion Tracker x CallRail report only.
+// Walks every call in the window and groups by (day in UTC).
 //
 // tagCategories buckets each call's tags[] against the client's configured
-// categories (independent of the signed-case tag/filter above — a call can
-// land in multiple categories if it carries multiple matching tags).
+// categories (real/junk/unclassified — see resolveCallRollup) — a call can
+// land in multiple categories if it carries multiple matching tags, but
+// only ever counts toward one rollup bucket.
+//
+// signedCases is derived AFTER this per-call loop (see the bottom of this
+// function) from the same real-rollup classification — sum of `real` across
+// every channel except "GMB", or the flat rollupCounts.real when channel
+// splitting isn't active. It is NOT a separate tag match anymore (see the
+// signedCases field comment on CallrailDailyTotals) — nameFilters below is
+// still what gates whether a call counts toward tagCategories/real/junk at
+// all (isRelevantForReport), it just no longer ALSO gates a second,
+// independent signedCaseTag match the way it used to.
 //
 // gmbNameFilters, when passed, additionally classifies each call by tracker/
 // source name into "GMB" (name contains one of these substrings) or "PPC"
@@ -549,7 +498,6 @@ export async function pullCallsForCompany(
   companyId: string,
   fromDate: string,
   toDate: string,
-  signedTag: string,
   nameFilters: string[],
   tagCategories: CallrailTagCategoryConfig[] = [],
   gmbNameFilters?: string[],
@@ -601,7 +549,6 @@ export async function pullCallsForCompany(
     page += 1;
   }
 
-  const wantTag = signedTag.trim().toLowerCase();
   const filtersLower = nameFilters
     .map((f) => f.trim().toLowerCase())
     .filter(Boolean);
@@ -653,15 +600,6 @@ export async function pullCallsForCompany(
       typeof t === "string" ? t : t.name,
     );
     const tagNamesLower = tagNames.map((t) => t.toLowerCase());
-
-    // Signed-case computation — unchanged from before tagCategories/
-    // gmbNameFilters existed. Empty filtersLower still means "no
-    // restriction" here — this gate's behavior is untouched.
-    const hasTag = tagNamesLower.some((t) => t === wantTag);
-    const isSignedCase =
-      hasTag &&
-      (filtersLower.length === 0 || matchesAnyFilter(trackerName, filtersLower));
-    if (isSignedCase) bucket.signedCases += 1;
 
     const matchedCategories = categories.filter((c) =>
       tagNamesLower.includes(c.tag),
@@ -809,9 +747,8 @@ export async function pullCallsForCompany(
     // client — so the channel block's own classification (channel,
     // channelRollup) is what must be recorded here, not the flat one.
     // Without channel splitting, the flat computation is the only one
-    // that ran at all. Only recorded when the call matters to at least
-    // one of the two metrics — nothing for lsa-sync.ts to look at
-    // otherwise.
+    // that ran at all. Only recorded when the call resolves real — a call
+    // that doesn't is nothing for lsa-sync.ts to correct.
     const isRollupRealForCandidate = bucket.channelBreakdown
       ? channel !== null && channelRollup === "real"
       : flatRollup === "real";
@@ -824,12 +761,10 @@ export async function pullCallsForCompany(
       isFirstTime && (bucket.channelBreakdown ? channel !== null : isRelevantForReport)
         ? matchedCategoryLabels
         : [];
-    if (isSignedCase || isRollupRealForCandidate) {
+    if (isRollupRealForCandidate) {
       bucket.signedRealCandidates.push({
         callId: call.id,
         date,
-        isSignedCase,
-        isRollupReal: isRollupRealForCandidate,
         channel: bucket.channelBreakdown ? channel : null,
         tagCategoryLabels: tagCategoryLabelsCounted,
       });
@@ -878,6 +813,29 @@ export async function pullCallsForCompany(
       channelBucket.callViewRowsMatched = rows.length - unmatchedCount;
       if (bucket.channelBreakdown) bucket.channelBreakdown.PMax = channelBucket;
       byDate.set(rowDate, bucket);
+    }
+  }
+
+  // signedCases derivation — see the field's comment on CallrailDailyTotals.
+  // Runs once per bucket, after every call (and the PMax call_view
+  // reconciliation above, which never touches real/junk) has been folded
+  // in, so it reflects the FINAL rollupCounts/channelBreakdown rather than
+  // an in-progress one. Sums real across every channel except "GMB" when
+  // channel splitting is active (PPC: PPC+PMax combined, matching how
+  // PMax's spend was never split out of PPC's own cost either; LSA with
+  // its own GMB split: LSA only) — falls back to the flat rollupCounts.real
+  // when channel splitting isn't active for this bucket at all (LSA's
+  // common case).
+  for (const bucket of byDate.values()) {
+    if (bucket.channelBreakdown) {
+      let total = 0;
+      for (const [channel, cb] of Object.entries(bucket.channelBreakdown)) {
+        if (channel === "GMB") continue;
+        total += cb.rollupCounts.real;
+      }
+      bucket.signedCases = total;
+    } else {
+      bucket.signedCases = bucket.rollupCounts.real;
     }
   }
 

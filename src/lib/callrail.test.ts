@@ -122,7 +122,6 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -194,7 +193,6 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -228,7 +226,6 @@ describe("pullCallsForCompany — GMB/PMax reclassification", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       [],
       ["GMB"],
@@ -283,7 +280,6 @@ describe("pullCallsForCompany — PMax vs PPC by matched campaign type", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -329,7 +325,6 @@ describe("pullCallsForCompany — PMax vs PPC by matched campaign type", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -371,7 +366,6 @@ describe("pullCallsForCompany — PMax vs PPC by matched campaign type", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -426,7 +420,6 @@ describe("pullCallsForCompany — PMax vs PPC by matched campaign type", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -495,7 +488,6 @@ describe("pullCallsForCompany — Real/Junk scoped differently", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES_WITH_JUNK,
     );
@@ -524,7 +516,6 @@ describe("pullCallsForCompany — Real/Junk scoped differently", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES_WITH_JUNK,
     );
@@ -550,7 +541,6 @@ describe("pullCallsForCompany — Real/Junk scoped differently", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES_WITH_JUNK,
     );
@@ -579,7 +569,6 @@ describe("pullCallsForCompany — Real/Junk scoped differently", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES_WITH_JUNK,
       ["GMB"], // gmbNameFilters — enables the channel split
@@ -607,7 +596,7 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
     delete process.env.CALLRAIL_ACCOUNT_ID;
   });
 
-  it("records a candidate (both metrics true, no channel) for a call matching both signedCaseTag and a rollup=real category", async () => {
+  it("records a candidate (no channel) for a call matching a rollup=real category", async () => {
     const calls: MockCall[] = [
       {
         id: "call-both",
@@ -624,7 +613,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["LSA"],
       TAG_CATEGORIES,
     );
@@ -633,15 +621,13 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       {
         callId: "call-both",
         date: "2026-07-28",
-        isSignedCase: true,
-        isRollupReal: true,
         channel: null,
         tagCategoryLabels: ["Signed"],
       },
     ]);
   });
 
-  it("isSignedCase true but isRollupReal false — the tag matches signedCaseTag but no configured category maps it to real", async () => {
+  it("records no candidate when no tag category resolves the call to real, regardless of the tag's own name", async () => {
     const calls: MockCall[] = [
       {
         id: "call-tag-only",
@@ -658,26 +644,16 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["LSA"],
       [], // no tag categories configured at all
     );
 
-    expect(day.signedRealCandidates).toEqual([
-      {
-        callId: "call-tag-only",
-        date: "2026-07-28",
-        isSignedCase: true,
-        isRollupReal: false,
-        channel: null,
-        // No tag categories configured at all — nothing matched, so
-        // nothing was ever counted in tagCategoryBreakdown for this call.
-        tagCategoryLabels: [],
-      },
-    ]);
+    // No tag categories configured at all — nothing resolves real, so
+    // there's no candidate no matter what the call's own tag says.
+    expect(day.signedRealCandidates).toEqual([]);
   });
 
-  it("isSignedCase false but isRollupReal true — resolves real via a differently-named tag category, but that tag isn't the literal signedCaseTag", async () => {
+  it("resolves real via a differently-named tag category, never hardcoded to a literal 'Signed' tag", async () => {
     const calls: MockCall[] = [
       {
         id: "call-category-only",
@@ -694,7 +670,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed", // signedCaseTag — doesn't match "Won"
       ["LSA"],
       [{ label: "Won", callrailTagName: "Won", rollup: "real" as const }],
     );
@@ -703,8 +678,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       {
         callId: "call-category-only",
         date: "2026-07-28",
-        isSignedCase: false,
-        isRollupReal: true,
         channel: null,
         // The real-rollup label is "Won" here, not "Signed" — confirms
         // tagCategoryLabels reflects whatever the call's tags actually
@@ -731,7 +704,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"], // enables channel splitting
@@ -742,15 +714,13 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       {
         callId: "call-ppc-real",
         date: "2026-07-28",
-        isSignedCase: true,
-        isRollupReal: true,
         channel: "PPC",
         tagCategoryLabels: ["Signed"],
       },
     ]);
   });
 
-  it("records isRollupReal from the channel classification, not the flat one, when a GMB-tracker call doesn't match this client's own filters but still lands in the GMB channel", async () => {
+  it("records the channel classification for a GMB-tracker call, even one that doesn't match this client's own name filters", async () => {
     const calls: MockCall[] = [
       {
         // GMB tracker — not relevant-for-report under this client's own
@@ -771,7 +741,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["LSA"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -782,10 +751,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       {
         callId: "call-gmb-real",
         date: "2026-07-28",
-        // "Signed" tag present, but tracker name "GMB - Roswell" doesn't
-        // contain "LSA" — signedCases' own nameMatches check fails.
-        isSignedCase: false,
-        isRollupReal: true,
         channel: "GMB",
         tagCategoryLabels: ["Signed"],
       },
@@ -809,7 +774,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["LSA"],
       TAG_CATEGORIES,
     );
@@ -817,7 +781,7 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
     expect(day.signedRealCandidates).toEqual([]);
   });
 
-  it("tagCategoryLabels is empty for a repeat caller even though isRollupReal is true — tagCategoryBreakdown is first-time-calls-only", async () => {
+  it("tagCategoryLabels is empty for a repeat caller even though the call still resolves real — tagCategoryBreakdown is first-time-calls-only", async () => {
     const calls: MockCall[] = [
       {
         id: "call-repeat-real",
@@ -834,7 +798,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       "COMPANY1",
       "2026-07-28",
       "2026-07-28",
-      "Signed",
       ["LSA"],
       TAG_CATEGORIES,
     );
@@ -843,8 +806,6 @@ describe("pullCallsForCompany — signedRealCandidates (LSA true-sign-date corre
       {
         callId: "call-repeat-real",
         date: "2026-07-28",
-        isSignedCase: true,
-        isRollupReal: true,
         channel: null,
         // Real/junk counts regardless of first-time status, but
         // tagCategoryBreakdown never got incremented for this call at all
@@ -1104,7 +1065,6 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-29",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],
@@ -1150,7 +1110,6 @@ describe("pullCallsForCompany — PMax call_view reconciliation", () => {
       "COMPANY1",
       "2026-07-28",
       "2026-07-29",
-      "Signed",
       ["PPC"],
       TAG_CATEGORIES,
       ["GMB"],

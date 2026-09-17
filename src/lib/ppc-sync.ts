@@ -269,7 +269,6 @@ export async function syncCallrailForClient(
       client.callrailCompanyId,
       opts.fromDate,
       opts.toDate,
-      client.signedCaseTag,
       client.signedCaseNameFilters,
       tagCategories,
       client.gmbCallrailNameFilters,

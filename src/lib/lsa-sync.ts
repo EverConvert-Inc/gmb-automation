@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   callSignedEvents,
@@ -241,7 +241,6 @@ async function fetchAndBucketLsaCalls(
     client.callrailCompanyId!,
     fromDate,
     toDate,
-    client.signedCaseTag,
     client.signedCaseNameFilters,
     tagCategories,
     gmbNameFilters,
@@ -292,12 +291,18 @@ async function fetchAndBucketLsaCalls(
 // The "true sign date" correction — redirects a call's signedCases/
 // rollupReal contribution from its own date to the date it was ACTUALLY
 // signed (per call_signed_events), for every candidate pullCallsForCompany
-// flagged as independently qualifying for at least one of those two
-// metrics. A call with no call_signed_events row, or whose signed_at falls
-// on the same date it already counts toward, is left completely untouched
-// — today's behavior, unchanged; this is the explicit "no matching row —
-// fall back to current behavior" and "same-month — no visible change"
-// requirement.
+// returned (every entry is a real call by construction — see
+// CallrailSignedCandidate in callrail.ts). A call with no call_signed_events
+// row, or whose signed_at falls on the same date it already counts toward,
+// is left completely untouched — today's behavior, unchanged; this is the
+// explicit "no matching row — fall back to current behavior" and
+// "same-month — no visible change" requirement.
+//
+// rollupCounts is adjusted for every candidate regardless of channel
+// (including "GMB" — Call Quality's GMB channel needs its own real count
+// corrected too). signedCases is adjusted separately and skips "GMB"
+// specifically — GMB is organic and excluded from signedCases by
+// definition (see the field comment on CallrailDailyTotals in callrail.ts).
 //
 // This only ever handles the ORIGIN side: the candidate's own date is
 // always one of `bucket()`'s in-memory buckets (it came from a row just
@@ -307,12 +312,13 @@ async function fetchAndBucketLsaCalls(
 // below, which re-derives every target date's redirected-in total straight
 // from call_signed_events itself. That split is what makes the correction
 // durable: this function also persists the call's classification
-// (isSignedCase/isRollupReal/channel) onto the call_signed_events row it
-// matched, so a LATER sync that only touches the target date (without ever
-// re-fetching this call's origin date again) can still reconstruct the
-// redirect from that persisted row, instead of the one-time in-memory/
-// standalone write silently getting erased by the next regular resync of
-// the target date.
+// (isSignedCase/isRollupReal — both written identically, both true, since
+// only real candidates ever reach here — plus channel) onto the
+// call_signed_events row it matched, so a LATER sync that only touches the
+// target date (without ever re-fetching this call's origin date again) can
+// still reconstruct the redirect from that persisted row, instead of the
+// one-time in-memory/standalone write silently getting erased by the next
+// regular resync of the target date.
 async function applySignedDateCorrections(
   lsaClientId: string,
   rows: CallrailDailyTotals[],
@@ -324,8 +330,6 @@ async function applySignedDateCorrections(
     candidates.map((c) => ({
       callId: c.callId,
       date: c.date,
-      isSignedCase: c.isSignedCase,
-      isRollupReal: c.isRollupReal,
       channel: c.channel,
     })),
   );
@@ -368,10 +372,8 @@ async function applySignedDateCorrections(
     }
 
     const origin = bucket(c.date);
-    if (c.isSignedCase) origin.signedCases -= 1;
-    if (c.isRollupReal) {
-      origin.rollupCounts = adjustRollupReal(origin.rollupCounts, c.channel, -1);
-    }
+    origin.rollupCounts = adjustRollupReal(origin.rollupCounts, c.channel, -1);
+    if (c.channel !== "GMB") origin.signedCases -= 1;
     if (c.tagCategoryLabels.length > 0) {
       origin.tagCategoryBreakdown = adjustTagCategoryBreakdown(
         origin.tagCategoryBreakdown,
@@ -384,8 +386,12 @@ async function applySignedDateCorrections(
     await db
       .update(callSignedEvents)
       .set({
-        isSignedCase: c.isSignedCase,
-        isRollupReal: c.isRollupReal,
+        // Both columns kept, written identically — every persisted row
+        // here is real by construction (see the push condition in
+        // callrail.ts), so there's no longer a case where these two
+        // columns would ever need to differ.
+        isSignedCase: true,
+        isRollupReal: true,
         channel: c.channel,
         tagCategoryLabels: c.tagCategoryLabels,
       })
@@ -400,8 +406,6 @@ async function applySignedDateCorrections(
     console.log(
       `[lsa-sync][signed-correction] call ${c.callId}: redirected ${c.date} -> ${signedDate}; persisted classification onto call_signed_events for durable redirected-in reconstruction`,
       {
-        isSignedCase: c.isSignedCase,
-        isRollupReal: c.isRollupReal,
         channel: c.channel,
         tagCategoryLabels: c.tagCategoryLabels,
       },
@@ -438,10 +442,18 @@ async function applyRedirectedInContributions(
   toDate: string,
   bucket: (date: string) => DayBucket,
 ): Promise<void> {
+  // Gated on isRollupReal specifically, not just non-null — going forward
+  // every new row has isSignedCase === isRollupReal always (both written
+  // identically, see applySignedDateCorrections), but a row written BEFORE
+  // this change can have isSignedCase true and isRollupReal false (or vice
+  // versa), from the old dual-criteria system. Trusting isRollupReal keeps
+  // those historical rows correct under today's single "is this real"
+  // definition instead of quietly reinterpreting old isSignedCase-only
+  // rows as real redirects they were never confirmed to be.
   const events = await db.query.callSignedEvents.findMany({
     where: and(
       eq(callSignedEvents.lsaClientId, lsaClientId),
-      isNotNull(callSignedEvents.isSignedCase),
+      eq(callSignedEvents.isRollupReal, true),
     ),
   });
   for (const e of events) {
@@ -449,18 +461,13 @@ async function applyRedirectedInContributions(
     if (targetDate < fromDate || targetDate > toDate) continue;
 
     const b = bucket(targetDate);
-    if (e.isSignedCase) b.signedCases += 1;
-    if (e.isRollupReal) {
-      b.rollupCounts = adjustRollupReal(
-        b.rollupCounts,
-        e.channel as "GMB" | "PPC" | "LSA" | "PMax" | null,
-        1,
-      );
-    }
+    const channel = e.channel as "GMB" | "PPC" | "LSA" | "PMax" | null;
+    b.rollupCounts = adjustRollupReal(b.rollupCounts, channel, 1);
+    if (channel !== "GMB") b.signedCases += 1;
     if (e.tagCategoryLabels && e.tagCategoryLabels.length > 0) {
       b.tagCategoryBreakdown = adjustTagCategoryBreakdown(
         b.tagCategoryBreakdown,
-        e.channel as "GMB" | "PPC" | "LSA" | "PMax" | null,
+        channel,
         e.tagCategoryLabels,
         1,
       );
@@ -468,12 +475,7 @@ async function applyRedirectedInContributions(
     b.callrailFetched = true;
     console.log(
       `[lsa-sync][signed-correction] redirected-in: call ${e.callrailCallId} contributes to ${targetDate}`,
-      {
-        isSignedCase: e.isSignedCase,
-        isRollupReal: e.isRollupReal,
-        channel: e.channel,
-        tagCategoryLabels: e.tagCategoryLabels,
-      },
+      { channel: e.channel, tagCategoryLabels: e.tagCategoryLabels },
     );
   }
 }
