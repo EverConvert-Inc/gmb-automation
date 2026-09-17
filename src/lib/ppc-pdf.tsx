@@ -7,6 +7,7 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type { PpcReport } from "./queries";
+import { STATE_NAMES } from "./report-grouping";
 
 // Small duplicate formatters — the web versions live in
 // `src/components/ppc-report-table.tsx` (which is `"use client"`) so they
@@ -21,6 +22,12 @@ function fmtConversions(n: number): string {
 function fmtMicros(microsBig: bigint): string {
   // Convert micros (1/1,000,000 of a USD) to dollars with two decimals.
   const dollars = Number(microsBig / 10_000n) / 100;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format(dollars);
+}
+function fmtUsd(dollars: number): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
     currency: "USD",
@@ -161,6 +168,26 @@ const styles = StyleSheet.create({
   kpiDeltaUp: { color: BRAND_GREEN },
   kpiDeltaDown: { color: RED },
   kpiDeltaFlat: { color: MUTED },
+  stateSection: {
+    marginBottom: 18,
+  },
+  stateHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    marginBottom: 8,
+  },
+  stateTitle: {
+    fontSize: 12,
+    fontFamily: "Helvetica-Bold",
+  },
+  stateKpiText: {
+    fontSize: 8,
+    color: "#334155",
+  },
   clientSection: {
     marginBottom: 14,
   },
@@ -301,10 +328,6 @@ export function PpcReportDocument({
       return a.campaignName.localeCompare(b.campaignName);
     });
   }
-  const clients = [...report.clientTotals].sort((a, b) =>
-    a.ppcClientName.localeCompare(b.ppcClientName),
-  );
-
   return (
     <Document
       title={`PPC report ${fmtRangeHeader(opts.from, opts.to)}`}
@@ -350,80 +373,102 @@ export function PpcReportDocument({
           />
         </View>
 
-        {clients.length === 0 ? (
+        {report.stateGroups.length === 0 ? (
           <View>
             <Text style={{ color: MUTED, fontSize: 10, marginTop: 24 }}>
               No PPC clients have synced data for this period yet.
             </Text>
           </View>
         ) : (
-          clients.map((c) => {
-            const rows = rowsByClient.get(c.ppcClientId) ?? [];
+          report.stateGroups.map((group) => {
+            const fullName = (STATE_NAMES as Record<string, string>)[group.state];
+            const title = fullName ? `${fullName} (${group.state})` : group.state;
+            const r = group.rollup;
+            const kpiText = [
+              `Clicks ${fmtNumber(r.clicks)}`,
+              `Signed ${fmtNumber(r.signedCases)}`,
+              `Phone calls ${fmtNumber(r.phoneCalls)}`,
+              `Cost ${fmtMicros(r.costMicros)}`,
+              `Cost/signed ${r.costPerSignedCase != null ? fmtUsd(r.costPerSignedCase) : "—"}`,
+            ].join("   ·   ");
             return (
-              <View key={c.ppcClientId} style={styles.clientSection} wrap>
-                <View style={styles.clientHeader}>
-                  <Text style={styles.clientName}>{c.ppcClientName}</Text>
-                  <Text style={styles.clientSubtitle}>
-                    {rows.length} campaign{rows.length === 1 ? "" : "s"}
-                    {c.signedCases !== null
-                      ? ` · ${fmtNumber(c.signedCases)} signed`
-                      : ""}
-                  </Text>
+              <View key={group.state} style={styles.stateSection} wrap>
+                <View style={styles.stateHeader}>
+                  <Text style={styles.stateTitle}>{title}</Text>
+                  <Text style={styles.stateKpiText}>{kpiText}</Text>
                 </View>
 
-                <View style={styles.totalsRow}>
-                  <View style={styles.cellName}>
-                    <Text style={styles.totalsLabel}>Client total</Text>
-                  </View>
-                  <Text style={[styles.cellNum, styles.td]}>
-                    {fmtNumber(c.phoneCalls)}
-                  </Text>
-                  <Text style={[styles.cellNum, styles.td]}>
-                    {fmtConversions(c.conversions)}
-                  </Text>
-                  <Text style={[styles.cellNum, styles.td]}>
-                    {fmtNumber(c.clicks)}
-                  </Text>
-                  <Text style={[styles.cellNum, styles.td]}>
-                    {fmtNumber(c.impressions)}
-                  </Text>
-                  <Text style={[styles.cellNum, styles.td]}>
-                    {fmtMicros(c.costMicros)}
-                  </Text>
-                </View>
+                {group.clients.map((c) => {
+                  const rows = rowsByClient.get(c.ppcClientId) ?? [];
+                  return (
+                    <View key={c.ppcClientId} style={styles.clientSection} wrap>
+                      <View style={styles.clientHeader}>
+                        <Text style={styles.clientName}>{c.ppcClientName}</Text>
+                        <Text style={styles.clientSubtitle}>
+                          {rows.length} campaign{rows.length === 1 ? "" : "s"}
+                          {c.signedCases !== null
+                            ? ` · ${fmtNumber(c.signedCases)} signed`
+                            : ""}
+                          {` · Ads ID ${c.googleAdsCustomerId ? c.googleAdsCustomerId.slice(-4) : "—"}`}
+                        </Text>
+                      </View>
 
-                <View style={styles.table}>
-                  <View style={styles.tableHeader} fixed>
-                    <Text style={[styles.cellName, styles.th]}>Campaign</Text>
-                    <Text style={[styles.cellNum, styles.th]}>Phone calls</Text>
-                    <Text style={[styles.cellNum, styles.th]}>Conv.</Text>
-                    <Text style={[styles.cellNum, styles.th]}>Clicks</Text>
-                    <Text style={[styles.cellNum, styles.th]}>Impr.</Text>
-                    <Text style={[styles.cellNum, styles.th]}>Cost</Text>
-                  </View>
-                  {rows.map((r) => (
-                    <View key={r.campaignId} style={styles.tableRow}>
-                      <Text style={[styles.cellName, styles.td]}>
-                        {r.campaignName}
-                      </Text>
-                      <Text style={[styles.cellNum, styles.td]}>
-                        {fmtNumber(r.phoneCalls)}
-                      </Text>
-                      <Text style={[styles.cellNum, styles.td]}>
-                        {fmtConversions(r.conversions)}
-                      </Text>
-                      <Text style={[styles.cellNum, styles.td]}>
-                        {fmtNumber(r.clicks)}
-                      </Text>
-                      <Text style={[styles.cellNum, styles.td]}>
-                        {fmtNumber(r.impressions)}
-                      </Text>
-                      <Text style={[styles.cellNum, styles.td]}>
-                        {fmtMicros(r.costMicros)}
-                      </Text>
+                      <View style={styles.totalsRow}>
+                        <View style={styles.cellName}>
+                          <Text style={styles.totalsLabel}>Client total</Text>
+                        </View>
+                        <Text style={[styles.cellNum, styles.td]}>
+                          {fmtNumber(c.phoneCalls)}
+                        </Text>
+                        <Text style={[styles.cellNum, styles.td]}>
+                          {fmtConversions(c.conversions)}
+                        </Text>
+                        <Text style={[styles.cellNum, styles.td]}>
+                          {fmtNumber(c.clicks)}
+                        </Text>
+                        <Text style={[styles.cellNum, styles.td]}>
+                          {fmtNumber(c.impressions)}
+                        </Text>
+                        <Text style={[styles.cellNum, styles.td]}>
+                          {fmtMicros(c.costMicros)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.table}>
+                        <View style={styles.tableHeader} fixed>
+                          <Text style={[styles.cellName, styles.th]}>Campaign</Text>
+                          <Text style={[styles.cellNum, styles.th]}>Phone calls</Text>
+                          <Text style={[styles.cellNum, styles.th]}>Conv.</Text>
+                          <Text style={[styles.cellNum, styles.th]}>Clicks</Text>
+                          <Text style={[styles.cellNum, styles.th]}>Impr.</Text>
+                          <Text style={[styles.cellNum, styles.th]}>Cost</Text>
+                        </View>
+                        {rows.map((cr) => (
+                          <View key={cr.campaignId} style={styles.tableRow}>
+                            <Text style={[styles.cellName, styles.td]}>
+                              {cr.campaignName}
+                            </Text>
+                            <Text style={[styles.cellNum, styles.td]}>
+                              {fmtNumber(cr.phoneCalls)}
+                            </Text>
+                            <Text style={[styles.cellNum, styles.td]}>
+                              {fmtConversions(cr.conversions)}
+                            </Text>
+                            <Text style={[styles.cellNum, styles.td]}>
+                              {fmtNumber(cr.clicks)}
+                            </Text>
+                            <Text style={[styles.cellNum, styles.td]}>
+                              {fmtNumber(cr.impressions)}
+                            </Text>
+                            <Text style={[styles.cellNum, styles.td]}>
+                              {fmtMicros(cr.costMicros)}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
                     </View>
-                  ))}
-                </View>
+                  );
+                })}
               </View>
             );
           })

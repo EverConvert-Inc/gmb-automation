@@ -7,6 +7,7 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type { LsaReport } from "./queries-lsa";
+import { STATE_NAMES } from "./report-grouping";
 
 // Small duplicate formatters — the web versions live in
 // `src/components/lsa-report-table.tsx` (which is `"use client"`) so they
@@ -21,6 +22,15 @@ function fmtMicros(microsBig: bigint): string {
     style: "currency",
     currency: "USD",
   }).format(dollars);
+}
+function fmtUsd(dollars: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format(dollars);
+}
+function fmtAdsIdLast4(id: string | null): string {
+  return id ? id.slice(-4) : "—";
 }
 
 function fmtRangeHeader(fromIso: string, toIso: string): string {
@@ -155,6 +165,25 @@ const styles = StyleSheet.create({
   kpiDeltaUp: { color: BRAND_GREEN },
   kpiDeltaDown: { color: RED },
   kpiDeltaFlat: { color: MUTED },
+  stateSection: {
+    marginBottom: 16,
+  },
+  stateHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+  },
+  stateTitle: {
+    fontSize: 12,
+    fontFamily: "Helvetica-Bold",
+  },
+  stateKpiText: {
+    fontSize: 8,
+    color: "#334155",
+  },
   table: {
     marginTop: 8,
   },
@@ -244,9 +273,6 @@ export function LsaReportDocument({
   opts: RenderOpts;
 }) {
   const generatedAt = opts.generatedAt ?? new Date();
-  // report.rows already arrives sorted (signed cases descending) from
-  // getLsaReport() — no re-sort needed here.
-  const clients = report.rows;
 
   return (
     <Document
@@ -290,41 +316,65 @@ export function LsaReportDocument({
           />
         </View>
 
-        {clients.length === 0 ? (
+        {report.stateGroups.length === 0 ? (
           <View>
             <Text style={{ color: MUTED, fontSize: 10, marginTop: 24 }}>
               No LSA clients have synced data for this period yet.
             </Text>
           </View>
         ) : (
-          <View style={styles.table}>
-            <View style={styles.tableHeader} fixed>
-              <Text style={[styles.cellName, styles.th]}>Client</Text>
-              <Text style={[styles.cellNum, styles.th]}>Phone calls</Text>
-              <Text style={[styles.cellNum, styles.th]}>Messages</Text>
-              <Text style={[styles.cellNum, styles.th]}>Cost</Text>
-              <Text style={[styles.cellNum, styles.th]}>Signed</Text>
-            </View>
-            {clients.map((c) => (
-              <View key={c.lsaClientId} style={styles.tableRow}>
-                <Text style={[styles.cellName, styles.td]}>
-                  {c.lsaClientName}
-                </Text>
-                <Text style={[styles.cellNum, styles.td]}>
-                  {fmtNumber(c.phoneCallCount)}
-                </Text>
-                <Text style={[styles.cellNum, styles.td]}>
-                  {fmtNumber(c.messageCount)}
-                </Text>
-                <Text style={[styles.cellNum, styles.td]}>
-                  {fmtMicros(c.costMicros)}
-                </Text>
-                <Text style={[styles.cellNum, styles.td]}>
-                  {fmtNumber(c.signedCases)}
-                </Text>
+          report.stateGroups.map((group) => {
+            const fullName = (STATE_NAMES as Record<string, string>)[group.state];
+            const title = fullName ? `${fullName} (${group.state})` : group.state;
+            const r = group.rollup;
+            const kpiText = [
+              `Phone calls ${fmtNumber(r.phoneCallCount)}`,
+              `Messages ${fmtNumber(r.messageCount)}`,
+              `Signed ${fmtNumber(r.signedCases)}`,
+              `Cost ${fmtMicros(r.costMicros)}`,
+              `Cost/signed ${r.costPerSignedCase != null ? fmtUsd(r.costPerSignedCase) : "—"}`,
+            ].join("   ·   ");
+            return (
+              <View key={group.state} style={styles.stateSection} wrap>
+                <View style={styles.stateHeader}>
+                  <Text style={styles.stateTitle}>{title}</Text>
+                  <Text style={styles.stateKpiText}>{kpiText}</Text>
+                </View>
+                <View style={styles.table}>
+                  <View style={styles.tableHeader} fixed>
+                    <Text style={[styles.cellName, styles.th]}>Client</Text>
+                    <Text style={[styles.cellNum, styles.th]}>Phone calls</Text>
+                    <Text style={[styles.cellNum, styles.th]}>Messages</Text>
+                    <Text style={[styles.cellNum, styles.th]}>Cost</Text>
+                    <Text style={[styles.cellNum, styles.th]}>Signed</Text>
+                    <Text style={[styles.cellNum, styles.th]}>Ads ID</Text>
+                  </View>
+                  {group.clients.map((c) => (
+                    <View key={c.lsaClientId} style={styles.tableRow}>
+                      <Text style={[styles.cellName, styles.td]}>
+                        {c.lsaClientName}
+                      </Text>
+                      <Text style={[styles.cellNum, styles.td]}>
+                        {fmtNumber(c.phoneCallCount)}
+                      </Text>
+                      <Text style={[styles.cellNum, styles.td]}>
+                        {fmtNumber(c.messageCount)}
+                      </Text>
+                      <Text style={[styles.cellNum, styles.td]}>
+                        {fmtMicros(c.costMicros)}
+                      </Text>
+                      <Text style={[styles.cellNum, styles.td]}>
+                        {fmtNumber(c.signedCases)}
+                      </Text>
+                      <Text style={[styles.cellNum, styles.td]}>
+                        {fmtAdsIdLast4(c.googleAdsCustomerId)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
-            ))}
-          </View>
+            );
+          })
         )}
 
         <View style={styles.footer} fixed>

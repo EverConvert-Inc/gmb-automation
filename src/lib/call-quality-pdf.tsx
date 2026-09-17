@@ -12,6 +12,7 @@ import type {
   CallQualityClientRow,
 } from "./queries-call-quality";
 import { combinePpcAndPmaxTotals } from "./call-quality-combined";
+import { STATE_NAMES } from "./report-grouping";
 
 // Small duplicate formatters — the web versions live in
 // `src/components/call-quality-client-table.tsx` (which is `"use client"`)
@@ -178,6 +179,25 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     marginBottom: 6,
   },
+  stateSection: {
+    marginBottom: 14,
+  },
+  stateHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+  },
+  stateTitle: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+  },
+  stateKpiText: {
+    fontSize: 7.5,
+    color: "#334155",
+  },
   channelHeading: {
     fontSize: 11,
     fontFamily: "Helvetica-Bold",
@@ -322,49 +342,95 @@ function ClientTable({
   );
 }
 
-// KPI strip + ClientTable for one channel — used by ChannelPage (LSA/GMB,
-// each still gets its own page with a KPI strip). PpcPmaxPage renders
-// ClientTable directly for its PPC/PMax sub-sections instead of this —
-// the combined KPI strip up top is the only KPI summary shown there now.
-function ChannelKpiAndTable({
-  channel,
+// KPI strip for one channel — used by ChannelPage (LSA/GMB). PpcPmaxPage
+// renders its own combined KPI strip instead of this.
+function ChannelKpiStrip({
   totals,
-  clientRows,
+  showCost,
 }: {
-  channel: CallQualityChannel;
   totals: CallQualityByClientReport["summary"][CallQualityChannel];
-  clientRows: CallQualityClientRow[];
+  showCost: boolean;
 }) {
-  const showCost = channel !== "GMB" && channel !== "PMax";
-  const showCallViewBreakdown = channel === "PMax";
+  return (
+    <View style={styles.kpiStrip}>
+      <KpiBox
+        label="First-time calls"
+        value={fmtNumber(totals.firstTimeCalls)}
+      />
+      <KpiBox
+        label="Signed"
+        value={fmtNumber(totals.real)}
+        sublabel={`${fmtNumber(totals.junk)} junk, ${fmtNumber(totals.unclassified)} unclassified`}
+      />
+      <KpiBox
+        label="Cost"
+        value={showCost ? fmtMicros(totals.costMicros) : "—"}
+      />
+      <KpiBox
+        label="Signed cost / signed lead"
+        value={fmtUsdOrDash(totals.realCostPerRealLead)}
+        sublabel={`Ads-reported CPA: ${fmtUsdOrDash(totals.adsReportedCpa)}`}
+      />
+    </View>
+  );
+}
+
+// State breakdown — PDF-only decision, replaces the old flat ClientTable
+// entirely (same as ppc-pdf.tsx/lsa-pdf.tsx), unlike the web UI where it's
+// added alongside the existing flat table. State groups stay per-channel,
+// never merged — a client's PMax numbers are genuinely different from its
+// PPC numbers, even when it's the same client. Reuses ClientTable per state
+// group rather than a separate table implementation. react-pdf has no
+// collapsible equivalent to the web's/email's sections, so every non-empty
+// state renders fully expanded, same as email.
+function StateBreakdown({
+  stateGroups,
+  showCost,
+  showCallViewBreakdown,
+}: {
+  stateGroups: CallQualityByClientReport["stateGroups"][CallQualityChannel];
+  showCost: boolean;
+  showCallViewBreakdown: boolean;
+}) {
+  if (stateGroups.length === 0) {
+    return (
+      <Text style={styles.emptyNotice}>
+        No clients linked to CallRail for this channel yet.
+      </Text>
+    );
+  }
 
   return (
     <>
-      <View style={styles.kpiStrip}>
-        <KpiBox
-          label="First-time calls"
-          value={fmtNumber(totals.firstTimeCalls)}
-        />
-        <KpiBox
-          label="Signed"
-          value={fmtNumber(totals.real)}
-          sublabel={`${fmtNumber(totals.junk)} junk, ${fmtNumber(totals.unclassified)} unclassified`}
-        />
-        <KpiBox
-          label="Cost"
-          value={showCost ? fmtMicros(totals.costMicros) : "—"}
-        />
-        <KpiBox
-          label="Signed cost / signed lead"
-          value={fmtUsdOrDash(totals.realCostPerRealLead)}
-          sublabel={`Ads-reported CPA: ${fmtUsdOrDash(totals.adsReportedCpa)}`}
-        />
-      </View>
-      <ClientTable
-        showCost={showCost}
-        showCallViewBreakdown={showCallViewBreakdown}
-        clientRows={clientRows}
-      />
+      {stateGroups.map((group) => {
+        const fullName = (STATE_NAMES as Record<string, string>)[group.state];
+        const title = fullName ? `${fullName} (${group.state})` : group.state;
+        const r = group.rollup;
+        const kpiText = [
+          `First-time calls ${fmtNumber(r.firstTimeCalls)}`,
+          `Signed ${fmtNumber(r.real)}`,
+          `Junk ${fmtNumber(r.junk)}`,
+          ...(showCost
+            ? [
+                `Cost ${fmtMicros(r.costMicros)}`,
+                `Signed CPL ${fmtUsdOrDash(r.realCostPerRealLead)}`,
+              ]
+            : []),
+        ].join("   ·   ");
+        return (
+          <View key={group.state} style={styles.stateSection} wrap>
+            <View style={styles.stateHeader}>
+              <Text style={styles.stateTitle}>{title}</Text>
+              <Text style={styles.stateKpiText}>{kpiText}</Text>
+            </View>
+            <ClientTable
+              showCost={showCost}
+              showCallViewBreakdown={showCallViewBreakdown}
+              clientRows={group.clients}
+            />
+          </View>
+        );
+      })}
     </>
   );
 }
@@ -409,27 +475,37 @@ function PageFooter() {
   );
 }
 
-// One page per channel (LSA, GMB) — same shape as the web's
-// CallQualityChannelSection + CallQualityClientTable. Unlike PPC/LSA's
-// PDFs, there's no prior-period delta here — getCallQualityByClientReport
-// only returns range totals, no comparison window.
+// One page per channel (LSA, GMB): KPI strip + state breakdown. Unlike the
+// web UI (which keeps the flat per-client table alongside the state
+// breakdown), the PDF replaces it entirely — same decision as ppc-pdf.tsx/
+// lsa-pdf.tsx. Also unlike PPC/LSA's PDFs, there's no prior-period delta
+// here — getCallQualityByClientReport only returns range totals, no
+// comparison window.
 function ChannelPage({
   channel,
   totals,
-  clientRows,
+  stateGroups,
   opts,
   generatedAt,
 }: {
   channel: CallQualityChannel;
   totals: CallQualityByClientReport["summary"][CallQualityChannel];
-  clientRows: CallQualityClientRow[];
+  stateGroups: CallQualityByClientReport["stateGroups"][CallQualityChannel];
   opts: RenderOpts;
   generatedAt: Date;
 }) {
+  const showCost = channel !== "GMB" && channel !== "PMax";
   return (
     <Page size="LETTER" style={styles.page}>
       <PageHeader title={channel} opts={opts} generatedAt={generatedAt} />
-      <ChannelKpiAndTable channel={channel} totals={totals} clientRows={clientRows} />
+      <ChannelKpiStrip totals={totals} showCost={showCost} />
+      <View style={styles.channelDivider}>
+        <StateBreakdown
+          stateGroups={stateGroups}
+          showCost={showCost}
+          showCallViewBreakdown={channel === "PMax"}
+        />
+      </View>
       <PageFooter />
     </Page>
   );
@@ -444,20 +520,20 @@ function ChannelPage({
 // call-quality-combined.ts). One page: combined total up top is the only
 // KPI summary shown (PPC's/PMax's own KPI strips would just restate a
 // split that's no longer the headline number), then PPC and PMax broken
-// out below as client tables only — still genuinely separate lead
+// out below as their own state breakdowns — still genuinely separate lead
 // sources, just without their own top-level stats anymore.
 function PpcPmaxPage({
   ppcTotals,
   pmaxTotals,
-  ppcClientRows,
-  pmaxClientRows,
+  ppcStateGroups,
+  pmaxStateGroups,
   opts,
   generatedAt,
 }: {
   ppcTotals: CallQualityByClientReport["summary"]["PPC"];
   pmaxTotals: CallQualityByClientReport["summary"]["PMax"];
-  ppcClientRows: CallQualityClientRow[];
-  pmaxClientRows: CallQualityClientRow[];
+  ppcStateGroups: CallQualityByClientReport["stateGroups"]["PPC"];
+  pmaxStateGroups: CallQualityByClientReport["stateGroups"]["PMax"];
   opts: RenderOpts;
   generatedAt: Date;
 }) {
@@ -485,12 +561,20 @@ function PpcPmaxPage({
 
       <View style={styles.channelDivider}>
         <Text style={styles.channelHeading}>PPC</Text>
-        <ClientTable showCost clientRows={ppcClientRows} showCallViewBreakdown={false} />
+        <StateBreakdown
+          stateGroups={ppcStateGroups}
+          showCost
+          showCallViewBreakdown={false}
+        />
       </View>
 
       <View style={styles.channelDivider}>
         <Text style={styles.channelHeading}>PMax</Text>
-        <ClientTable showCost={false} clientRows={pmaxClientRows} showCallViewBreakdown />
+        <StateBreakdown
+          stateGroups={pmaxStateGroups}
+          showCost={false}
+          showCallViewBreakdown
+        />
       </View>
 
       <PageFooter />
@@ -514,22 +598,22 @@ export function CallQualityReportDocument({
       <PpcPmaxPage
         ppcTotals={report.summary.PPC}
         pmaxTotals={report.summary.PMax}
-        ppcClientRows={report.clients.PPC}
-        pmaxClientRows={report.clients.PMax}
+        ppcStateGroups={report.stateGroups.PPC}
+        pmaxStateGroups={report.stateGroups.PMax}
         opts={opts}
         generatedAt={generatedAt}
       />
       <ChannelPage
         channel="LSA"
         totals={report.summary.LSA}
-        clientRows={report.clients.LSA}
+        stateGroups={report.stateGroups.LSA}
         opts={opts}
         generatedAt={generatedAt}
       />
       <ChannelPage
         channel="GMB"
         totals={report.summary.GMB}
-        clientRows={report.clients.GMB}
+        stateGroups={report.stateGroups.GMB}
         opts={opts}
         generatedAt={generatedAt}
       />
