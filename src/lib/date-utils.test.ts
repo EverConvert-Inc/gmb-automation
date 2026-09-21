@@ -48,11 +48,11 @@ describe("date-utils — Eastern-time date boundaries", () => {
     );
   });
 
-  it("agrees with naive UTC math outside the risk window — matches this app's real fixed cron schedule (9:30-9:50 UTC), so regular daily syncs see zero change", () => {
+  it("agrees with naive UTC math outside the risk window — matches this app's real fixed cron schedule (11:00-11:20 UTC), so regular daily syncs see zero change", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-30T09:40:00Z"));
+    vi.setSystemTime(new Date("2026-07-30T11:10:00Z"));
 
-    const naiveUtcYesterday = new Date("2026-07-30T09:40:00Z");
+    const naiveUtcYesterday = new Date("2026-07-30T11:10:00Z");
     naiveUtcYesterday.setUTCDate(naiveUtcYesterday.getUTCDate() - 1);
 
     expect(yesterdayIsoEastern()).toBe(

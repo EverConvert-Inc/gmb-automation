@@ -13,7 +13,8 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
-// Vercel cron entry. Fires daily at 10:05 UTC, after lsa-sync (9:50 UTC).
+// Vercel cron entry. Fires daily at 11:35 UTC (7:35 AM ET during EDT),
+// after lsa-sync (11:20 UTC).
 // Computes month-to-date and dispatches the PDF email via Resend. `?dry=1`
 // returns the PDF inline for design iteration.
 export async function GET(req: Request) {

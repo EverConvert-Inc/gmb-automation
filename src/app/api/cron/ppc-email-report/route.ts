@@ -13,8 +13,8 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
-// Vercel cron entry. Fires once a day at 10:00 UTC (6:00 AM ET during
-// EDT, 5:00 AM ET during EST — after both PPC syncs have finished).
+// Vercel cron entry. Fires once a day at 11:30 UTC (7:30 AM ET during
+// EDT, 6:30 AM ET during EST — after both PPC syncs have finished).
 // Computes month-to-date and dispatches the PDF email via Resend.
 // `?dry=1` returns the PDF inline for design iteration.
 export async function GET(req: Request) {

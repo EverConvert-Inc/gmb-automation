@@ -11,7 +11,7 @@ const Body = z.object({
 });
 
 // Operator-triggered send (button on /ppc). Same orchestration as the
-// 10:00 UTC cron, but the window is whatever the operator currently
+// 11:30 UTC cron, but the window is whatever the operator currently
 // has selected in the date filter. Auth comes from the Supabase
 // middleware — no CRON_SECRET exposed to the browser.
 export async function POST(req: Request) {

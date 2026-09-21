@@ -6,8 +6,8 @@
 // string straight through as a query bound is wrong whenever the trigger
 // happens between roughly 00:00-05:00 UTC (Eastern's own midnight hasn't
 // passed yet), which is reachable via a manual "Sync Now" click at any
-// time of day even though the fixed daily crons (9:30-9:50 UTC, well past
-// Eastern midnight) were never actually affected.
+// time of day even though the fixed daily crons (11:00-11:20 UTC, well
+// past Eastern midnight) were never actually affected.
 //
 // Uses Intl.DateTimeFormat with an IANA zone rather than a fixed UTC
 // offset — Eastern alternates between EST (UTC-5) and EDT (UTC-4), so a

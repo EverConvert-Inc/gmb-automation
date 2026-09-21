@@ -13,10 +13,11 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
-// Vercel cron entry. Fires daily at 10:10 UTC, after both the PPC and LSA
-// email reports (10:00/10:05) and their upstream CallRail syncs
-// (9:40/9:50). Computes month-to-date and dispatches the PDF email via
-// Resend. `?dry=1` returns the PDF inline for design iteration.
+// Vercel cron entry. Fires daily at 11:40 UTC (7:40 AM ET during EDT),
+// after both the PPC and LSA email reports (11:30/11:35) and their
+// upstream CallRail syncs (11:10/11:20). Computes month-to-date and
+// dispatches the PDF email via Resend. `?dry=1` returns the PDF inline
+// for design iteration.
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
