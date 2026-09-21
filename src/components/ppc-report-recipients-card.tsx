@@ -80,7 +80,7 @@ export function PpcReportRecipientsCard({
         <CardTitle>PPC report recipients</CardTitle>
         <CardDescription>
           Email addresses that receive the daily month-to-date PPC PDF at
-          07:00 UTC. Changes apply to the next scheduled send.
+          10:00 UTC (6:00 AM ET). Changes apply to the next scheduled send.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

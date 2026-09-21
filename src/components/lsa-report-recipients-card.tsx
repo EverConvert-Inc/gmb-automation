@@ -80,7 +80,7 @@ export function LsaReportRecipientsCard({
         <CardTitle>LSA report recipients</CardTitle>
         <CardDescription>
           Email addresses that receive the daily month-to-date LSA PDF at
-          10:05 UTC. Changes apply to the next scheduled send.
+          10:05 UTC (6:05 AM ET). Changes apply to the next scheduled send.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
