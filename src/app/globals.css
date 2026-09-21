@@ -5,7 +5,7 @@
 @layer base {
   :root {
     /* Surface */
-    --background: 240 6% 97%;          /* page bg: very light neutral */
+    --background: 0 0% 100%;           /* page bg: white */
     --foreground: 0 0% 13%;            /* body text: #212121 */
     --card: 0 0% 100%;                 /* white surfaces */
     --card-foreground: 0 0% 13%;
