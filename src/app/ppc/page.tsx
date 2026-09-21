@@ -17,7 +17,7 @@ import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { PpcReportTable } from "@/components/ppc-report-table";
 import { StateBreakdownSection } from "@/components/state-breakdown-section";
 import { EmailPpcReportButton } from "@/components/email-ppc-report-button";
-import { EmailOptimizationAlertButton } from "@/components/email-optimization-alert-button";
+import { SyncPpcNowButton } from "@/components/sync-ppc-now-button";
 import { getPpcReport, listPpcClients, type PpcReportRow } from "@/lib/queries";
 import { pickDefaultExpandedState } from "@/lib/report-grouping";
 import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
@@ -131,8 +131,8 @@ export default async function PpcReportPage({
           </h1>
         </div>
         <div className="flex flex-wrap items-start gap-2">
+          <SyncPpcNowButton from={from} to={to} />
           <EmailPpcReportButton from={from} to={to} />
-          <EmailOptimizationAlertButton />
           <Link
             href="/ppc/clients"
             className={buttonClasses("outline")}
