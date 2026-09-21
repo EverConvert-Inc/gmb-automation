@@ -250,12 +250,15 @@ export type AdsDailyMetricsRow = {
 };
 
 // Pulls campaign-level daily metrics for the given date window. Date format
-// must be YYYY-MM-DD for GAQL. Restricted to campaign.status = 'ENABLED' —
-// the `campaign` resource otherwise still returns historical performance
-// rows for paused/removed campaigns, which would silently inflate
-// spend/clicks/conversions with activity from campaigns no longer being
-// actively managed. Same pattern already used in
-// ppc-optimization-alert.ts's campaign.status filter.
+// must be YYYY-MM-DD for GAQL.
+//
+// Deliberately NOT filtered on campaign.status: that field reflects the
+// campaign's CURRENT status, not its status on the historical date being
+// queried, so combining it with segments.date silently drops real
+// historical spend/clicks/conversions from any campaign that was enabled
+// during the window but has since been paused or removed — a genuine
+// cost/report accuracy bug this app shipped with for a while (caught via a
+// client cost mismatch vs. the Google Ads UI, which has no such gap).
 export async function pullDailyMetrics(
   refreshToken: string,
   customerId: string,
@@ -276,7 +279,6 @@ export async function pullDailyMetrics(
       metrics.phone_calls
     FROM campaign
     WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
-      AND campaign.status = 'ENABLED'
     ORDER BY segments.date
   `);
 
@@ -311,9 +313,12 @@ export type LsaCostDailyRow = {
 // summed per day (lsa_leads_daily is one row per client per date, not per
 // campaign — mirrors pullDailyMetrics's date-window pattern but collapses
 // campaigns since the LSA report doesn't break out cost by campaign).
-// Same campaign.status = 'ENABLED' restriction as pullDailyMetrics, for
-// the same reason — a paused LOCAL_SERVICES campaign's historical cost
-// would otherwise still be summed in.
+//
+// Deliberately NOT filtered on campaign.status, same reasoning as
+// pullDailyMetrics — LSA in particular rotates/replaces campaigns behind
+// the scenes, so filtering to only currently-ENABLED campaigns silently
+// dropped real historical cost from any campaign no longer enabled today,
+// even for the exact dates it was running and spending.
 export async function pullLocalServicesCost(
   refreshToken: string,
   customerId: string,
@@ -326,7 +331,6 @@ export async function pullLocalServicesCost(
     SELECT campaign.id, campaign.advertising_channel_type, segments.date, metrics.cost_micros
     FROM campaign
     WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES'
-      AND campaign.status = 'ENABLED'
       AND segments.date BETWEEN '${fromDate}' AND '${toDate}'
   `);
 
