@@ -10,8 +10,12 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const TEST_ACCOUNT_EMAIL = "accounts@everconvert.com";
-// Atlanta Accident Lawyers — confirmed by the team as an account that has
-// already migrated from standalone LSA into a PMax campaign.
+// Atlanta Accident Lawyers — NOT a migrated account (confirmed). The ads
+// team manually added a regular PPC campaign into this LSA-derived Ads
+// account, so its "Cost" total now blends LSA + PPC spend even though the
+// old LSA dashboard only ever showed the LSA portion. Still a useful test
+// case here: the account should have both an LSA-flagged campaign and the
+// added PPC one in the same response.
 const TEST_CUSTOMER_ID = "4874592531";
 const TEST_LOGIN_CUSTOMER_ID = "6633117348";
 
@@ -22,16 +26,20 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
-// Temporary read-only diagnostic for the LSA-to-PMax migration (Google's
-// Aug 2026 rollout — migrated accounts report LSA data through the regular
-// Google Ads API as a PMax campaign instead of the standalone Local
-// Services API). Pulls the raw `campaign` resource for every campaign on
-// this customer, with no date/status filter, to confirm
-// campaign.pmax_campaign_settings.local_services_enabled actually comes
-// back as expected on a known-migrated account before any sync logic gets
-// built around it. Requires google-ads-api >= 25.1.0 (this field doesn't
-// exist in the proto set bundled by 23.0.0/24.1.0). No DB writes. Delete
-// once migration detection has been confirmed live.
+// Temporary read-only diagnostic for per-campaign PPC/LSA cost splitting
+// within a single Google Ads account. Originally written to check for
+// Google's LSA-to-PMax account migration (Aug 2026 rollout), but that
+// turned out not to be what's happening on any account here yet — what's
+// actually needed sooner is detecting which campaigns within an account
+// are LSA (campaign.pmax_campaign_settings.local_services_enabled = true)
+// vs. regular PPC, so a client whose ads team drops a PPC campaign into an
+// LSA-derived account doesn't get its LSA cost overstated. Same field,
+// same query, different trigger. Pulls the raw `campaign` resource for
+// every campaign on this customer, with no date/status/channel-type
+// filter, to confirm the field comes back as expected before any sync
+// logic gets built on top of it. Requires google-ads-api >= 25.1.0 (this
+// field doesn't exist in the proto set bundled by 23.0.0/24.1.0). No DB
+// writes. Delete once splitting logic is confirmed and built.
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
