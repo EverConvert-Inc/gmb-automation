@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { TakedownsTable } from "@/components/takedowns-table";
+import { Pagination } from "@/components/pagination";
 import { listTakedownAlerts } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -8,10 +9,20 @@ export const metadata: Metadata = {
   title: "Takedowns",
 };
 
-export default async function TakedownsPage() {
+const PAGE_SIZE = 25;
+
+export default async function TakedownsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const { page: pageParam } = await searchParams;
+  const page = Math.max(1, Number(pageParam) || 1);
+
   // Only open (non-resolved) alerts — resolved ones (real or false-positive)
   // stay in the DB for the audit trail but are deliberately excluded here.
-  const rows = await listTakedownAlerts();
+  const { rows, totalCount } = await listTakedownAlerts({ page, pageSize: PAGE_SIZE });
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="space-y-6">
@@ -22,15 +33,16 @@ export default async function TakedownsPage() {
           the GBP UI by the time they land here. Use &ldquo;Copy
           details&rdquo; to file a reinstatement request, then mark filed /
           resolved to track it.{" "}
-          {rows.length > 0 && (
+          {totalCount > 0 && (
             <>
-              {rows.length} open takedown{rows.length === 1 ? "" : "s"}.
+              {totalCount} open takedown{totalCount === 1 ? "" : "s"}.
             </>
           )}
         </p>
       </div>
 
       <TakedownsTable rows={rows} />
+      <Pagination page={page} totalPages={totalPages} basePath="/takedowns" />
     </div>
   );
 }

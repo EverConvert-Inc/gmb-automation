@@ -922,15 +922,30 @@ function buildAnnotation(
   return { kind: "rank", rank: currentRank, delta, isNew, isWrongPage, actualUrl: currentUrl };
 }
 
+// Default when a caller doesn't care about pagination (e.g. the per-client
+// keywords list on /clients/[slug], which is naturally small) — effectively
+// "no limit" without needing a separate unpaginated code path.
+const NO_PAGINATION = { page: 1, pageSize: 100_000 };
+
 export async function getRankingsOverview(
   filterClientId?: string,
-): Promise<RankingsOverviewRow[]> {
+  pagination: { page: number; pageSize: number } = NO_PAGINATION,
+): Promise<{
+  rows: RankingsOverviewRow[];
+  totalCount: number;
+  latestCheckedAt: Date | null;
+}> {
   const where = filterClientId
     ? and(
         eq(trackedKeywords.isActive, true),
         eq(trackedKeywords.clientId, filterClientId),
       )
     : eq(trackedKeywords.isActive, true);
+
+  const [{ count: totalCount }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(trackedKeywords)
+    .where(where);
 
   const keywords = await db
     .select({
@@ -946,13 +961,33 @@ export async function getRankingsOverview(
     .from(trackedKeywords)
     .innerJoin(clients, eq(trackedKeywords.clientId, clients.id))
     .where(where)
-    .orderBy(clients.name, desc(trackedKeywords.createdAt));
+    .orderBy(clients.name, desc(trackedKeywords.createdAt))
+    .limit(pagination.pageSize)
+    .offset((pagination.page - 1) * pagination.pageSize);
 
-  if (keywords.length === 0) return [];
+  // Global "latest data" freshness, independent of which page is being
+  // viewed — a direct column reference (not the `recent` lookup below,
+  // which is scoped to only this page's keywords).
+  const [latestRow] = await db
+    .select({ checkedAt: serpRankings.checkedAt })
+    .from(serpRankings)
+    .innerJoin(trackedKeywords, eq(serpRankings.trackedKeywordId, trackedKeywords.id))
+    .where(where)
+    .orderBy(desc(serpRankings.checkedAt))
+    .limit(1);
+  const latestCheckedAt = latestRow?.checkedAt ?? null;
+
+  if (keywords.length === 0) {
+    return { rows: [], totalCount, latestCheckedAt };
+  }
 
   const cutoff = new Date(Date.now() - 90 * 86_400_000);
+  const keywordIds = keywords.map((kw) => kw.kwId);
   const recent = await db.query.serpRankings.findMany({
-    where: gte(serpRankings.checkedAt, cutoff),
+    where: and(
+      gte(serpRankings.checkedAt, cutoff),
+      inArray(serpRankings.trackedKeywordId, keywordIds),
+    ),
     orderBy: [desc(serpRankings.checkedAt)],
   });
 
@@ -963,7 +998,7 @@ export async function getRankingsOverview(
     else byKeyword.set(r.trackedKeywordId, [r]);
   }
 
-  return keywords.map((kw) => {
+  const rows = keywords.map((kw) => {
     const rows = byKeyword.get(kw.kwId) ?? [];
     const latest = rows[0] ?? null;
     const prior = rows[1] ?? null;
@@ -1008,6 +1043,8 @@ export async function getRankingsOverview(
       geoBare,
     };
   });
+
+  return { rows, totalCount, latestCheckedAt };
 }
 
 // ---------------------------------------------------------------------------
@@ -1444,7 +1481,21 @@ export type TakedownAlertRow = {
 // first so the most recent (most actionable — reinstatement requests have
 // no hard deadline from Google, but the trail goes cold fast) sort to the
 // top.
-export async function listTakedownAlerts(): Promise<TakedownAlertRow[]> {
+export async function listTakedownAlerts(
+  pagination: { page: number; pageSize: number } = { page: 1, pageSize: 100_000 },
+): Promise<{ rows: TakedownAlertRow[]; totalCount: number }> {
+  // Resolved alerts (real ones already actioned, or false positives from
+  // the Sept 11-13 partial-sweep incident) stay in the table for the audit
+  // trail but shouldn't clutter the working view — this was always the
+  // intent (the page already computed an "open" count) but the query
+  // never actually excluded them from what got rendered.
+  const where = ne(reviewTakedownAlerts.status, "resolved");
+
+  const [{ count: totalCount }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(reviewTakedownAlerts)
+    .where(where);
+
   const rows = await db
     .select({
       id: reviewTakedownAlerts.id,
@@ -1466,12 +1517,10 @@ export async function listTakedownAlerts(): Promise<TakedownAlertRow[]> {
     .from(reviewTakedownAlerts)
     .innerJoin(clients, eq(reviewTakedownAlerts.clientId, clients.id))
     .innerJoin(locations, eq(reviewTakedownAlerts.locationId, locations.id))
-    // Resolved alerts (real ones already actioned, or false positives from
-    // the Sept 11-13 partial-sweep incident) stay in the table for the audit
-    // trail but shouldn't clutter the working view — this was always the
-    // intent (the page already computed an "open" count) but the query
-    // never actually excluded them from what got rendered.
-    .where(ne(reviewTakedownAlerts.status, "resolved"))
-    .orderBy(desc(reviewTakedownAlerts.confirmedAt));
-  return rows;
+    .where(where)
+    .orderBy(desc(reviewTakedownAlerts.confirmedAt))
+    .limit(pagination.pageSize)
+    .offset((pagination.page - 1) * pagination.pageSize);
+
+  return { rows, totalCount };
 }

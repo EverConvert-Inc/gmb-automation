@@ -140,7 +140,7 @@ export default async function ClientDashboardPage({
     listGridConfigsForLocation(selectedId),
     getActiveScanForLocation(selectedId),
     getReviewInsights(selectedId),
-    getRankingsOverview(client.id),
+    getRankingsOverview(client.id).then((r) => r.rows),
   ]);
 
   const completedRecent = recentScans
