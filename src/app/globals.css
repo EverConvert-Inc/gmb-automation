@@ -21,8 +21,8 @@
     /* Brand — EverConvert */
     --brand: 98 46% 49%;               /* #6fb744 — primary green */
     --brand-foreground: 0 0% 8%;       /* black text on green */
-    --brand-dark: 0 0% 8%;             /* #141414 — sidebar/nav */
-    --brand-dark-foreground: 0 0% 100%;
+    --brand-dark: 0 0% 100%;           /* sidebar bg: white, matches cards */
+    --brand-dark-foreground: 0 0% 13%; /* sidebar text: same as --foreground */
     --brand-muted: 98 40% 95%;         /* tint for hover states */
 
     /* Primary maps to brand so existing Button/Badge semantics pick it up */
@@ -58,7 +58,7 @@
        identity consistent across themes. */
     --brand: 98 46% 53%;
     --brand-foreground: 0 0% 8%;
-    --brand-dark: 0 0% 4%;
+    --brand-dark: 0 0% 4%;             /* sidebar bg: near-black, unchanged */
     --brand-dark-foreground: 0 0% 100%;
     --brand-muted: 98 30% 15%;
 

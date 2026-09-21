@@ -35,13 +35,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top bar — sticky, only shown < md. Houses the hamburger
           and the brand mark. Sidebar lives behind it as a slide-in drawer. */}
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/10 bg-brand-dark px-4 text-white md:hidden">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-brand-dark-foreground/10 bg-brand-dark px-4 text-brand-dark-foreground md:hidden">
         <button
           type="button"
           onClick={() => setMobileNavOpen(true)}
           aria-label="Open navigation"
           aria-expanded={mobileNavOpen}
-          className="-ml-2 rounded-md p-2 text-white/80 hover:bg-white/10 hover:text-white"
+          className="-ml-2 rounded-md p-2 text-brand-dark-foreground/80 hover:bg-brand-dark-foreground/10 hover:text-brand-dark-foreground"
         >
           <Menu className="h-5 w-5" />
         </button>

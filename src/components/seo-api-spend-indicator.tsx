@@ -55,15 +55,15 @@ export function SeoApiSpendIndicator() {
 
   return (
     <div className="flex flex-col leading-tight">
-      <span className="text-[9px] uppercase tracking-wider text-white/40">
+      <span className="text-[9px] uppercase tracking-wider text-brand-dark-foreground/40">
         SEO API spend
       </span>
       <span
-        className="text-xs font-medium tabular-nums text-white/80"
+        className="text-xs font-medium tabular-nums text-brand-dark-foreground/80"
         title={title}
       >
         {displayValue}
-        <span className="ml-1 text-[9px] uppercase text-white/40">MTD</span>
+        <span className="ml-1 text-[9px] uppercase text-brand-dark-foreground/40">MTD</span>
       </span>
     </div>
   );

@@ -58,8 +58,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
             className={cn(
               "group relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
               active
-                ? "bg-white/10 text-brand"
-                : "text-white/70 hover:bg-white/5 hover:text-white",
+                ? "bg-brand-dark-foreground/10 text-brand"
+                : "text-brand-dark-foreground/70 hover:bg-brand-dark-foreground/5 hover:text-brand-dark-foreground",
             )}
           >
             {active && (
@@ -79,14 +79,14 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
   return (
     <>
       {/* Desktop sidebar — always visible at md+ */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col bg-brand-dark text-brand-dark-foreground md:flex">
-        <div className="flex h-16 items-center border-b border-white/10 px-6">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-border bg-brand-dark text-brand-dark-foreground md:flex">
+        <div className="flex h-16 items-center border-b border-brand-dark-foreground/10 px-6">
           <Link href="/clients" aria-label="EverConvert home">
             <BrandMark />
           </Link>
         </div>
         {navLinks}
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/10 px-3 py-3">
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-brand-dark-foreground/10 px-3 py-3">
           <SeoApiSpendIndicator />
           <ThemeToggle />
         </div>
@@ -105,11 +105,11 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
       {/* Mobile drawer — slides in from the left when mobileOpen is true */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[80vw] flex-col bg-brand-dark text-brand-dark-foreground shadow-2xl transition-transform duration-200 md:hidden",
+          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[80vw] flex-col border-r border-border bg-brand-dark text-brand-dark-foreground shadow-2xl transition-transform duration-200 md:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
+        <div className="flex h-14 items-center justify-between border-b border-brand-dark-foreground/10 px-4">
           <Link
             href="/clients"
             aria-label="EverConvert home"
@@ -121,13 +121,13 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
             type="button"
             onClick={onMobileClose}
             aria-label="Close menu"
-            className="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white"
+            className="rounded-md p-2 text-brand-dark-foreground/70 hover:bg-brand-dark-foreground/10 hover:text-brand-dark-foreground"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
         {navLinks}
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/10 px-3 py-3">
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-brand-dark-foreground/10 px-3 py-3">
           <SeoApiSpendIndicator />
           <ThemeToggle />
         </div>

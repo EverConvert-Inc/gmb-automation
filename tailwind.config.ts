@@ -38,8 +38,11 @@ const config: Config = {
         brand: {
           DEFAULT: "hsl(var(--brand))",
           foreground: "hsl(var(--brand-foreground))",
-          dark: "hsl(var(--brand-dark))",
-          "dark-foreground": "hsl(var(--brand-dark-foreground))",
+          // <alpha-value> (not plain hsl(var(...))) so opacity modifiers
+          // like `text-brand-dark-foreground/70` work — the sidebar uses
+          // these at several opacity levels for its theme-aware nav text.
+          dark: "hsl(var(--brand-dark) / <alpha-value>)",
+          "dark-foreground": "hsl(var(--brand-dark-foreground) / <alpha-value>)",
           muted: "hsl(var(--brand-muted))",
         },
         rank: {
