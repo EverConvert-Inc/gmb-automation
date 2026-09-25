@@ -8,7 +8,6 @@ import type {
   CallQualityByClientReport,
   CallQualityChannelTotals,
   CallQualityClientRow,
-  CallQualityStateRollup,
 } from "./queries-call-quality";
 import type { StateGroup } from "./report-grouping";
 
@@ -193,26 +192,8 @@ function cqTotals(overrides: Partial<CallQualityChannelTotals> = {}): CallQualit
   };
 }
 
-function cqGroup(
-  state: string,
-  clients: CallQualityClientRow[],
-): StateGroup<CallQualityClientRow, CallQualityStateRollup> {
-  return {
-    state: state as StateGroup<CallQualityClientRow, CallQualityStateRollup>["state"],
-    clients,
-    rollup: {
-      firstTimeCalls: clients.reduce((s, c) => s + c.firstTimeCalls, 0),
-      real: clients.reduce((s, c) => s + c.real, 0),
-      junk: clients.reduce((s, c) => s + c.junk, 0),
-      unclassified: clients.reduce((s, c) => s + c.unclassified, 0),
-      costMicros: clients.reduce((s, c) => s + c.costMicros, 0n),
-      realCostPerRealLead: 33.3,
-    },
-  };
-}
-
 describe("renderCallQualityReportPdf", () => {
-  it("renders a valid PDF with the state breakdown for all four channels", async () => {
+  it("renders a valid PDF with the flat per-client table for all four channels", async () => {
     const ppcClientA = cqClientRow({ clientId: "p1", channel: "PPC", state: "GA" });
     const pmaxClientA = cqClientRow({ clientId: "m1", channel: "PMax", state: "TX", callViewRowsTotal: 5, callViewRowsMatched: 4, callViewRowsUnmatched: 1 });
     const lsaClientA = cqClientRow({ clientId: "l1", channel: "LSA", state: "NC" });
@@ -226,18 +207,12 @@ describe("renderCallQualityReportPdf", () => {
         GMB: cqTotals({ channel: "GMB", costMicros: 0n, realCostPerRealLead: null, adsReportedCpa: null }),
         PMax: cqTotals({ channel: "PMax", costMicros: 0n, realCostPerRealLead: null, adsReportedCpa: null }),
       },
-      stateGroups: {
-        PPC: [cqGroup("GA", [ppcClientA])],
-        LSA: [cqGroup("NC", [lsaClientA])],
-        GMB: [cqGroup("SC", [gmbClientA])],
-        PMax: [cqGroup("TX", [pmaxClientA])],
-      },
     };
     const buf = await renderCallQualityReportPdf(report, { from: "2026-09-01", to: "2026-09-16" });
     assertLooksLikePdf(buf);
   });
 
-  it("renders fine when every channel's state breakdown is empty", async () => {
+  it("renders fine when every channel has no clients", async () => {
     const report: CallQualityByClientReport = {
       clients: { PPC: [], LSA: [], GMB: [], PMax: [] },
       summary: {
@@ -246,7 +221,6 @@ describe("renderCallQualityReportPdf", () => {
         GMB: cqTotals({ channel: "GMB", firstTimeCalls: 0, real: 0, junk: 0, unclassified: 0, costMicros: 0n, realCostPerRealLead: null, adsReportedCpa: null }),
         PMax: cqTotals({ channel: "PMax", firstTimeCalls: 0, real: 0, junk: 0, unclassified: 0, costMicros: 0n, realCostPerRealLead: null, adsReportedCpa: null }),
       },
-      stateGroups: { PPC: [], LSA: [], GMB: [], PMax: [] },
     };
     const buf = await renderCallQualityReportPdf(report, { from: "2026-09-01", to: "2026-09-16" });
     assertLooksLikePdf(buf);
