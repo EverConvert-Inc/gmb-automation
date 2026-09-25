@@ -1201,36 +1201,69 @@ export type PpcReport = {
   stateGroups: StateGroup<PpcClientTotal, PpcStateRollup>[];
 };
 
+// Sums a day's per-channel CallRail call count, excluding GMB — the exact
+// same GMB-exclusion rule callrail.ts's signedCases derivation already
+// applies (PPC: PPC+PMax combined, matching how PMax's spend was never
+// split out of PPC's own cost either). tagCategoryBreakdown is
+// channel-nested as written by ppc-sync.ts: { "PPC": { totalCalls, ... },
+// "GMB": { totalCalls, ... }, "PMax": { ... } }.
+function sumNonGmbCalls(tagCategoryBreakdown: unknown): number {
+  if (!tagCategoryBreakdown || typeof tagCategoryBreakdown !== "object") return 0;
+  let total = 0;
+  for (const [channel, cb] of Object.entries(
+    tagCategoryBreakdown as Record<string, { totalCalls?: number } | null>,
+  )) {
+    if (channel === "GMB") continue;
+    total += cb?.totalCalls ?? 0;
+  }
+  return total;
+}
+
 async function aggregateKpis(from: string, to: string): Promise<PpcKpis> {
   // Two tables (ppc_ads_daily for spend/clicks/Ads-conversions, separately
-  // ppc_callrail_daily for signed cases), run concurrently rather than
-  // joined — same reason getPpcReport already keeps campaignRows and
-  // callrailRows as separate queries below.
-  const [[adsRow], [callrailRow]] = await Promise.all([
+  // ppc_callrail_daily for signed cases + real call volume), run
+  // concurrently rather than joined — same reason getPpcReport already
+  // keeps campaignRows and callrailRows as separate queries below.
+  //
+  // phoneCalls is sourced from CallRail's real, channel-matched call
+  // volume (tagCategoryBreakdown, GMB excluded) — NOT ppc_ads_daily's own
+  // metrics.phone_calls, which only counts Google Ads' ad call-extension
+  // clicks and was never CallRail-derived. Fetched as raw per-day rows
+  // (not grouped) because summing a jsonb column's per-channel totalCalls
+  // can't be done inside SQL without a jsonb aggregate — same "fetch raw
+  // rows, aggregate in JS" pattern queries-call-quality.ts already uses
+  // for this exact column.
+  const [[adsRow], callrailRows] = await Promise.all([
     db
       .select({
         clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
         impressions: sql<number | null>`sum(${ppcAdsDaily.impressions})::int`,
         conversions: sql<string | null>`sum(${ppcAdsDaily.conversions})`,
-        phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
         costMicros: sql<string | null>`sum(${ppcAdsDaily.costMicros})`,
       })
       .from(ppcAdsDaily)
       .where(and(gte(ppcAdsDaily.date, from), sql`${ppcAdsDaily.date} <= ${to}`)),
     db
       .select({
-        signedCases: sql<number | null>`sum(${ppcCallrailDaily.signedCases})::int`,
+        signedCases: ppcCallrailDaily.signedCases,
+        tagCategoryBreakdown: ppcCallrailDaily.tagCategoryBreakdown,
       })
       .from(ppcCallrailDaily)
       .where(and(gte(ppcCallrailDaily.date, from), sql`${ppcCallrailDaily.date} <= ${to}`)),
   ]);
+  let signedCases = 0;
+  let phoneCalls = 0;
+  for (const r of callrailRows) {
+    signedCases += r.signedCases;
+    phoneCalls += sumNonGmbCalls(r.tagCategoryBreakdown);
+  }
   return {
     clicks: adsRow?.clicks ?? 0,
     impressions: adsRow?.impressions ?? 0,
     conversions: adsRow?.conversions ? Number(adsRow.conversions) : 0,
-    phoneCalls: adsRow?.phoneCalls ?? 0,
+    phoneCalls,
     costMicros: adsRow?.costMicros ? BigInt(adsRow.costMicros) : 0n,
-    signedCases: callrailRow?.signedCases ?? 0,
+    signedCases,
   };
 }
 
@@ -1269,7 +1302,6 @@ export async function getPpcReport({
       clicks: sql<number | null>`sum(${ppcAdsDaily.clicks})::int`,
       impressions: sql<number | null>`sum(${ppcAdsDaily.impressions})::int`,
       conversions: sql<string | null>`sum(${ppcAdsDaily.conversions})`,
-      phoneCalls: sql<number | null>`sum(${ppcAdsDaily.phoneCalls})::int`,
       costMicros: sql<string | null>`sum(${ppcAdsDaily.costMicros})`,
     })
     .from(ppcAdsDaily)
@@ -1290,12 +1322,16 @@ export async function getPpcReport({
       ppcCampaigns.name,
     );
 
-  // Per-client signed-case totals (joined separately so the row table doesn't
-  // duplicate signed counts across campaigns).
+  // Per-client signed-case AND real-call totals (joined separately so the
+  // row table doesn't duplicate these counts across campaigns). Fetched as
+  // raw per-day rows (not grouped) — callsByClient needs tagCategoryBreakdown's
+  // per-channel totalCalls, which can't be summed inside SQL without a
+  // jsonb aggregate, so both are accumulated in JS from the same rows.
   const callrailRows = await db
     .select({
-      ppcClientId: ppcClients.id,
-      signedCases: sql<number | null>`sum(${ppcCallrailDaily.signedCases})::int`,
+      ppcClientId: ppcCallrailDaily.ppcClientId,
+      signedCases: ppcCallrailDaily.signedCases,
+      tagCategoryBreakdown: ppcCallrailDaily.tagCategoryBreakdown,
     })
     .from(ppcCallrailDaily)
     .innerJoin(ppcClients, eq(ppcClients.id, ppcCallrailDaily.ppcClientId))
@@ -1304,11 +1340,18 @@ export async function getPpcReport({
         gte(ppcCallrailDaily.date, from),
         sql`${ppcCallrailDaily.date} <= ${to}`,
       ),
-    )
-    .groupBy(ppcClients.id);
+    );
   const signedByClient = new Map<string, number>();
+  const callsByClient = new Map<string, number>();
   for (const r of callrailRows) {
-    signedByClient.set(r.ppcClientId, r.signedCases ?? 0);
+    signedByClient.set(
+      r.ppcClientId,
+      (signedByClient.get(r.ppcClientId) ?? 0) + r.signedCases,
+    );
+    callsByClient.set(
+      r.ppcClientId,
+      (callsByClient.get(r.ppcClientId) ?? 0) + sumNonGmbCalls(r.tagCategoryBreakdown),
+    );
   }
   // Track which clients have *any* CallRail data so we can render `—` vs `0`.
   const callrailLinkedSet = new Set(
@@ -1364,7 +1407,15 @@ export async function getPpcReport({
     clicks: r.clicks ?? 0,
     impressions: r.impressions ?? 0,
     conversions: r.conversions ? Number(r.conversions) : 0,
-    phoneCalls: r.phoneCalls ?? 0,
+    // Real CallRail-matched call volume — client-level, same value
+    // repeated across every campaign row for this client, same as
+    // signedCases below (there's no real per-campaign breakdown of
+    // CallRail calls; ppc_callrail_daily is per-client-per-day, not
+    // per-campaign). Replaces Google Ads' own metrics.phone_calls, which
+    // only counts ad call-extension clicks and was never CallRail-derived.
+    phoneCalls: callrailLinkedSet.has(r.ppcClientId)
+      ? callsByClient.get(r.ppcClientId) ?? 0
+      : 0,
     costMicros: r.costMicros ? BigInt(r.costMicros) : 0n,
     signedCases: callrailLinkedSet.has(r.ppcClientId)
       ? signedByClient.get(r.ppcClientId) ?? 0
@@ -1384,7 +1435,9 @@ export async function getPpcReport({
       clicks: 0,
       impressions: 0,
       conversions: 0,
-      phoneCalls: 0,
+      phoneCalls: callrailLinkedSet.has(c.id)
+        ? callsByClient.get(c.id) ?? 0
+        : 0,
       costMicros: 0n,
       signedCases: callrailLinkedSet.has(c.id)
         ? signedByClient.get(c.id) ?? 0
@@ -1392,6 +1445,9 @@ export async function getPpcReport({
     });
   }
   for (const r of rows) {
+    // phoneCalls and signedCases are both client-level (not per-campaign —
+    // see the comment on rows' phoneCalls above), so neither gets
+    // accumulated here, only seeded once via the fallback below.
     const cur = clientTotalsMap.get(r.ppcClientId) ?? {
       ppcClientId: r.ppcClientId,
       ppcClientName: r.ppcClientName,
@@ -1400,14 +1456,13 @@ export async function getPpcReport({
       clicks: 0,
       impressions: 0,
       conversions: 0,
-      phoneCalls: 0,
+      phoneCalls: r.phoneCalls,
       costMicros: 0n,
       signedCases: r.signedCases,
     };
     cur.clicks += r.clicks;
     cur.impressions += r.impressions;
     cur.conversions += r.conversions;
-    cur.phoneCalls += r.phoneCalls;
     cur.costMicros += r.costMicros;
     clientTotalsMap.set(r.ppcClientId, cur);
   }

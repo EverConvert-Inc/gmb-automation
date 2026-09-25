@@ -159,7 +159,7 @@ export function PpcReportTable({
         clicks: 0,
         impressions: 0,
         conversions: 0,
-        phoneCalls: 0,
+        phoneCalls: r.phoneCalls,
         costMicros: 0n,
         signedCases: r.signedCases,
         campaigns: [],
@@ -167,7 +167,11 @@ export function PpcReportTable({
       cur.clicks += r.clicks;
       cur.impressions += r.impressions;
       cur.conversions += r.conversions;
-      cur.phoneCalls += r.phoneCalls;
+      // phoneCalls, like signedCases, is client-level (real CallRail call
+      // volume — ppc_callrail_daily is per-client-per-day, not
+      // per-campaign) and comes duplicated across every campaign row for
+      // this client, same value each time. Not accumulated here — that
+      // would multiply it by campaign count.
       cur.costMicros += r.costMicros;
       cur.campaigns.push(r);
       map.set(r.ppcClientId, cur);
@@ -294,10 +298,6 @@ export function PpcReportTable({
                     >
                       <div className="font-medium">{c.campaignName}</div>
                       <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
-                        <div className="text-muted-foreground">Phone calls</div>
-                        <div className="text-right">
-                          {fmtNumber(c.phoneCalls)}
-                        </div>
                         <div className="text-muted-foreground">Conversions</div>
                         <div className="text-right">
                           {fmtConversions(c.conversions)}
@@ -468,8 +468,8 @@ function ClientRows({
             <td className="px-3 py-1.5 pl-8 align-middle">
               <span className="text-foreground">{c.campaignName}</span>
             </td>
-            <td className="px-3 py-1.5 text-right align-middle tabular-nums">
-              {fmtNumber(c.phoneCalls)}
+            <td className="px-3 py-1.5 text-right align-middle">
+              <span className="text-muted-foreground/40">·</span>
             </td>
             <td className="px-3 py-1.5 text-right align-middle tabular-nums">
               {fmtConversions(c.conversions)}

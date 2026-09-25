@@ -448,8 +448,13 @@ export function PpcReportDocument({
                             <Text style={[styles.cellName, styles.td]}>
                               {cr.campaignName}
                             </Text>
-                            <Text style={[styles.cellNum, styles.td]}>
-                              {fmtNumber(cr.phoneCalls)}
+                            {/* Phone calls is client-level (real CallRail call
+                                volume, not per-campaign — see queries.ts), so
+                                every campaign row would otherwise repeat the
+                                same client-total number. Shown once above in
+                                the "Client total" row instead. */}
+                            <Text style={[styles.cellNum, styles.td, { color: MUTED }]}>
+                              &middot;
                             </Text>
                             <Text style={[styles.cellNum, styles.td]}>
                               {fmtConversions(cr.conversions)}
