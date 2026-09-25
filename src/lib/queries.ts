@@ -1204,17 +1204,24 @@ export type PpcReport = {
 // Sums a day's per-channel CallRail call count, excluding GMB — the exact
 // same GMB-exclusion rule callrail.ts's signedCases derivation already
 // applies (PPC: PPC+PMax combined, matching how PMax's spend was never
-// split out of PPC's own cost either). tagCategoryBreakdown is
-// channel-nested as written by ppc-sync.ts: { "PPC": { totalCalls, ... },
-// "GMB": { totalCalls, ... }, "PMax": { ... } }.
+// split out of PPC's own cost either). Reads firstTimeCalls, not
+// totalCalls: callrail.ts already scopes tagCategoryBreakdown's per-label
+// counts to first-time calls only ("a repeat caller's tagged call still
+// counts toward totalCalls/signedCases above, just not toward this
+// per-label breakdown" — see the bucket accumulation loop), because a
+// caller ringing back 5 times isn't 5 new leads. totalCalls would count
+// every repeat call too, which is a different and less accurate number
+// than the "genuine new call" convention already established here.
+// tagCategoryBreakdown is channel-nested as written by ppc-sync.ts:
+// { "PPC": { totalCalls, firstTimeCalls, ... }, "GMB": { ... }, "PMax": { ... } }.
 function sumNonGmbCalls(tagCategoryBreakdown: unknown): number {
   if (!tagCategoryBreakdown || typeof tagCategoryBreakdown !== "object") return 0;
   let total = 0;
   for (const [channel, cb] of Object.entries(
-    tagCategoryBreakdown as Record<string, { totalCalls?: number } | null>,
+    tagCategoryBreakdown as Record<string, { firstTimeCalls?: number } | null>,
   )) {
     if (channel === "GMB") continue;
-    total += cb?.totalCalls ?? 0;
+    total += cb?.firstTimeCalls ?? 0;
   }
   return total;
 }
@@ -1225,14 +1232,14 @@ async function aggregateKpis(from: string, to: string): Promise<PpcKpis> {
   // concurrently rather than joined — same reason getPpcReport already
   // keeps campaignRows and callrailRows as separate queries below.
   //
-  // phoneCalls is sourced from CallRail's real, channel-matched call
-  // volume (tagCategoryBreakdown, GMB excluded) — NOT ppc_ads_daily's own
-  // metrics.phone_calls, which only counts Google Ads' ad call-extension
-  // clicks and was never CallRail-derived. Fetched as raw per-day rows
-  // (not grouped) because summing a jsonb column's per-channel totalCalls
-  // can't be done inside SQL without a jsonb aggregate — same "fetch raw
-  // rows, aggregate in JS" pattern queries-call-quality.ts already uses
-  // for this exact column.
+  // phoneCalls is sourced from CallRail's real, channel-matched
+  // first-time call volume (tagCategoryBreakdown, GMB excluded) — NOT
+  // ppc_ads_daily's own metrics.phone_calls, which only counts Google
+  // Ads' ad call-extension clicks and was never CallRail-derived.
+  // Fetched as raw per-day rows (not grouped) because summing a jsonb
+  // column's per-channel firstTimeCalls can't be done inside SQL without
+  // a jsonb aggregate — same "fetch raw rows, aggregate in JS" pattern
+  // queries-call-quality.ts already uses for this exact column.
   const [[adsRow], callrailRows] = await Promise.all([
     db
       .select({
@@ -1325,7 +1332,7 @@ export async function getPpcReport({
   // Per-client signed-case AND real-call totals (joined separately so the
   // row table doesn't duplicate these counts across campaigns). Fetched as
   // raw per-day rows (not grouped) — callsByClient needs tagCategoryBreakdown's
-  // per-channel totalCalls, which can't be summed inside SQL without a
+  // per-channel firstTimeCalls, which can't be summed inside SQL without a
   // jsonb aggregate, so both are accumulated in JS from the same rows.
   const callrailRows = await db
     .select({
@@ -1407,8 +1414,8 @@ export async function getPpcReport({
     clicks: r.clicks ?? 0,
     impressions: r.impressions ?? 0,
     conversions: r.conversions ? Number(r.conversions) : 0,
-    // Real CallRail-matched call volume — client-level, same value
-    // repeated across every campaign row for this client, same as
+    // Real CallRail-matched first-time call volume — client-level, same
+    // value repeated across every campaign row for this client, same as
     // signedCases below (there's no real per-campaign breakdown of
     // CallRail calls; ppc_callrail_daily is per-client-per-day, not
     // per-campaign). Replaces Google Ads' own metrics.phone_calls, which
