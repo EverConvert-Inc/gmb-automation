@@ -141,7 +141,10 @@ export function PpcReportTable({
         clicks: 0,
         impressions: 0,
         conversions: 0,
-        phoneCalls: 0,
+        // Client-level, same as signedCases below — carried straight from
+        // clientTotals, not accumulated from campaign rows (see the row
+        // loop below, which deliberately never touches phoneCalls).
+        phoneCalls: c.phoneCalls,
         costMicros: 0n,
         signedCases: c.signedCases,
         campaigns: [],
