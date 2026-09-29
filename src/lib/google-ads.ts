@@ -480,21 +480,25 @@ function decodeAdvertisingChannelType(raw: unknown): string {
 // segments.*) appear in the WHERE-less query below.
 //
 // Since there's no server-side date bound, we pull the most recent rows
-// instead (capped + ordered) and let the caller bucket by date itself —
-// confirmed live that a real account only carries ~28 call_view rows
-// total going back a year, so this cap is a safety margin for a future
-// high-volume account, not something expected to bind today.
+// instead (capped + ordered) and let the caller bucket by date itself. The
+// "~28 rows per account" figure from an earlier diagnostic only held with
+// the campaign.status = 'ENABLED' filter still in place (see below) — once
+// that filter was dropped, the same diagnostic saw one real account
+// (The Weinstein Firm) hit this exact 1000-row cap, so the cap is no
+// longer just a safety margin for a hypothetical future high-volume
+// account; it can bind today. The warn-log right below at least surfaces
+// when that happens.
 //
-// Restricted to campaign.status = 'ENABLED' — same rationale as
-// pullDailyMetrics/pullLocalServicesCost, and campaign.id/campaign.name
-// (also Attributed Resources, not real call_view fields) are already
-// filterable here, so campaign.status is expected to follow the same
-// rule. NOT yet confirmed live for this specific resource, unlike the
-// other two — call_view has already been seen to reject one otherwise-
-// ordinary field (segments.date) that works fine on `campaign` directly,
-// so this needs a live check before trusting it; if Google Ads rejects
-// filtering on it here, the fallback is selecting campaign.status (already
-// done below) and filtering the returned rows client-side instead.
+// Deliberately NOT filtered on campaign.status — same reasoning as
+// pullDailyMetrics/pullLocalServicesCost, and live-confirmed to matter here
+// too: a diagnostic run (see call-view-status-filter-audit) found 1,516
+// call_view rows silently dropped by this filter across 16 of 21 active
+// clients (390 tied to PAUSED campaigns, 1,126 to REMOVED), including one
+// client (Knoxville Car Accident Lawyers) left with zero call_view rows at
+// all — every campaign it ever produced a tracked call on has since been
+// paused or removed. Filtering to currently-ENABLED campaigns was dropping
+// real historical PMax call-attribution data, not just a theoretical edge
+// case.
 export async function pullCallViewRows(
   refreshToken: string,
   customerId: string,
@@ -511,7 +515,6 @@ export async function pullCallViewRows(
       campaign.status,
       campaign.advertising_channel_type
     FROM call_view
-    WHERE campaign.status = 'ENABLED'
     ORDER BY call_view.start_call_date_time DESC
     LIMIT 1000
   `);
