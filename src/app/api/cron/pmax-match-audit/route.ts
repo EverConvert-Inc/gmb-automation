@@ -7,6 +7,7 @@ import { pullCallViewRows } from "@/lib/google-ads";
 import {
   createGmbAdMatcher,
   extractLocalTimeOfDay,
+  matchesAnyFilter,
   timeOfDaySeconds,
 } from "@/lib/callrail";
 
@@ -233,7 +234,7 @@ export async function GET(req: Request) {
     function trackerNameOf(c: RawCallrailCall): string {
       return (c.source_name ?? c.formatted_tracking_source ?? "").toLowerCase();
     }
-    const gmbCalls = rawCalls.filter((c) => gmbFilters.some((f) => trackerNameOf(c).includes(f)));
+    const gmbCalls = rawCalls.filter((c) => matchesAnyFilter(trackerNameOf(c), gmbFilters));
     // Non-GMB calls still in scope for this client's report (production's
     // `isRelevantForReport`) — these are now also PMax candidates, since a
     // confirmed real case showed an ad-driven call landing on a
@@ -241,7 +242,7 @@ export async function GET(req: Request) {
     // checked first so a call matching both filter lists (shouldn't
     // normally happen) isn't double-counted.
     const ppcRelevantCalls = rawCalls.filter(
-      (c) => !gmbCalls.includes(c) && reportFilters.some((f) => trackerNameOf(c).includes(f)),
+      (c) => !gmbCalls.includes(c) && matchesAnyFilter(trackerNameOf(c), reportFilters),
     );
     const candidateCalls = [...gmbCalls, ...ppcRelevantCalls];
 

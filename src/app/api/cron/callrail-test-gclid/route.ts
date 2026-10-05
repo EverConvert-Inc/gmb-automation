@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const BASE_URL = process.env.CALLRAIL_API_BASE ?? "https://api.callrail.com";
 
@@ -60,41 +60,76 @@ export async function GET(req: Request) {
     );
   }
   const days = Number(url.searchParams.get("days") ?? "30");
-  const toDate = new Date().toISOString().slice(0, 10);
-  const fromDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const toDate = url.searchParams.get("to") ?? new Date().toISOString().slice(0, 10);
+  const fromDate =
+    url.searchParams.get("from") ??
+    new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
   try {
     const accountId = await resolveAccountId();
     const callsUrl = new URL(`${BASE_URL}/v3/a/${accountId}/calls.json`);
     callsUrl.searchParams.set("company_id", companyId);
-    callsUrl.searchParams.set("per_page", "50");
+    // 50 with no paging only ever saw the newest 50 calls — far too few to
+    // measure gclid coverage per tracker. Pages through the full window the
+    // same way callrail.ts's production pull does.
+    callsUrl.searchParams.set("per_page", "250");
     callsUrl.searchParams.set("start_date", fromDate);
     callsUrl.searchParams.set("end_date", toDate);
+    // `ga_client_id` is NOT a valid CallRail field — it made this route 400
+    // on every call since it was written, so the gclid question was never
+    // actually answered. Field names below are from CallRail's own
+    // "Valid fields are ..." error listing.
     callsUrl.searchParams.set(
       "fields",
-      "gclid,ga_client_id,utm_source,utm_medium,utm_campaign,utm_term,utm_content,landing_page_url,referrer_domain,source_name",
+      "gclid,fbclid,msclkid,utm_source,utm_medium,utm_campaign,utm_term,utm_content,landing_page_url,referring_url,referrer_domain,source,source_name,medium,campaign,keywords,first_call,duration,direction,customer_phone_number",
     );
 
-    const res = await fetch(callsUrl.toString(), { headers: authHeaders() });
-    const bodyText = await res.text();
-    if (!res.ok) {
-      return NextResponse.json(
-        { accountId, companyId, fromDate, toDate, status: res.status, body: bodyText },
-        { status: 502 },
-      );
+    const calls: Array<{ gclid?: string | null }> = [];
+    let totalRecords = 0;
+    for (let page = 1; page <= 40; page += 1) {
+      callsUrl.searchParams.set("page", String(page));
+      const res = await fetch(callsUrl.toString(), { headers: authHeaders() });
+      const bodyText = await res.text();
+      if (!res.ok) {
+        return NextResponse.json(
+          { accountId, companyId, fromDate, toDate, page, status: res.status, body: bodyText },
+          { status: 502 },
+        );
+      }
+      const body = JSON.parse(bodyText) as {
+        calls?: unknown[];
+        total_records?: number;
+        total_pages?: number;
+      };
+      totalRecords = body.total_records ?? totalRecords;
+      for (const c of (body.calls ?? []) as Array<{ gclid?: string | null }>) calls.push(c);
+      if (!body.total_pages || page >= body.total_pages) break;
     }
-    const body = JSON.parse(bodyText) as { calls?: unknown[]; total_records?: number };
-    const calls = (body.calls ?? []) as Array<{ gclid?: string | null }>;
     const withGclid = calls.filter((c) => !!c.gclid).length;
+
+    // Tracker configuration (type/source/destination/swap targets) — answers
+    // what a given tracking number actually IS, which the calls endpoint
+    // alone can't: a tracker's `type` ("source" vs "session") and `source`
+    // say whether its number is swapped onto the site for a given traffic
+    // source or handed out statically (e.g. a chat widget).
+    const trackersUrl = new URL(`${BASE_URL}/v3/a/${accountId}/trackers.json`);
+    trackersUrl.searchParams.set("company_id", companyId);
+    trackersUrl.searchParams.set("per_page", "250");
+    const trackersRes = await fetch(trackersUrl.toString(), { headers: authHeaders() });
+    const trackersText = await trackersRes.text();
+    const trackers = trackersRes.ok
+      ? ((JSON.parse(trackersText) as { trackers?: unknown[] }).trackers ?? [])
+      : { error: trackersRes.status, body: trackersText.slice(0, 500) };
 
     return NextResponse.json({
       accountId,
       companyId,
       fromDate,
       toDate,
-      totalRecords: body.total_records ?? calls.length,
+      totalRecords: totalRecords || calls.length,
       returnedCount: calls.length,
       callsWithGclid: withGclid,
+      trackers,
       calls,
     });
   } catch (err) {

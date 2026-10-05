@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createGmbAdMatcher,
+  matchesAnyFilter,
   pullCallsForCompany,
   pullTextMessagesForCompany,
 } from "./callrail";
@@ -1397,5 +1398,59 @@ describe("pullTextMessagesForCompany — Signed message conversations", () => {
       { conversationId: "convo-1", rollup: "real" },
       { conversationId: "convo-2", rollup: "real" },
     ]);
+  });
+});
+
+// Tracker names below are real ones seen in the live pmax-match-audit run
+// (Sep 1 – Oct 4, 2026); callers always pass both sides lowercased.
+describe("matchesAnyFilter (whole-word)", () => {
+  const ppcFilters = ["ppc", "ads", "gmb"];
+  const m = (name: string, filters: string[]) =>
+    matchesAnyFilter(name.toLowerCase(), filters);
+
+  it("no longer matches 'ads' inside 'leads'", () => {
+    expect(m("Findlaw Leads", ppcFilters)).toBe(false);
+    expect(m("Chat Leads", ppcFilters)).toBe(false);
+    expect(m("Chat Lead Number", ppcFilters)).toBe(false);
+  });
+
+  it("still matches 'ads' as a whole word — dropping Yelp/FB needs 'ads' removed from config", () => {
+    expect(m("Yelp - Paid Ads", ppcFilters)).toBe(true);
+    expect(m(" FB Ads - Car Accident", ppcFilters)).toBe(true);
+    expect(m("FB Ads-Car Accident", ppcFilters)).toBe(true);
+    expect(m("Yelp - Paid Ads", ["ppc", "gmb"])).toBe(false);
+    expect(m("FB Ads-Car Accident", ["ppc", "gmb"])).toBe(false);
+  });
+
+  it("keeps every real PPC tracker name in scope", () => {
+    for (const name of [
+      "PPC - Facebook Car Accident",
+      "PPC - Lawrenceville Pool",
+      "PPC -  Atlanta Extension",
+      "PPC Text Line - GA",
+      "PPC - Landing Page SC",
+      "PPC ",
+      "PPC - LP English",
+    ]) {
+      expect(m(name, ["ppc", "gmb"])).toBe(true);
+    }
+  });
+
+  it("matches GMB/GBP trackers once the word is in the GMB filters", () => {
+    expect(m("GBP - Augusta", ["gmb"])).toBe(false);
+    expect(m("GBP - Augusta", ["gmb", "gbp"])).toBe(true);
+    expect(m("GBP - Alpharetta", ["gmb", "gbp"])).toBe(true);
+    expect(m("SC - GMB - Greenville", ["gmb"])).toBe(true);
+    expect(m("GMB", ["gmb"])).toBe(true);
+  });
+
+  it("handles multi-word and punctuated filters, and treats regex characters literally", () => {
+    expect(m("Columbus - Google Map", ["google map"])).toBe(true);
+    expect(m("PPC - Landing Page", ["ppc -"])).toBe(true);
+    expect(m("LSA 4780 Peachtree  ", ["lsa"])).toBe(true);
+    expect(m("PPC (Brand)", ["ppc (brand)"])).toBe(true);
+    expect(m("PPCX", ["ppc"])).toBe(false);
+    expect(m("anything", ["."])).toBe(false);
+    expect(m("anything", [""])).toBe(false);
   });
 });

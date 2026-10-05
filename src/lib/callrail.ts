@@ -450,8 +450,16 @@ export function createGmbAdMatcher(callViewRows: CallViewRow[]) {
 // Modified webhook receiver (callrail-webhook.ts) can apply the identical
 // tracker-name-filter and Junk>Real priority rules to a webhook payload's
 // tags/source_name, rather than duplicating this logic.
+// Whole-word/phrase match, not substring: a plain substring match let the
+// filter word "ads" match inside "Findlaw Leads"/"Chat Leads", counting
+// non-Google trackers as PPC. A filter must sit between non-alphanumeric
+// characters (or the string edges); both inputs are expected lowercased.
 export function matchesAnyFilter(trackerName: string, filters: string[]): boolean {
-  return filters.some((f) => trackerName.includes(f));
+  return filters.some((f) => {
+    if (!f) return false;
+    const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(trackerName);
+  });
 }
 
 // Junk > Real > Unclassified: a junk/spam tag disqualifies a call (or
