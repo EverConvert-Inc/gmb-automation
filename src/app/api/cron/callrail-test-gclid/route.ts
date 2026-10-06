@@ -81,7 +81,7 @@ export async function GET(req: Request) {
     // "Valid fields are ..." error listing.
     callsUrl.searchParams.set(
       "fields",
-      "gclid,fbclid,msclkid,utm_source,utm_medium,utm_campaign,utm_term,utm_content,landing_page_url,referring_url,referrer_domain,source,source_name,medium,campaign,keywords,first_call,duration,direction,customer_phone_number",
+      "gclid,fbclid,msclkid,utm_source,utm_medium,utm_campaign,utm_term,utm_content,landing_page_url,referring_url,referrer_domain,source,source_name,medium,campaign,keywords,first_call,duration,direction,customer_phone_number,tags,tracker_id",
     );
 
     const calls: Array<{ gclid?: string | null }> = [];
