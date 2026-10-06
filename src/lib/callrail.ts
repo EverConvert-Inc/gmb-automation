@@ -49,7 +49,70 @@ type CallRailCall = {
   // Ads' call_view (see createGmbAdMatcher below). Same
   // fail-loud-if-wrong-field-name property as first_call above.
   customer_phone_number?: string | null;
+  // "inbound" | "outbound". Outbound calls are the firm dialling out and can
+  // never be an ad response, but they still land on a tracker whose name
+  // matches the client's filters, so they were previously counted.
+  direction?: string | null;
+  // Stable id of the tracking number's configuration. Preferred join key to
+  // the tracker's own `source` settings — unlike source_name it survives
+  // renames and trailing whitespace. Confirmed live: joins 1:1 with
+  // /trackers.json ids.
+  tracker_id?: string | null;
 };
+
+// A tracker's configured traffic source, keyed by tracker_id. Only the
+// `source.type` is kept — that's what says what the number is FOR (a Google
+// ad extension, a Business Profile listing, a Facebook ad), independent of
+// whatever the operator named it.
+export type TrackerSourceTypes = Map<string, string>;
+
+// Tracker configs for a CallRail company. Non-fatal: a failure here returns
+// an empty map, and every config-based exclusion below is skipped, leaving
+// the previous name-only behaviour rather than dropping real calls.
+export async function listTrackerSourceTypes(
+  companyId: string,
+): Promise<TrackerSourceTypes> {
+  const map: TrackerSourceTypes = new Map();
+  try {
+    const accountId = await resolveAccountId();
+    const url = new URL(`${BASE_URL}/v3/a/${accountId}/trackers.json`);
+    url.searchParams.set("company_id", companyId);
+    url.searchParams.set("per_page", "250");
+    const res = await fetch(url.toString(), { headers: authHeaders() });
+    if (!res.ok) return map;
+    const body = (await res.json()) as {
+      trackers?: Array<{ id?: string; source?: { type?: string } | null }>;
+    };
+    for (const t of body.trackers ?? []) {
+      if (t.id && t.source?.type) map.set(t.id, t.source.type);
+    }
+  } catch {
+    // Same fail-soft rationale as the call_view pull in ppc-sync.ts.
+  }
+  return map;
+}
+
+// Tracker source types that are never Google Ads traffic, so a call on one
+// must not count toward a PPC/LSA report no matter what the number is named.
+// Confirmed against live config: "Yelp - Paid Ads" and the "FB Ads"/
+// "PPC - Facebook Car Accident" numbers are configured this way, and were
+// being counted as paid Google calls purely because of their names.
+const NON_GOOGLE_SOURCE_TYPES = new Set([
+  "facebook_all",
+  "facebook_paid",
+  "facebook_organic",
+  "yelp_paid",
+  "yelp_organic",
+]);
+
+export function isNonGoogleTracker(
+  trackerId: string | null | undefined,
+  types: TrackerSourceTypes | undefined,
+): boolean {
+  if (!trackerId || !types?.size) return false;
+  const t = types.get(trackerId);
+  return !!t && NON_GOOGLE_SOURCE_TYPES.has(t);
+}
 
 // CallRail's "account" is the agency. Most setups have one. We list and
 // pick the first; if you ever have multiple, set CALLRAIL_ACCOUNT_ID to pin.
@@ -540,7 +603,7 @@ export async function pullCallsForCompany(
     // formatted, kept as a fallback.
     url.searchParams.set(
       "fields",
-      "tags,duration,source_name,formatted_tracking_source,first_call,customer_phone_number",
+      "tags,duration,source_name,formatted_tracking_source,first_call,customer_phone_number,direction,tracker_id",
     );
     const res = await fetch(url.toString(), { headers: authHeaders() });
     if (!res.ok) {
@@ -583,9 +646,16 @@ export async function pullCallsForCompany(
   }
 
   const gmbMatcher = createGmbAdMatcher(callViewRows ?? []);
+  const trackerTypes = await listTrackerSourceTypes(companyId);
 
   const byDate = new Map<string, CallrailDailyTotals>();
   for (const call of calls) {
+    // Outbound calls are the firm dialling out — never an ad response, and
+    // one was confirmed matching a Google call_view row purely on timing.
+    if (call.direction === "outbound") continue;
+    // Facebook/Yelp-configured numbers are not Google Ads traffic. Keyed on
+    // tracker_id, so renaming the number can't silently re-include it.
+    if (isNonGoogleTracker(call.tracker_id, trackerTypes)) continue;
     const date = call.start_time.slice(0, 10);
     const bucket = byDate.get(date) ?? {
       date,

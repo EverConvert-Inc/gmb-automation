@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createGmbAdMatcher,
+  isNonGoogleTracker,
   matchesAnyFilter,
   pullCallsForCompany,
   pullTextMessagesForCompany,
@@ -1452,5 +1453,33 @@ describe("matchesAnyFilter (whole-word)", () => {
     expect(m("PPCX", ["ppc"])).toBe(false);
     expect(m("anything", ["."])).toBe(false);
     expect(m("anything", [""])).toBe(false);
+  });
+});
+
+describe("isNonGoogleTracker", () => {
+  const types = new Map([
+    ["TRK_yelp", "yelp_paid"],
+    ["TRK_fb", "facebook_paid"],
+    ["TRK_fball", "facebook_all"],
+    ["TRK_ads", "google_ad_extension"],
+    ["TRK_gmb", "google_my_business"],
+  ]);
+
+  it("excludes Facebook and Yelp configured numbers whatever they are named", () => {
+    expect(isNonGoogleTracker("TRK_yelp", types)).toBe(true);
+    expect(isNonGoogleTracker("TRK_fb", types)).toBe(true);
+    expect(isNonGoogleTracker("TRK_fball", types)).toBe(true);
+  });
+
+  it("keeps Google-configured numbers", () => {
+    expect(isNonGoogleTracker("TRK_ads", types)).toBe(false);
+    expect(isNonGoogleTracker("TRK_gmb", types)).toBe(false);
+  });
+
+  it("falls back to including the call when config is missing or unknown", () => {
+    expect(isNonGoogleTracker("TRK_unknown", types)).toBe(false);
+    expect(isNonGoogleTracker(null, types)).toBe(false);
+    expect(isNonGoogleTracker("TRK_yelp", new Map())).toBe(false);
+    expect(isNonGoogleTracker("TRK_yelp", undefined)).toBe(false);
   });
 });
