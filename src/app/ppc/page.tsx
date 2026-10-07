@@ -20,7 +20,7 @@ import { EmailPpcReportButton } from "@/components/email-ppc-report-button";
 import { SyncPpcNowButton } from "@/components/sync-ppc-now-button";
 import { getPpcReport, listPpcClients, type PpcReportRow } from "@/lib/queries";
 import { pickDefaultExpandedState } from "@/lib/report-grouping";
-import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
+import { todayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -54,13 +54,13 @@ export default async function PpcReportPage({
   searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const { from: fromParam, to: toParam } = await searchParams;
-  // "To" defaults to yesterday rather than today because the daily PPC
-  // sync only pulls yesterday's metrics — today is always empty until the
-  // next morning's cron. Using today as the end of the window causes the
-  // current period to be one day shorter than the (same-length) prior
-  // period, which biases every KPI delta more negative than reality.
+  // "To" defaults to today (Eastern). Today is partial until the next
+  // morning's cron — Sync Now fills it on demand — and that partial day
+  // does bias KPI deltas slightly negative against the same-length prior
+  // period. Ending at yesterday hid same-day calls and late-tagged signed
+  // cases from the default view entirely, which cost more than the bias.
   const from = fromParam || firstOfMonthIsoEastern();
-  const to = toParam || yesterdayIsoEastern();
+  const to = toParam || todayIsoEastern();
 
   const [report, ppcClients] = await Promise.all([
     getPpcReport({ from, to }),

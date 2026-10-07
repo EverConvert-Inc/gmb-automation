@@ -19,7 +19,7 @@ import { EmailLsaReportButton } from "@/components/email-lsa-report-button";
 import { SyncLsaNowButton } from "@/components/sync-lsa-now-button";
 import { getLsaReport, listLsaClients } from "@/lib/queries-lsa";
 import { pickDefaultExpandedState } from "@/lib/report-grouping";
-import { yesterdayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
+import { todayIsoEastern, firstOfMonthIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -53,11 +53,11 @@ export default async function LsaReportPage({
   searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const { from: fromParam, to: toParam } = await searchParams;
-  // Same rationale as /ppc: the sync only pulls yesterday's data, so "to"
-  // defaults to yesterday rather than today (today is always empty until
-  // the next morning's cron, which would otherwise bias every KPI delta).
+  // Same rationale as /ppc: "to" defaults to today (Eastern) so same-day
+  // calls and late-tagged signed cases are visible by default, at the cost
+  // of a partial final day until the next morning's cron.
   const from = fromParam || firstOfMonthIsoEastern();
-  const to = toParam || yesterdayIsoEastern();
+  const to = toParam || todayIsoEastern();
 
   const [report, lsaClients] = await Promise.all([
     getLsaReport({ from, to }),
