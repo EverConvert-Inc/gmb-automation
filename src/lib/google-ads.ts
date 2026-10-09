@@ -361,6 +361,10 @@ export type LsaLeadsDailyRow = {
   // Counts keyed by LocalServicesLeadStatus name (NEW, ACTIVE, BOOKED,
   // DECLINED, EXPIRED, DISABLED, CONSUMER_DECLINED, WIPED_OUT).
   statusBreakdown: Record<string, number>;
+  // Counts keyed by the lead's service_id (e.g. "auto_accidents") — the
+  // same namespace campaign_criterion uses, so these cross-check directly
+  // against which services were enabled that day (see lsa_service_snapshots).
+  serviceIdCounts: Record<string, number>;
 };
 
 // Pulls local_services_lead rows for the window and buckets them by the
@@ -383,6 +387,7 @@ export async function pullLocalServicesLeads(
   const rows = await customer.query(`
     SELECT local_services_lead.id, local_services_lead.lead_type,
            local_services_lead.lead_status, local_services_lead.lead_charged,
+           local_services_lead.service_id, local_services_lead.category_id,
            local_services_lead.creation_date_time
     FROM local_services_lead
     WHERE local_services_lead.creation_date_time BETWEEN '${fromDate} 00:00:00' AND '${toDate} 23:59:59'
@@ -402,6 +407,7 @@ export async function pullLocalServicesLeads(
       bookingCount: 0,
       chargedCount: 0,
       statusBreakdown: {},
+      serviceIdCounts: {},
     };
 
     const typeName =
@@ -422,10 +428,87 @@ export async function pullLocalServicesLeads(
       bucket.statusBreakdown[statusName] = (bucket.statusBreakdown[statusName] ?? 0) + 1;
     }
 
+    const serviceId = lead.service_id;
+    if (typeof serviceId === "string" && serviceId) {
+      bucket.serviceIdCounts[serviceId] = (bucket.serviceIdCounts[serviceId] ?? 0) + 1;
+    }
+
     byDate.set(date, bucket);
   }
 
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export type LocalServiceCriterionRow = {
+  campaignId: string;
+  campaignName: string;
+  criterionId: string;
+  serviceId: string;
+  status: string;
+  negative: boolean;
+};
+
+// Pulls the Local Services *service* criteria (practice areas) for an LSA
+// account. Confirmed live across 34 real accounts: LSA campaigns DO expose
+// criteria, resolving a conflict in Google's own docs, and
+// campaign_criterion.local_service_id.service_id returns the same
+// human-readable ids leads carry (e.g. "auto_accidents") — directly
+// comparable, no mapping needed.
+//
+// Returns ONLY rows that actually carry a service id. A real account's
+// criteria are dominated by geo/language rows (up to 96 of 168), so callers
+// must never assume the service rows appear early in the result set — a
+// 100-row cap on an earlier diagnostic made four accounts look as though
+// they had zero services enabled when they had 5-14.
+//
+// Deliberately NOT filtered on campaign.status — that reflects CURRENT
+// status, not status on any historical date, and has already caused real
+// data loss twice in this codebase.
+export async function pullLocalServiceCriteria(
+  refreshToken: string,
+  customerId: string,
+  loginCustomerId: string | undefined,
+): Promise<LocalServiceCriterionRow[]> {
+  const customer = getCustomer(refreshToken, customerId, loginCustomerId);
+  const rows = await customer.query(`
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign_criterion.criterion_id,
+      campaign_criterion.status,
+      campaign_criterion.negative,
+      campaign_criterion.local_service_id.service_id
+    FROM campaign_criterion
+    WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES'
+  `);
+
+  const out: LocalServiceCriterionRow[] = [];
+  for (const r of rows) {
+    const campaign = r.campaign ?? {};
+    const criterion = (r as {
+      campaign_criterion?: {
+        criterion_id?: string | number | null;
+        status?: string | number | null;
+        negative?: boolean | null;
+        local_service_id?: { service_id?: string | null } | null;
+      };
+    }).campaign_criterion;
+    const serviceId = criterion?.local_service_id?.service_id;
+    if (!serviceId) continue;
+    const status =
+      typeof criterion?.status === "number"
+        ? enums.CampaignCriterionStatus[criterion.status]
+        : String(criterion?.status ?? "");
+    out.push({
+      campaignId: String(campaign.id ?? ""),
+      campaignName: String(campaign.name ?? ""),
+      criterionId: String(criterion?.criterion_id ?? ""),
+      serviceId: String(serviceId),
+      status,
+      negative: criterion?.negative === true,
+    });
+  }
+  return out;
 }
 
 export type CallViewRow = {

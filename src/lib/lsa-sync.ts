@@ -5,6 +5,7 @@ import {
   lsaCallrailTagCategories,
   lsaClients,
   lsaLeadsDaily,
+  lsaServiceSnapshots,
   lsaSyncJobs,
   lsaTextConversationTagState,
   oauthCredentials,
@@ -13,13 +14,23 @@ import {
   type LsaClient,
 } from "./db/schema";
 import { decryptString } from "./crypto";
-import { pullLocalServicesCost, pullLocalServicesLeads } from "./google-ads";
+import {
+  pullLocalServiceCriteria,
+  pullLocalServicesCost,
+  pullLocalServicesLeads,
+  type LsaLeadsDailyRow,
+} from "./google-ads";
 import {
   pullCallsForCompany,
   pullTextMessagesForCompany,
   type CallrailDailyTotals,
 } from "./callrail";
-import { yesterdayIsoEastern, daysAgoIsoEastern, toIsoDateEastern } from "./date-utils";
+import {
+  yesterdayIsoEastern,
+  daysAgoIsoEastern,
+  toIsoDateEastern,
+  todayIsoEastern,
+} from "./date-utils";
 
 type SyncOpts = {
   fromDate: string; // YYYY-MM-DD
@@ -620,6 +631,108 @@ export async function recomputeLsaCallrailDay(
 // console.error — ppc-callrail-sync's cron route recorded failures to the
 // DB but never logged them anywhere a human would see without querying
 // the table directly; this closes that gap from day one.
+// How far back a criterion pull is allowed to describe. campaign_criterion
+// returns CURRENT state only — there is no change history for LSA criteria
+// — so stamping today's enabled list onto a date weeks ago would invent
+// history that was never observed. The nightly cron syncs yesterday, so a
+// 1-day skew is the normal case and is what this allows; anything older
+// records the day's lead flow with criteriaAvailable=false instead.
+const SNAPSHOT_MAX_AGE_DAYS = 2;
+
+// Exported for tests — the snapshot writes one row per date in the range.
+export function datesInRange(fromDate: string, toDate: string): string[] {
+  const out: string[] = [];
+  const d = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
+  while (d <= end) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
+// Exported for tests — gates whether current criteria may describe a date.
+export function daysBetween(a: string, b: string): number {
+  return Math.round(
+    (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000,
+  );
+}
+
+// Writes one lsa_service_snapshots row per date in the sync range. Never
+// throws: this is observational data for a future rating feature, and the
+// LSA sync it rides on is load-bearing for reporting.
+async function captureServiceSnapshots(
+  lsaClientId: string,
+  client: LsaClient,
+  refreshToken: string,
+  fromDate: string,
+  toDate: string,
+  leadRows: LsaLeadsDailyRow[],
+): Promise<void> {
+  try {
+    const today = todayIsoEastern();
+    const serviceIdsByDate = new Map(leadRows.map((r) => [r.date, r.serviceIdCounts]));
+
+    let criteria: Awaited<ReturnType<typeof pullLocalServiceCriteria>> = [];
+    let criteriaOk = false;
+    try {
+      criteria = await pullLocalServiceCriteria(
+        refreshToken,
+        client.googleAdsCustomerId!,
+        client.loginCustomerId ?? undefined,
+      );
+      // An empty result is NOT the same as "nothing enabled" — treat it as
+      // unknown so no downstream rule can read it as "every lead mismatches".
+      criteriaOk = criteria.length > 0;
+    } catch (err) {
+      console.error(
+        `[lsa-sync][service-snapshot] criterion pull failed for ${client.name} (${lsaClientId}):`,
+        stringifyError(err),
+      );
+    }
+    const enabled = criteria.filter((c) => c.status === "ENABLED" && !c.negative);
+
+    for (const date of datesInRange(fromDate, toDate)) {
+      const fresh = Math.abs(daysBetween(today, date)) <= SNAPSHOT_MAX_AGE_DAYS;
+      const useCriteria = criteriaOk && fresh;
+      await db
+        .insert(lsaServiceSnapshots)
+        .values({
+          lsaClientId,
+          date,
+          enabledServiceIds: useCriteria ? enabled.map((c) => c.serviceId) : [],
+          criteria: useCriteria ? criteria : [],
+          leadServiceIds: serviceIdsByDate.get(date) ?? {},
+          criteriaAvailable: useCriteria,
+          capturedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [lsaServiceSnapshots.lsaClientId, lsaServiceSnapshots.date],
+          set: {
+            // Lead flow is always refreshed. Criteria are only overwritten
+            // when this run actually observed them for a date it can speak
+            // to — a later backfill must never blank out a real snapshot
+            // captured on the day itself.
+            leadServiceIds: serviceIdsByDate.get(date) ?? {},
+            ...(useCriteria
+              ? {
+                  enabledServiceIds: enabled.map((c) => c.serviceId),
+                  criteria,
+                  criteriaAvailable: true,
+                  capturedAt: new Date(),
+                }
+              : {}),
+          },
+        });
+    }
+  } catch (err) {
+    console.error(
+      `[lsa-sync][service-snapshot] snapshot write failed for ${lsaClientId}:`,
+      stringifyError(err),
+    );
+  }
+}
+
 export async function syncLsaForClient(
   lsaClientId: string,
   opts: SyncOpts,
@@ -686,6 +799,19 @@ export async function syncLsaForClient(
           opts.toDate,
         ),
       ]);
+
+      // Best-effort: a criterion-pull failure must never fail the LSA sync,
+      // which is load-bearing for reporting. An unreadable day is recorded
+      // as criteriaAvailable=false rather than skipped — see the column
+      // comment on lsa_service_snapshots.
+      await captureServiceSnapshots(
+        lsaClientId,
+        client,
+        refreshToken,
+        opts.fromDate,
+        opts.toDate,
+        leadRows,
+      );
 
       for (const r of leadRows) {
         const b = bucket(r.date);

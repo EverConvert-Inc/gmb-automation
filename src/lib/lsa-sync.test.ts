@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { adjustRollupReal, adjustTagCategoryBreakdown } from "./lsa-sync";
+import {
+  adjustRollupReal,
+  adjustTagCategoryBreakdown,
+  datesInRange,
+  daysBetween,
+} from "./lsa-sync";
 
 describe("adjustRollupReal — flat shape", () => {
   it("increments real on a flat object, preserving junk/unclassified", () => {
@@ -132,5 +137,49 @@ describe("adjustTagCategoryBreakdown — nested (channel-split) shape", () => {
     expect(adjustTagCategoryBreakdown(current, null, ["Signed"], 1)).toEqual({
       LSA: { Signed: 3 },
     });
+  });
+});
+
+// Guards the lsa_service_snapshots capture. campaign_criterion returns
+// CURRENT state only, so these two helpers decide which dates a given
+// criterion pull is allowed to describe.
+describe("service snapshot date helpers", () => {
+  it("datesInRange is inclusive on both ends", () => {
+    expect(datesInRange("2026-10-01", "2026-10-01")).toEqual(["2026-10-01"]);
+    expect(datesInRange("2026-10-01", "2026-10-04")).toEqual([
+      "2026-10-01",
+      "2026-10-02",
+      "2026-10-03",
+      "2026-10-04",
+    ]);
+  });
+
+  it("datesInRange crosses month and year boundaries", () => {
+    expect(datesInRange("2026-10-30", "2026-11-02")).toEqual([
+      "2026-10-30",
+      "2026-10-31",
+      "2026-11-01",
+      "2026-11-02",
+    ]);
+    expect(datesInRange("2026-12-31", "2027-01-01")).toEqual(["2026-12-31", "2027-01-01"]);
+  });
+
+  it("datesInRange returns nothing when the range is inverted", () => {
+    expect(datesInRange("2026-10-04", "2026-10-01")).toEqual([]);
+  });
+
+  it("daysBetween measures whole days across a DST transition", () => {
+    // US DST ends 2026-11-01; these are calendar dates, not instants, so
+    // the gap must stay exactly 2 regardless of the offset change.
+    expect(daysBetween("2026-11-02", "2026-10-31")).toBe(2);
+    expect(daysBetween("2026-10-09", "2026-10-09")).toBe(0);
+    expect(daysBetween("2026-10-09", "2026-10-10")).toBe(-1);
+  });
+
+  it("daysBetween keeps the nightly case (today vs yesterday) within the 2-day allowance", () => {
+    // The cron syncs yesterday but reads criteria today — a 1-day skew that
+    // must stay allowed, while a month-old backfill date must not.
+    expect(Math.abs(daysBetween("2026-10-09", "2026-10-08"))).toBeLessThanOrEqual(2);
+    expect(Math.abs(daysBetween("2026-10-09", "2026-09-09"))).toBeGreaterThan(2);
   });
 });

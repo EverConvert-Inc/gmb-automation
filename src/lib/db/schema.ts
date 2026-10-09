@@ -734,6 +734,53 @@ export const lsaClients = pgTable(
 
 export type LsaClient = typeof lsaClients.$inferSelect;
 
+// Daily snapshot of which Local Services *services* (practice areas) were
+// switched on for a client, captured because the Google Ads API only ever
+// returns CURRENT campaign_criterion state — there is no change history for
+// LSA criteria. Without a snapshot per day there is no way to answer "was
+// this service enabled when that lead arrived", which is the whole basis of
+// deciding whether a lead matches what the ad was actually advertising.
+// Nothing can be backfilled: day one is the first day this runs.
+export const lsaServiceSnapshots = pgTable(
+  "lsa_service_snapshots",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    // Just the ENABLED service ids (e.g. "auto_accidents"), for the actual
+    // match. Confirmed live that lead.service_id and
+    // campaign_criterion.local_service_id.service_id share one string
+    // namespace, so these compare directly with no mapping layer.
+    enabledServiceIds: text("enabled_service_ids")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
+    // Every service criterion as returned, including status/negative. Every
+    // row observed so far has been ENABLED — if Google ever does surface a
+    // paused/removed one, this captures it rather than discarding it.
+    criteria: jsonb("criteria").notNull().default(sql`'[]'::jsonb`),
+    // { "auto_accidents": 5, ... } for leads created that day. The
+    // cross-check: a service producing leads while absent from
+    // enabled_service_ids means the criteria don't reflect reality, which
+    // is exactly what a mismatch rule must not get wrong.
+    leadServiceIds: jsonb("lead_service_ids").notNull().default(sql`'{}'::jsonb`),
+    // false when the criterion query failed or returned no service rows. A
+    // missing row and a row we couldn't read are NOT the same thing, and an
+    // empty enabled list must never be read as "nothing is switched on" —
+    // any future rating logic has to refuse to act on criteriaAvailable=false.
+    criteriaAvailable: boolean("criteria_available").notNull().default(false),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("lsa_service_snapshots_unique").on(t.lsaClientId, t.date),
+    clientDateIdx: index("lsa_service_snapshots_client_date_idx").on(t.lsaClientId, t.date),
+  }),
+);
+
+export type LsaServiceSnapshot = typeof lsaServiceSnapshots.$inferSelect;
+
 // One row per (lsa_client, date), merging leads + cost + CallRail in a
 // single write from the sync itself — unlike the PPC tables (ppc_ads_daily /
 // ppc_campaigns / ppc_callrail_daily), which are joined at report-query
