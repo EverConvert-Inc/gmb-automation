@@ -143,7 +143,7 @@ export async function GET(req: Request) {
       u.searchParams.set("end_date", toDate);
       u.searchParams.set(
         "fields",
-        "customer_phone_number,duration,direction,source_name,transcription,recording,first_call",
+        "customer_phone_number,tracking_phone_number,duration,direction,source_name,transcription,recording,first_call",
       );
       const res = await fetch(u.toString(), { headers: callrailHeaders() });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -159,6 +159,42 @@ export async function GET(req: Request) {
       { error: `callrail pull failed: ${describeError(err)}` },
       { status: 502 },
     );
+  }
+
+  // Call DURATION per lead, from the lead's own conversation rows. Duration
+  // is the strongest join key available: it is independent of whether the
+  // caller's number is masked, and a call lasting exactly N seconds at
+  // exactly time T is effectively unique.
+  const leadDurationSec = new Map<string, number>();
+  let conversationPullError: string | null = null;
+  try {
+    const customer = getCustomer(
+      decryptString(cred.refreshTokenEncrypted),
+      customerId,
+      client.loginCustomerId ?? undefined,
+    );
+    const callLeads = leads.filter((l) => l.lead_type === 2 && l.resource_name);
+    for (let i = 0; i < callLeads.length; i += 40) {
+      const chunk = callLeads.slice(i, i + 40);
+      const inList = chunk.map((l) => `'${String(l.resource_name)}'`).join(",");
+      const rows = (await customer.query(`
+        SELECT
+          local_services_lead_conversation.lead,
+          local_services_lead_conversation.phone_call_details.call_duration_millis
+        FROM local_services_lead_conversation
+        WHERE local_services_lead_conversation.lead IN (${inList})
+      `)) as Array<Record<string, unknown>>;
+      for (const r of rows) {
+        const c = (r.local_services_lead_conversation ?? {}) as {
+          lead?: string;
+          phone_call_details?: { call_duration_millis?: string | number } | null;
+        };
+        const ms = c.phone_call_details?.call_duration_millis;
+        if (c.lead && ms != null) leadDurationSec.set(c.lead, Math.round(Number(ms) / 1000));
+      }
+    }
+  } catch (err) {
+    conversationPullError = describeError(err);
   }
 
   const byPhone = new Map<string, Array<Record<string, unknown>>>();
@@ -245,6 +281,77 @@ export async function GET(req: Request) {
         tracker: c.source_name,
       })),
     distinctCallPhones: byPhone.size,
+    conversationPullError,
+    // Lead-side status for call leads whose contact_details is empty —
+    // checking specifically whether these are WIPED_OUT (status 9), i.e.
+    // leads Google scrubbed, which would explain the missing number.
+    emptyContactDetailsStatuses: (() => {
+      const c: Record<string, number> = {};
+      for (const l of leads) {
+        if (l.lead_type !== 2) continue;
+        const cd = l.contact_details as { phone_number?: unknown } | null;
+        if (cd && cd.phone_number) continue;
+        const k = `status_${String(l.lead_status)}`;
+        c[k] = (c[k] ?? 0) + 1;
+      }
+      return c;
+    })(),
+    // BACKWARD: start from CallRail's LSA-tracker calls and look for the
+    // lead, matching on duration first then time. Duration is immune to
+    // number masking.
+    backwardFromCallRail: (() => {
+      const lsaCalls = calls.filter(
+        (c) => c.direction === "inbound" && /lsa/i.test(String(c.source_name ?? "")),
+      );
+      const leadList = leads
+        .filter((l) => l.lead_type === 2)
+        .map((l) => ({
+          id: l.id,
+          at: leadEpochLocal(String(l.creation_date_time ?? "")),
+          dur: leadDurationSec.get(String(l.resource_name ?? "")) ?? null,
+          phone: digits10((l.contact_details as { phone_number?: unknown } | null)?.phone_number),
+        }));
+      let durAndTime = 0;
+      let timeOnly = 0;
+      const samples: Array<Record<string, unknown>> = [];
+      for (const c of lsaCalls) {
+        const t = callEpochLocal(String(c.start_time ?? ""));
+        if (t === null) continue;
+        const cdur = Number(c.duration ?? -1);
+        let best: { d: number; l: (typeof leadList)[number] } | null = null;
+        for (const l of leadList) {
+          if (l.at === null) continue;
+          const d = t - l.at;
+          if (!best || Math.abs(d) < Math.abs(best.d)) best = { d, l };
+        }
+        if (!best) continue;
+        const closeTime = Math.abs(best.d) <= 300;
+        const closeDur = best.l.dur !== null && Math.abs(best.l.dur - cdur) <= 5;
+        if (closeTime) timeOnly += 1;
+        if (closeTime && closeDur) durAndTime += 1;
+        if (samples.length < 10) {
+          samples.push({
+            callAt: c.start_time,
+            callPhone: c.customer_phone_number,
+            trackingNumber: c.tracking_phone_number,
+            tracker: c.source_name,
+            callDurationSec: cdur,
+            closestLeadId: best.l.id,
+            leadPhone: best.l.phone,
+            leadDurationSec: best.l.dur,
+            deltaSec: best.d,
+          });
+        }
+      }
+      return {
+        lsaTrackerCallCount: lsaCalls.length,
+        callLeadCount: leadList.length,
+        leadsWithKnownDuration: leadList.filter((l) => l.dur !== null).length,
+        matchedTimeWithin300s: timeOnly,
+        matchedTimeAndDuration: durAndTime,
+        samples,
+      };
+    })(),
     // Phone-number matching finds nothing, so test TIME alone against calls
     // on LSA-named trackers. If timestamps line up while numbers don't, the
     // lead's phone_number is a Google-masked number (note the
