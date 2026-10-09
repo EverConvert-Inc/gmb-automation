@@ -131,6 +131,9 @@ export async function GET(req: Request) {
   let criteria: unknown = null;
   let criteriaError: unknown = null;
   const criterionServiceIds: string[] = [];
+  // ENABLED, non-negative only — what "switched on" actually means, and
+  // what the cross-tab below judges each lead against.
+  const enabledServiceIds = new Set<string>();
   try {
     const rows = (await customer.query(`
       SELECT
@@ -154,7 +157,12 @@ export async function GET(req: Request) {
         local_service_id?: { service_id?: unknown } | null;
       };
       const sid = cc.local_service_id?.service_id;
-      if (sid !== undefined && sid !== null) criterionServiceIds.push(String(sid));
+      if (sid === undefined || sid === null) continue;
+      criterionServiceIds.push(String(sid));
+      const c2 = cc as { status?: unknown; negative?: unknown };
+      // status 2 === ENABLED (CampaignCriterionStatus); the raw enum number
+      // is what the API returns here.
+      if (c2.status === 2 && c2.negative !== true) enabledServiceIds.add(String(sid));
     }
   } catch (err) {
     criteriaError = describeError(err);
@@ -163,6 +171,8 @@ export async function GET(req: Request) {
   // --- 2 & 3 & 5. Real leads: what ids they carry, and how many are rated.
   let leads: unknown = null;
   let leadsError: unknown = null;
+  const crossTab: Record<string, number> = {};
+  const actionable: Array<Record<string, unknown>> = [];
   const leadServiceIds: string[] = [];
   const leadCategoryIds: string[] = [];
   let feedbackSubmitted = 0;
@@ -200,6 +210,32 @@ export async function GET(req: Request) {
         byService.set(s, (byService.get(s) ?? 0) + 1);
       }
     }
+    // The cross-tab: in_enabled_list x lead_feedback_submitted. The
+    // unrated + not-in-enabled-list cell is the one that sizes any rating
+    // automation — every other cell is either already handled by the
+    // intake team or is a lead that matches what the ad advertises.
+    for (const r of rows) {
+      const l = (r.local_services_lead ?? {}) as Record<string, unknown>;
+      const svc = l.service_id;
+      const rated = l.lead_feedback_submitted === true;
+      const inList =
+        typeof svc === "string" && svc !== "" ? enabledServiceIds.has(svc) : null;
+      const key =
+        inList === null
+          ? "no_service_id"
+          : `${inList ? "in_list" : "NOT_in_list"}__${rated ? "rated" : "UNRATED"}`;
+      crossTab[key] = (crossTab[key] ?? 0) + 1;
+      if (inList === false && !rated) {
+        actionable.push({
+          id: l.id,
+          serviceId: svc,
+          leadStatus: l.lead_status,
+          leadCharged: l.lead_charged,
+          createdAt: l.creation_date_time,
+        });
+      }
+    }
+
     leads = {
       leadCount,
       feedbackSubmitted,
@@ -266,5 +302,12 @@ export async function GET(req: Request) {
     q2q3_leads: leads ?? { error: leadsError },
     q4_categoryBids: categoryBids ?? { error: categoryBidsError },
     q5_comparability: comparability,
+    q6_crossTab: {
+      enabledServiceIds: Array.from(enabledServiceIds).sort(),
+      counts: crossTab,
+      // The number that sizes the rating automation.
+      actionableCount: actionable.length,
+      actionableLeads: actionable.slice(0, 50),
+    },
   });
 }
