@@ -186,6 +186,14 @@ export async function GET(req: Request) {
   let leadsError: unknown = null;
   const crossTab: Record<string, number> = {};
   const actionable: Array<Record<string, unknown>> = [];
+  // Category breakdown split by whether the lead carries a service_id —
+  // 52% of leads have none, and the question is whether those are still
+  // the client's own advertised category or something else entirely.
+  const catByHasService: Record<string, Record<string, number>> = {
+    with_service_id: {},
+    no_service_id: {},
+  };
+  const noServiceLeadResources: Array<{ resource: string; type: unknown; id: unknown }> = [];
   const leadServiceIds: string[] = [];
   const leadCategoryIds: string[] = [];
   let feedbackSubmitted = 0;
@@ -238,6 +246,17 @@ export async function GET(req: Request) {
           ? "no_service_id"
           : `${inList ? "in_list" : "NOT_in_list"}__${rated ? "rated" : "UNRATED"}`;
       crossTab[key] = (crossTab[key] ?? 0) + 1;
+
+      const bucket = inList === null ? "no_service_id" : "with_service_id";
+      const cat = String(l.category_id ?? "(none)");
+      catByHasService[bucket][cat] = (catByHasService[bucket][cat] ?? 0) + 1;
+      if (inList === null && l.resource_name) {
+        noServiceLeadResources.push({
+          resource: String(l.resource_name),
+          type: l.lead_type,
+          id: l.id,
+        });
+      }
       if (inList === false && !rated) {
         actionable.push({
           id: l.id,
@@ -259,6 +278,39 @@ export async function GET(req: Request) {
     };
   } catch (err) {
     leadsError = describeError(err);
+  }
+
+  // --- 7. What the person actually asked for, for leads with no
+  // service_id. Messages expose their text; phone calls expose only a
+  // recording URL and duration — there is no transcript field, so a call's
+  // intent cannot be read from the API alone.
+  let conversationSample: unknown = null;
+  let conversationError: unknown = null;
+  if (noServiceLeadResources.length > 0) {
+    try {
+      const sample = noServiceLeadResources.slice(0, 12);
+      const inList = sample.map((s) => `'${s.resource}'`).join(",");
+      const rows = (await customer.query(`
+        SELECT
+          local_services_lead_conversation.id,
+          local_services_lead_conversation.lead,
+          local_services_lead_conversation.conversation_channel,
+          local_services_lead_conversation.participant_type,
+          local_services_lead_conversation.event_date_time,
+          local_services_lead_conversation.message_details.text,
+          local_services_lead_conversation.phone_call_details.call_duration_millis,
+          local_services_lead_conversation.phone_call_details.call_recording_url
+        FROM local_services_lead_conversation
+        WHERE local_services_lead_conversation.lead IN (${inList})
+      `)) as Array<Record<string, unknown>>;
+      conversationSample = {
+        leadsRequested: sample.length,
+        rowCount: rows.length,
+        rows,
+      };
+    } catch (err) {
+      conversationError = describeError(err);
+    }
   }
 
   // --- 4. category_bids fallback.
@@ -315,6 +367,10 @@ export async function GET(req: Request) {
     q2q3_leads: leads ?? { error: leadsError },
     q4_categoryBids: categoryBids ?? { error: categoryBidsError },
     q5_comparability: comparability,
+    q7_noServiceId: {
+      categoryBreakdown: catByHasService,
+      conversationSample: conversationSample ?? { error: conversationError },
+    },
     q6_crossTab: {
       enabledServiceIds: Array.from(enabledServiceIds).sort(),
       counts: crossTab,
