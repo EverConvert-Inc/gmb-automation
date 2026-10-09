@@ -303,10 +303,14 @@ export async function GET(req: Request) {
       const lsaCalls = calls.filter(
         (c) => c.direction === "inbound" && /lsa/i.test(String(c.source_name ?? "")),
       );
+      // Deliberately NOT filtered to lead_type 2. A lead whose type is not
+      // PHONE_CALL still lined up with a real CallRail call to within 10
+      // seconds, so type is not a reliable indicator of which leads have a
+      // call behind them — filtering on it hid the matches entirely.
       const leadList = leads
-        .filter((l) => l.lead_type === 2)
         .map((l) => ({
           id: l.id,
+          leadType: l.lead_type,
           at: leadEpochLocal(String(l.creation_date_time ?? "")),
           dur: leadDurationSec.get(String(l.resource_name ?? "")) ?? null,
           phone: digits10((l.contact_details as { phone_number?: unknown } | null)?.phone_number),
@@ -337,6 +341,7 @@ export async function GET(req: Request) {
             tracker: c.source_name,
             callDurationSec: cdur,
             closestLeadId: best.l.id,
+            closestLeadType: best.l.leadType,
             leadPhone: best.l.phone,
             leadDurationSec: best.l.dur,
             deltaSec: best.d,
@@ -368,7 +373,6 @@ export async function GET(req: Request) {
       let within60 = 0;
       let within300 = 0;
       for (const l of leads) {
-        if (l.lead_type !== 2) continue;
         const leadAt = leadEpochLocal(String(l.creation_date_time ?? ""));
         if (leadAt === null) continue;
         let best: { delta: number; call: Record<string, unknown> } | null = null;
