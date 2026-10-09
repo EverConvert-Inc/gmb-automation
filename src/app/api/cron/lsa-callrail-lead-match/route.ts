@@ -245,6 +245,36 @@ export async function GET(req: Request) {
         tracker: c.source_name,
       })),
     distinctCallPhones: byPhone.size,
+    // Decisive test: does the lead's phone appear in CallRail AT ALL,
+    // ignoring time? Zero overlap means LSA calls never reach CallRail for
+    // this company, which no time window can fix.
+    phoneOnlyOverlap: (() => {
+      let found = 0;
+      let missing = 0;
+      const deltas: number[] = [];
+      for (const l of leads) {
+        if (l.lead_type !== 2) continue;
+        const p = digits10(
+          (l.contact_details as { phone_number?: unknown } | null)?.phone_number,
+        );
+        if (!p) continue;
+        const hits = byPhone.get(p);
+        if (!hits?.length) {
+          missing += 1;
+          continue;
+        }
+        found += 1;
+        const leadAt = leadEpochLocal(String(l.creation_date_time ?? ""));
+        if (leadAt !== null) {
+          for (const h of hits) {
+            const t = callEpochLocal(String(h.start_time ?? ""));
+            if (t !== null) deltas.push(Math.round(t - leadAt));
+          }
+        }
+      }
+      deltas.sort((a, b) => Math.abs(a) - Math.abs(b));
+      return { phoneFoundInCallRail: found, phoneNotInCallRail: missing, closestDeltasSec: deltas.slice(0, 12) };
+    })(),
   };
 
   return NextResponse.json({
