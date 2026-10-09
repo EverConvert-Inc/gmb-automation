@@ -19,7 +19,7 @@ import {
   pullTextMessagesForCompany,
   type CallrailDailyTotals,
 } from "./callrail";
-import { yesterdayIsoEastern, daysAgoIsoEastern } from "./date-utils";
+import { yesterdayIsoEastern, daysAgoIsoEastern, toIsoDateEastern } from "./date-utils";
 
 type SyncOpts = {
   fromDate: string; // YYYY-MM-DD
@@ -363,7 +363,11 @@ async function applySignedDateCorrections(
       );
       continue;
     }
-    const signedDate = event.signedAt.toISOString().slice(0, 10);
+    // Eastern, not UTC: signed_at is a real instant, and every other date
+    // in this pipeline (the call's own date, the sync's range bounds) is an
+    // Eastern calendar date. Reading it as UTC credited anything tagged
+    // after 20:00 ET to the following day.
+    const signedDate = toIsoDateEastern(event.signedAt);
     if (signedDate === c.date) {
       console.log(
         `[lsa-sync][signed-correction] call ${c.callId}: signed_at date (${signedDate}) matches its own date — no-op, no visible change`,
@@ -457,7 +461,9 @@ async function applyRedirectedInContributions(
     ),
   });
   for (const e of events) {
-    const targetDate = e.signedAt.toISOString().slice(0, 10);
+    // Same Eastern conversion as the origin side above — these two must
+    // agree, or a correction would subtract from one day and add to another.
+    const targetDate = toIsoDateEastern(e.signedAt);
     if (targetDate < fromDate || targetDate > toDate) continue;
 
     const b = bucket(targetDate);

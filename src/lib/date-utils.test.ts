@@ -4,6 +4,7 @@ import {
   firstOfMonthIsoEastern,
   firstOfPreviousMonthIsoEastern,
   lastDayOfPreviousMonthIsoEastern,
+  toIsoDateEastern,
   todayIsoEastern,
   yesterdayIsoEastern,
 } from "./date-utils";
@@ -107,5 +108,38 @@ describe("date-utils — Eastern-time date boundaries", () => {
 
     expect(firstOfPreviousMonthIsoEastern()).toBe("2026-06-01");
     expect(lastDayOfPreviousMonthIsoEastern()).toBe("2026-06-30");
+  });
+});
+
+// Guards the true-sign-date correction in lsa-sync.ts, which reads
+// call_signed_events.signed_at. These are real stored instants, so reading
+// them as UTC put any case tagged after 20:00 ET on the following day.
+describe("toIsoDateEastern", () => {
+  it("puts a 01:10 UTC instant on the PREVIOUS Eastern day (the real Weinstein case)", () => {
+    // 2026-10-07T01:10:40Z === 2026-10-06 21:10 EDT
+    const signedAt = new Date("2026-10-07T01:10:40.671Z");
+    expect(signedAt.toISOString().slice(0, 10)).toBe("2026-10-07"); // old behaviour
+    expect(toIsoDateEastern(signedAt)).toBe("2026-10-06"); // fixed
+  });
+
+  it("handles the EDT evening boundary either side of midnight ET", () => {
+    expect(toIsoDateEastern(new Date("2026-10-07T03:59:00Z"))).toBe("2026-10-06"); // 23:59 ET
+    expect(toIsoDateEastern(new Date("2026-10-07T04:00:00Z"))).toBe("2026-10-07"); // 00:00 ET
+  });
+
+  it("handles the EST evening boundary (UTC-5, winter)", () => {
+    expect(toIsoDateEastern(new Date("2026-01-15T04:59:00Z"))).toBe("2026-01-14"); // 23:59 EST
+    expect(toIsoDateEastern(new Date("2026-01-15T05:00:00Z"))).toBe("2026-01-15"); // 00:00 EST
+  });
+
+  it("crosses a month boundary correctly", () => {
+    // 23:30 ET on Oct 31 is already Nov 1 in UTC
+    expect(toIsoDateEastern(new Date("2026-11-01T03:30:00Z"))).toBe("2026-10-31");
+  });
+
+  it("leaves a midday instant on the same day under both readings", () => {
+    const midday = new Date("2026-10-06T16:13:45Z");
+    expect(toIsoDateEastern(midday)).toBe("2026-10-06");
+    expect(midday.toISOString().slice(0, 10)).toBe("2026-10-06");
   });
 });

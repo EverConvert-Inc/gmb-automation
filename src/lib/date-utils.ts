@@ -24,7 +24,13 @@ const dateFormatter = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
-function toIsoDateEastern(d: Date): string {
+// Exported for callers that hold a real stored instant (e.g.
+// call_signed_events.signed_at) rather than deriving a date from `now`.
+// `.toISOString().slice(0, 10)` on such a value reads off the UTC calendar
+// date, which is a different day from Eastern for anything timestamped
+// between 20:00 ET and midnight — see lsa-sync.ts's true-sign-date
+// correction, where that put a signed case on the wrong day.
+export function toIsoDateEastern(d: Date): string {
   return dateFormatter.format(d);
 }
 
