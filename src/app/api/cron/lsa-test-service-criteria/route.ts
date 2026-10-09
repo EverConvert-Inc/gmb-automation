@@ -92,18 +92,31 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const clientName = url.searchParams.get("client");
+  // Prefer ?customerId= — name matching is ambiguous whenever one client's
+  // name is a prefix of another's ("The Weinstein Firm" matches Conyers and
+  // both Peachtree rows), and findFirst then silently picks one. That hid
+  // five accounts from an earlier sweep, including the highest-volume one.
+  const customerIdParam = url.searchParams.get("customerId");
   const days = Number(url.searchParams.get("days") ?? "30");
 
   const client = await db.query.lsaClients.findFirst({
     where: and(
       isNotNull(lsaClients.googleAdsCustomerId),
       isNotNull(lsaClients.googleAdsOauthTokenId),
-      clientName ? ilike(lsaClients.name, `%${clientName}%`) : undefined,
+      customerIdParam
+        ? eq(lsaClients.googleAdsCustomerId, customerIdParam)
+        : clientName
+          ? ilike(lsaClients.name, `%${clientName}%`)
+          : undefined,
     ),
   });
   if (!client) {
     return NextResponse.json(
-      { error: `No lsa_clients row with Google Ads configured matching "${clientName ?? "(any)"}"` },
+      {
+        error: `No lsa_clients row with Google Ads configured matching ${
+          customerIdParam ? `customerId "${customerIdParam}"` : `"${clientName ?? "(any)"}"`
+        }`,
+      },
       { status: 404 },
     );
   }
