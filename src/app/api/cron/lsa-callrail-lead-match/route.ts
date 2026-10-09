@@ -245,6 +245,54 @@ export async function GET(req: Request) {
         tracker: c.source_name,
       })),
     distinctCallPhones: byPhone.size,
+    // Phone-number matching finds nothing, so test TIME alone against calls
+    // on LSA-named trackers. If timestamps line up while numbers don't, the
+    // lead's phone_number is a Google-masked number (note the
+    // phone_number_extension that comes with it), not the consumer's real
+    // caller ID — in which case time is the only usable join key.
+    timeOnlyAgainstLsaTrackers: (() => {
+      const lsaCalls = calls.filter(
+        (c) =>
+          c.direction === "inbound" &&
+          /lsa/i.test(String(c.source_name ?? "")) &&
+          callEpochLocal(String(c.start_time ?? "")) !== null,
+      );
+      const out: Array<Record<string, unknown>> = [];
+      let within60 = 0;
+      let within300 = 0;
+      for (const l of leads) {
+        if (l.lead_type !== 2) continue;
+        const leadAt = leadEpochLocal(String(l.creation_date_time ?? ""));
+        if (leadAt === null) continue;
+        let best: { delta: number; call: Record<string, unknown> } | null = null;
+        for (const c of lsaCalls) {
+          const t = callEpochLocal(String(c.start_time ?? ""))!;
+          const delta = t - leadAt;
+          if (!best || Math.abs(delta) < Math.abs(best.delta)) best = { delta, call: c };
+        }
+        if (!best) continue;
+        if (Math.abs(best.delta) <= 60) within60 += 1;
+        if (Math.abs(best.delta) <= 300) within300 += 1;
+        if (out.length < 10) {
+          out.push({
+            leadId: l.id,
+            leadAt: l.creation_date_time,
+            leadPhone: (l.contact_details as { phone_number?: unknown } | null)?.phone_number,
+            closestCallAt: best.call.start_time,
+            closestCallPhone: best.call.customer_phone_number,
+            tracker: best.call.source_name,
+            deltaSec: best.delta,
+            hasTranscription: !!best.call.transcription,
+          });
+        }
+      }
+      return {
+        lsaTrackerCallCount: lsaCalls.length,
+        leadsWithClosestWithin60s: within60,
+        leadsWithClosestWithin300s: within300,
+        samples: out,
+      };
+    })(),
     // Decisive test: does the lead's phone appear in CallRail AT ALL,
     // ignoring time? Zero overlap means LSA calls never reach CallRail for
     // this company, which no time window can fix.
