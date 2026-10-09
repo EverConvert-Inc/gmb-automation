@@ -219,7 +219,36 @@ export async function GET(req: Request) {
     }
   }
 
+  // Debug: the two sides of the join, raw, so a zero-match result can be
+  // told apart from a broken comparison.
+  const debug = {
+    sampleLeadContactDetails: leads
+      .filter((l) => l.lead_type === 2)
+      .slice(0, 6)
+      .map((l) => ({
+        raw: l.contact_details,
+        normalized: digits10(
+          (l.contact_details as { phone_number?: unknown } | null)?.phone_number ??
+            (l.contact_details as unknown),
+        ),
+        createdAt: l.creation_date_time,
+        leadEpoch: leadEpochLocal(String(l.creation_date_time ?? "")),
+      })),
+    sampleCalls: calls
+      .filter((c) => c.direction === "inbound")
+      .slice(0, 6)
+      .map((c) => ({
+        rawPhone: c.customer_phone_number,
+        normalized: digits10(c.customer_phone_number),
+        startTime: c.start_time,
+        callEpoch: callEpochLocal(String(c.start_time ?? "")),
+        tracker: c.source_name,
+      })),
+    distinctCallPhones: byPhone.size,
+  };
+
   return NextResponse.json({
+    debug,
     client: { name: client.name, customerId, callrailCompanyId: client.callrailCompanyId },
     window: { fromDate, toDate, windowMin },
     totals: { leads: leads.length, callrailInboundCalls: byPhone.size ? calls.length : 0 },
