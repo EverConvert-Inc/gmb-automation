@@ -81,7 +81,11 @@ export async function GET(req: Request) {
     // "Valid fields are ..." error listing.
     callsUrl.searchParams.set(
       "fields",
-      "gclid,fbclid,msclkid,utm_source,utm_medium,utm_campaign,utm_term,utm_content,landing_page_url,referring_url,referrer_domain,source,source_name,medium,campaign,keywords,first_call,duration,direction,customer_phone_number,tags,tracker_id",
+      // transcription/call_summary/sentiment/keywords_spotted require
+      // CallRail's Premium Conversation Intelligence — requesting them is
+      // the only way to find out whether the plan actually includes it.
+      // recording/recording_player are the audio fallback if it doesn't.
+      "gclid,fbclid,msclkid,utm_source,utm_medium,utm_campaign,utm_term,utm_content,landing_page_url,referring_url,referrer_domain,source,source_name,medium,campaign,keywords,first_call,duration,direction,customer_phone_number,tags,tracker_id,transcription,call_summary,sentiment,keywords_spotted,recording,recording_player,recording_duration",
     );
 
     const calls: Array<{ gclid?: string | null }> = [];
