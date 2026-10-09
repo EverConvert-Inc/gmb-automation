@@ -361,10 +361,10 @@ export async function GET(req: Request) {
     // vice versa) — the cases a one-to-one assignment rule has to resolve.
     competition: (() => {
       const W = 60;
-      const lsaCalls = calls
+      const lsaCalls: Array<{ c: Record<string, unknown>; t: number }> = calls
         .filter((c) => c.direction === "inbound" && /lsa/i.test(String(c.source_name ?? "")))
-        .map((c) => ({ ...c, t: callEpochLocal(String(c.start_time ?? "")) }))
-        .filter((c) => c.t !== null);
+        .map((c) => ({ c, t: callEpochLocal(String(c.start_time ?? "")) }))
+        .filter((x): x is { c: Record<string, unknown>; t: number } => x.t !== null);
       const leadList = leads
         .map((l) => ({ l, t: leadEpochLocal(String(l.creation_date_time ?? "")) }))
         .filter((x) => x.t !== null);
@@ -373,7 +373,7 @@ export async function GET(req: Request) {
       let leadsMulti = 0;
       let callsMulti = 0;
       for (const { l, t } of leadList) {
-        const hits = lsaCalls.filter((c) => Math.abs((c.t as number) - (t as number)) <= W);
+        const hits = lsaCalls.filter((x) => Math.abs(x.t - (t as number)) <= W);
         if (hits.length > 1) {
           leadsMulti += 1;
           if (leadsWithMultipleCalls.length < 6) {
@@ -381,37 +381,35 @@ export async function GET(req: Request) {
               leadId: l.id,
               leadAt: l.creation_date_time,
               leadType: l.lead_type,
-              candidates: hits.map((c) => ({
-                callAt: c.start_time,
-                phone: c.customer_phone_number,
-                durationSec: c.duration,
-                tracker: c.source_name,
-                firstCall: c.first_call,
-                hasTranscription: !!c.transcription,
-                deltaSec: (c.t as number) - (t as number),
+              candidates: hits.map((x) => ({
+                callAt: x.c.start_time,
+                phone: x.c.customer_phone_number,
+                durationSec: x.c.duration,
+                tracker: x.c.source_name,
+                firstCall: x.c.first_call,
+                hasTranscription: !!x.c.transcription,
+                deltaSec: x.t - (t as number),
               })),
             });
           }
         }
       }
-      for (const c of lsaCalls) {
-        const hits = leadList.filter(
-          (x) => Math.abs((c.t as number) - (x.t as number)) <= W,
-        );
+      for (const cc of lsaCalls) {
+        const hits = leadList.filter((x) => Math.abs(cc.t - (x.t as number)) <= W);
         if (hits.length > 1) {
           callsMulti += 1;
           if (callsWithMultipleLeads.length < 6) {
             callsWithMultipleLeads.push({
-              callAt: c.start_time,
-              phone: c.customer_phone_number,
-              durationSec: c.duration,
-              tracker: c.source_name,
+              callAt: cc.c.start_time,
+              phone: cc.c.customer_phone_number,
+              durationSec: cc.c.duration,
+              tracker: cc.c.source_name,
               candidates: hits.map((x) => ({
                 leadId: x.l.id,
                 leadAt: x.l.creation_date_time,
                 leadType: x.l.lead_type,
                 serviceId: x.l.service_id,
-                deltaSec: (c.t as number) - (x.t as number),
+                deltaSec: cc.t - (x.t as number),
               })),
             });
           }
@@ -419,19 +417,19 @@ export async function GET(req: Request) {
       }
       // Calls on the LSA tracker with NO lead within the window at all.
       const callsWithNoLead = lsaCalls.filter(
-        (c) => !leadList.some((x) => Math.abs((c.t as number) - (x.t as number)) <= W),
+        (x) => !leadList.some((y) => Math.abs(x.t - (y.t as number)) <= W),
       );
       return {
         windowSec: W,
         leadsWithMoreThanOneCall: leadsMulti,
         callsWithMoreThanOneLead: callsMulti,
         callsWithNoLeadInWindow: callsWithNoLead.length,
-        callsWithNoLeadSample: callsWithNoLead.slice(0, 8).map((c) => ({
-          callAt: c.start_time,
-          phone: c.customer_phone_number,
-          durationSec: c.duration,
-          tracker: c.source_name,
-          firstCall: c.first_call,
+        callsWithNoLeadSample: callsWithNoLead.slice(0, 8).map((x) => ({
+          callAt: x.c.start_time,
+          phone: x.c.customer_phone_number,
+          durationSec: x.c.duration,
+          tracker: x.c.source_name,
+          firstCall: x.c.first_call,
         })),
         leadsWithMultipleCalls,
         callsWithMultipleLeads,
