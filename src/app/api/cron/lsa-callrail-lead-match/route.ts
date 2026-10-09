@@ -357,6 +357,86 @@ export async function GET(req: Request) {
         samples,
       };
     })(),
+    // Where more than one call sits within the window of a single lead (or
+    // vice versa) — the cases a one-to-one assignment rule has to resolve.
+    competition: (() => {
+      const W = 60;
+      const lsaCalls = calls
+        .filter((c) => c.direction === "inbound" && /lsa/i.test(String(c.source_name ?? "")))
+        .map((c) => ({ ...c, t: callEpochLocal(String(c.start_time ?? "")) }))
+        .filter((c) => c.t !== null);
+      const leadList = leads
+        .map((l) => ({ l, t: leadEpochLocal(String(l.creation_date_time ?? "")) }))
+        .filter((x) => x.t !== null);
+      const leadsWithMultipleCalls: Array<Record<string, unknown>> = [];
+      const callsWithMultipleLeads: Array<Record<string, unknown>> = [];
+      let leadsMulti = 0;
+      let callsMulti = 0;
+      for (const { l, t } of leadList) {
+        const hits = lsaCalls.filter((c) => Math.abs((c.t as number) - (t as number)) <= W);
+        if (hits.length > 1) {
+          leadsMulti += 1;
+          if (leadsWithMultipleCalls.length < 6) {
+            leadsWithMultipleCalls.push({
+              leadId: l.id,
+              leadAt: l.creation_date_time,
+              leadType: l.lead_type,
+              candidates: hits.map((c) => ({
+                callAt: c.start_time,
+                phone: c.customer_phone_number,
+                durationSec: c.duration,
+                tracker: c.source_name,
+                firstCall: c.first_call,
+                hasTranscription: !!c.transcription,
+                deltaSec: (c.t as number) - (t as number),
+              })),
+            });
+          }
+        }
+      }
+      for (const c of lsaCalls) {
+        const hits = leadList.filter(
+          (x) => Math.abs((c.t as number) - (x.t as number)) <= W,
+        );
+        if (hits.length > 1) {
+          callsMulti += 1;
+          if (callsWithMultipleLeads.length < 6) {
+            callsWithMultipleLeads.push({
+              callAt: c.start_time,
+              phone: c.customer_phone_number,
+              durationSec: c.duration,
+              tracker: c.source_name,
+              candidates: hits.map((x) => ({
+                leadId: x.l.id,
+                leadAt: x.l.creation_date_time,
+                leadType: x.l.lead_type,
+                serviceId: x.l.service_id,
+                deltaSec: (c.t as number) - (x.t as number),
+              })),
+            });
+          }
+        }
+      }
+      // Calls on the LSA tracker with NO lead within the window at all.
+      const callsWithNoLead = lsaCalls.filter(
+        (c) => !leadList.some((x) => Math.abs((c.t as number) - (x.t as number)) <= W),
+      );
+      return {
+        windowSec: W,
+        leadsWithMoreThanOneCall: leadsMulti,
+        callsWithMoreThanOneLead: callsMulti,
+        callsWithNoLeadInWindow: callsWithNoLead.length,
+        callsWithNoLeadSample: callsWithNoLead.slice(0, 8).map((c) => ({
+          callAt: c.start_time,
+          phone: c.customer_phone_number,
+          durationSec: c.duration,
+          tracker: c.source_name,
+          firstCall: c.first_call,
+        })),
+        leadsWithMultipleCalls,
+        callsWithMultipleLeads,
+      };
+    })(),
     // Phone-number matching finds nothing, so test TIME alone against calls
     // on LSA-named trackers. If timestamps line up while numbers don't, the
     // lead's phone_number is a Google-masked number (note the
