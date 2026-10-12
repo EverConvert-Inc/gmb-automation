@@ -351,6 +351,13 @@
       "when": 1791816234577,
       "tag": "0049_crazy_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1791819632320,
+      "tag": "0050_wild_leader",
+      "breakpoints": true
     }
   ]
 }

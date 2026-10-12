@@ -812,6 +812,11 @@ export const lsaLeadRatingDryRuns = pgTable(
     // Google's local_services_lead.id, as text — ids are int64 and must not
     // round-trip through a JS number.
     leadId: text("lead_id").notNull(),
+    // True when the intake team had ALREADY rated this lead in the LSA UI
+    // (lead_feedback_submitted = true) and we classified it anyway, purely
+    // to compare the model against their judgement. Kept distinct from the
+    // unrated backlog so the two are never mixed in a count.
+    alreadyRated: boolean("already_rated").notNull().default(false),
     leadCreatedAt: timestamp("lead_created_at", { withTimezone: true }),
     leadType: text("lead_type"),
     leadStatus: text("lead_status"),

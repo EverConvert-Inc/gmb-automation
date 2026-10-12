@@ -40,6 +40,8 @@ export async function GET(req: Request) {
   // dry run is only useful if its verdicts can actually be reviewed.
   const resultsOnly = url.searchParams.get("results") === "true";
   const all = url.searchParams.get("all") === "true";
+  // Re-classify leads the intake team already rated, for comparison only.
+  const population = url.searchParams.get("rated") === "true" ? "rated" : "unrated";
 
   if (resultsOnly) {
     const rows = await db
@@ -47,11 +49,18 @@ export async function GET(req: Request) {
       .from(lsaLeadRatingDryRuns)
       .innerJoin(lsaClients, eq(lsaClients.id, lsaLeadRatingDryRuns.lsaClientId))
       .where(
-        customerId ? eq(lsaClients.googleAdsCustomerId, customerId) : undefined,
+        and(
+          customerId ? eq(lsaClients.googleAdsCustomerId, customerId) : undefined,
+          eq(
+            lsaLeadRatingDryRuns.alreadyRated,
+            url.searchParams.get("rated") === "true",
+          ),
+        ),
       );
     return NextResponse.json({
       dryRun: true,
       sentToGoogle: false,
+      population: url.searchParams.get("rated") === "true" ? "rated" : "unrated",
       rowCount: rows.length,
       rows: rows.map((r) => ({
         client: r.lsa_clients.name,
@@ -88,7 +97,12 @@ export async function GET(req: Request) {
 
   for (const c of clients) {
     try {
-      const { counts, errors } = await runLeadRatingDryRun(c.id, { fromDate, toDate, limit });
+      const { counts, errors } = await runLeadRatingDryRun(c.id, {
+        fromDate,
+        toDate,
+        limit,
+        population,
+      });
       perClient.push({ client: c.name, customerId: c.googleAdsCustomerId, counts, errors });
       totals.unratedLeads += counts.unratedLeads;
       totals.judged += counts.judged;
@@ -113,6 +127,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     dryRun: true,
     sentToGoogle: false,
+    population,
     window: { fromDate, toDate },
     totals,
     // Every unrated lead is accounted for: judged + every not-judged reason

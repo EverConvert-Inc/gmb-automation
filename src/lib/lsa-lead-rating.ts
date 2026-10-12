@@ -260,7 +260,15 @@ export function emptyCounts(): DryRunCounts {
 
 export async function runLeadRatingDryRun(
   lsaClientId: string,
-  opts: { fromDate: string; toDate: string; limit?: number },
+  opts: {
+    fromDate: string;
+    toDate: string;
+    limit?: number;
+    // "unrated" is the real backlog. "rated" re-classifies leads the intake
+    // team has already judged, purely to compare the model against them —
+    // kept separate everywhere so the two populations never mix.
+    population?: "unrated" | "rated";
+  },
 ): Promise<{ counts: DryRunCounts; errors: string[] }> {
   const counts = emptyCounts();
   const errors: string[] = [];
@@ -297,9 +305,12 @@ export async function runLeadRatingDryRun(
     WHERE local_services_lead.creation_date_time BETWEEN '${opts.fromDate} 00:00:00' AND '${opts.toDate} 23:59:59'
   `)) as Array<Record<string, unknown>>;
 
+  const wantRated = opts.population === "rated";
   const unrated = leadRows
     .map((r) => (r.local_services_lead ?? {}) as Record<string, unknown>)
-    .filter((l) => l.lead_feedback_submitted !== true)
+    .filter((l) =>
+      wantRated ? l.lead_feedback_submitted === true : l.lead_feedback_submitted !== true,
+    )
     .slice(0, opts.limit ?? 200);
   counts.unratedLeads = unrated.length;
   if (unrated.length === 0) return { counts, errors };
@@ -430,6 +441,7 @@ export async function runLeadRatingDryRun(
         leadType: ev.leadType,
         leadStatus: ev.leadStatus,
         leadCharged: typeof charged === "boolean" ? charged : null,
+        alreadyRated: wantRated,
         serviceId: ev.serviceId,
         categoryId: ev.categoryId,
         evidenceSource: ev.source,
@@ -447,6 +459,7 @@ export async function runLeadRatingDryRun(
       .onConflictDoUpdate({
         target: [lsaLeadRatingDryRuns.lsaClientId, lsaLeadRatingDryRuns.leadId],
         set: {
+          alreadyRated: wantRated,
           evidenceSource: ev.source,
           evidenceExcerpt: ev.text ? ev.text.slice(0, 500) : null,
           matchedServiceId: classification?.requestedService ?? null,

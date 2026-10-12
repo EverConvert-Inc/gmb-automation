@@ -1,0 +1,1 @@
+ALTER TABLE "lsa_lead_rating_dry_runs" ADD COLUMN "already_rated" boolean DEFAULT false NOT NULL;
