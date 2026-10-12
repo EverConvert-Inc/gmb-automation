@@ -65,6 +65,9 @@ export type Classification = {
   // genuine lead. Only consulted when requestedService is UNKNOWN — the
   // enabled-services list always wins when the service is identifiable.
   meetsClientDefinition: boolean;
+  // True when the model fell back on Google's own service_id/category_id
+  // label because the conversation alone didn't identify the service.
+  usedLabelHint: boolean;
   reasoning: string;
 };
 
@@ -92,10 +95,12 @@ export function parseClassification(raw: string): Classification | null {
   const requestedService = String(o.requested_service ?? o.requestedService ?? "").trim();
   if (!requestedService) return null;
   const meets = o.meets_client_definition ?? o.meetsClientDefinition;
+  const hint = o.used_label_as_hint ?? o.usedLabelAsHint;
   return {
     requestedService,
     classification,
     meetsClientDefinition: meets === true || String(meets).toLowerCase() === "true",
+    usedLabelHint: hint === true || String(hint).toLowerCase() === "true",
     reasoning: String(o.reasoning ?? "").slice(0, 1000),
   };
 }
@@ -159,9 +164,13 @@ The firm had exactly these services switched on when this enquiry arrived:
 ${enabledServiceIds.map((s) => `- ${s}`).join("\n")}
 
 Return ONLY JSON:
-{"requested_service": "<one id from the list above, or OTHER_NOT_LISTED, or UNKNOWN>", "classification": "<GENUINE|SPAM|SOLICITATION|DUPLICATE|NOT_READY_TO_BOOK>", "meets_client_definition": <true|false>, "reasoning": "<one or two sentences>"}
+{"requested_service": "<one id from the list above, or OTHER_NOT_LISTED, or UNKNOWN>", "classification": "<GENUINE|SPAM|SOLICITATION|DUPLICATE|NOT_READY_TO_BOOK>", "meets_client_definition": <true|false>, "used_label_as_hint": <true|false>, "reasoning": "<one or two sentences>"}
 
 requested_service: which of the listed services the person was asking about. Use the id exactly as written above. Use OTHER_NOT_LISTED when they clearly wanted a legal matter that is not in the list. Use UNKNOWN when the evidence is too thin to tell.
+
+The enquiry comes with a "Google's label" line. That label is Google's own unverified guess and is often wrong or missing. THE CUSTOMER'S CONVERSATION TAKES PRIORITY: whenever the conversation conflicts with the label, or simply does not support it, follow the conversation and ignore the label. Only when the conversation is too thin to tell may you use the label as a weak hint — and if you do, say so explicitly in your reasoning.
+
+used_label_as_hint: true only when you relied on Google's label because the conversation alone was not enough. False whenever the conversation itself told you the service.
 
 meets_client_definition: ${
     qualificationDefinition
@@ -428,6 +437,7 @@ export async function runLeadRatingDryRun(
         matchedServiceId: classification?.requestedService ?? null,
         serviceWasEnabled: decision?.serviceWasEnabled ?? null,
         classification: classification?.classification ?? null,
+        usedLabelHint: classification?.usedLabelHint ?? null,
         proposedAnswer: judged ? (decision?.answer ?? null) : null,
         proposedDissatisfiedReason: judged ? (decision?.dissatisfiedReason ?? null) : null,
         modelReasoning: classification?.reasoning ?? null,
@@ -442,6 +452,7 @@ export async function runLeadRatingDryRun(
           matchedServiceId: classification?.requestedService ?? null,
           serviceWasEnabled: decision?.serviceWasEnabled ?? null,
           classification: classification?.classification ?? null,
+          usedLabelHint: classification?.usedLabelHint ?? null,
           proposedAnswer: judged ? (decision?.answer ?? null) : null,
           proposedDissatisfiedReason: judged ? (decision?.dissatisfiedReason ?? null) : null,
           modelReasoning: classification?.reasoning ?? null,
@@ -490,8 +501,9 @@ function buildEvidence(
 
 function buildPrompt(l: Record<string, unknown>, ev: LeadEvidence): string {
   return [
-    `Lead service: ${ev.serviceId ?? "(none recorded)"}`,
-    `Lead category: ${ev.categoryId ?? "(none recorded)"}`,
+    `Google's label (unverified guess, may be wrong or missing) — service: ${
+      ev.serviceId ?? "(none recorded)"
+    }, category: ${ev.categoryId ?? "(none recorded)"}`,
     `Evidence type: ${ev.source === "message" ? "customer message(s)" : "call transcript"}`,
     "",
     ev.source === "message"

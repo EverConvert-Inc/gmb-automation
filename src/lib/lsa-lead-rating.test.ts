@@ -13,6 +13,7 @@ describe("parseClassification", () => {
       requestedService: "auto_accidents",
       classification: "GENUINE",
       meetsClientDefinition: true,
+      usedLabelHint: false,
       reasoning: "Car crash.",
     });
   });
@@ -35,6 +36,13 @@ describe("parseClassification", () => {
     expect(c?.meetsClientDefinition).toBe(false);
   });
 
+  it("parses used_label_as_hint, defaulting to false when omitted", () => {
+    const withHint = parseClassification('{"requested_service":"auto_accidents","classification":"GENUINE","used_label_as_hint":true}');
+    expect(withHint?.usedLabelHint).toBe(true);
+    const without = parseClassification('{"requested_service":"auto_accidents","classification":"GENUINE"}');
+    expect(without?.usedLabelHint).toBe(false);
+  });
+
   it("returns null on prose", () => {
     expect(parseClassification("this looks like a good lead")).toBeNull();
   });
@@ -46,6 +54,7 @@ describe("decideRating", () => {
     requestedService: svc,
     classification: "GENUINE",
     meetsClientDefinition: meets,
+    usedLabelHint: false,
     reasoning: "",
   });
 
@@ -110,6 +119,7 @@ describe("decideRating", () => {
       requestedService: "auto_accidents",
       classification: cl,
       meetsClientDefinition: true,
+      usedLabelHint: false,
       reasoning: "",
     });
     expect(decideRating(mk("SPAM"), enabled)).toMatchObject({ answer: "VERY_DISSATISFIED", dissatisfiedReason: "SPAM" });

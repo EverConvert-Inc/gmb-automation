@@ -836,6 +836,11 @@ export const lsaLeadRatingDryRuns = pgTable(
     serviceWasEnabled: boolean("service_was_enabled"),
     // GENUINE | SPAM | SOLICITATION | DUPLICATE | NOT_READY_TO_BOOK.
     classification: text("classification"),
+    // Whether the model leaned on Google's own service_id/category_id label
+    // because the conversation was too thin to identify the service itself.
+    // Tracked because that label is exactly the signal we don't trust — this
+    // measures how often it actually moves a verdict.
+    usedLabelHint: boolean("used_label_hint"),
     // Proposed LocalServicesLeadSurveyAnswer, e.g. "VERY_SATISFIED".
     proposedAnswer: text("proposed_answer"),
     // Proposed LocalServicesLeadSurveyDissatisfiedReason when dissatisfied.
