@@ -726,6 +726,14 @@ export const lsaClients = pgTable(
     // injury clients but not a criminal defence firm, so it is per client
     // rather than inferred from the category.
     leadQualificationDefinition: text("lead_qualification_definition"),
+    // Allowlist for automated lead rating. FALSE for every client until
+    // explicitly enabled, so widening the rollout is a config change rather
+    // than a deploy, and a newly added client can never be swept in.
+    leadRatingEnabled: boolean("lead_rating_enabled").notNull().default(false),
+    // Round-robin cursor for the every-few-minutes scan: each run takes the
+    // least-recently-scanned clients, so every client is covered without any
+    // single invocation going near the 300s function limit.
+    lastRatedScanAt: timestamp("last_rated_scan_at", { withTimezone: true }),
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
@@ -856,6 +864,12 @@ export const lsaLeadRatingDryRuns = pgTable(
     // "ambiguous_match", "model_error", "model_unparseable".
     notJudgedReason: text("not_judged_reason"),
     model: text("model"),
+    // Retry bookkeeping. A lead whose call is still in progress, or whose
+    // transcript has not landed yet (CallRail takes ~a minute), is written
+    // immediately with a retryable reason and picked up again later rather
+    // than being silently skipped between runs.
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAfter: timestamp("next_attempt_after", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -865,6 +879,41 @@ export const lsaLeadRatingDryRuns = pgTable(
 );
 
 export type LsaLeadRatingDryRun = typeof lsaLeadRatingDryRuns.$inferSelect;
+
+// Audit trail for ratings actually sent to Google via
+// LocalServicesLeadService.ProvideLeadFeedback. That API is write-only with
+// no read-back and no way to revise a rating, so an unlogged submission is
+// unrecoverable — every attempt is recorded here, successful or not.
+//
+// The unique index on lead_id is the double-submission guard: the row is
+// inserted BEFORE the API call, so a crash between call and write can never
+// produce a second submission for the same lead.
+export const lsaLeadRatingSubmissions = pgTable(
+  "lsa_lead_rating_submissions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    leadId: text("lead_id").notNull(),
+    leadResourceName: text("lead_resource_name").notNull(),
+    surveyAnswer: text("survey_answer").notNull(),
+    dissatisfiedReason: text("dissatisfied_reason"),
+    // The exact request body sent, so what was submitted is reconstructable
+    // even if the rating logic changes afterwards.
+    requestPayload: jsonb("request_payload").notNull(),
+    status: text("status").notNull(), // "pending" | "ok" | "failed"
+    responseBody: text("response_body"),
+    errorMessage: text("error_message"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("lsa_lead_rating_submissions_lead_unique").on(t.leadId),
+    clientIdx: index("lsa_lead_rating_submissions_client_idx").on(t.lsaClientId),
+  }),
+);
+
+export type LsaLeadRatingSubmission = typeof lsaLeadRatingSubmissions.$inferSelect;
 
 // One row per (lsa_client, date), merging leads + cost + CallRail in a
 // single write from the sync itself — unlike the PPC tables (ppc_ads_daily /

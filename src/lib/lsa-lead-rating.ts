@@ -26,8 +26,21 @@ import { decryptString } from "./crypto";
 import { getCustomer } from "./google-ads";
 import { matchesAnyFilter } from "./callrail";
 import { generateJson, GEMINI_MODEL } from "./gemini";
+import { pullLocalServiceCriteria } from "./google-ads";
+import { todayIsoEastern } from "./date-utils";
 
 export const MATCH_WINDOW_SECONDS = 60;
+
+// A call may still be in progress, and CallRail transcripts land roughly a
+// minute after a call ends — so these are "not ready yet", not "no".
+export const RETRYABLE_REASONS = new Set<string>(["no_matching_call", "no_transcription"]);
+// Give up after this many attempts: a call that never produced a transcript
+// will not suddenly produce one, and retrying forever costs Gemini nothing
+// but costs CallRail and Google Ads calls every run.
+export const MAX_ATTEMPTS = 6;
+export function backoffMinutes(attempt: number): number {
+  return Math.min(60, 2 ** Math.max(0, attempt - 1) * 2);
+}
 
 export type NotJudgedReason =
   | "no_conversation"
@@ -40,9 +53,21 @@ export type NotJudgedReason =
   | "model_error"
   | "model_unparseable";
 
+// A verdict ready for submission. Carries the lead's resource name because
+// ProvideLeadFeedback is keyed on it, not on the numeric id.
+export type JudgedLead = {
+  leadId: string;
+  leadResourceName: string;
+  answer: string;
+  dissatisfiedReason: string | null;
+};
+
 export type DryRunCounts = {
   unratedLeads: number;
   judged: number;
+  // Leads already settled by an earlier run (verdict recorded, terminally
+  // unjudgeable, out of attempts, or still inside their retry backoff).
+  skippedExisting: number;
   charged: number;
   uncharged: number;
   chargedUnknown: number;
@@ -250,6 +275,7 @@ export function emptyCounts(): DryRunCounts {
   return {
     unratedLeads: 0,
     judged: 0,
+    skippedExisting: 0,
     charged: 0,
     uncharged: 0,
     chargedUnknown: 0,
@@ -269,20 +295,21 @@ export async function runLeadRatingDryRun(
     // kept separate everywhere so the two populations never mix.
     population?: "unrated" | "rated";
   },
-): Promise<{ counts: DryRunCounts; errors: string[] }> {
+): Promise<{ counts: DryRunCounts; errors: string[]; judgedLeads: JudgedLead[] }> {
   const counts = emptyCounts();
   const errors: string[] = [];
+  const judgedLeads: JudgedLead[] = [];
 
   const client = await db.query.lsaClients.findFirst({
     where: eq(lsaClients.id, lsaClientId),
   });
   if (!client?.googleAdsCustomerId || !client.googleAdsOauthTokenId) {
-    return { counts, errors: ["client not linked to Google Ads"] };
+    return { counts, errors: ["client not linked to Google Ads"], judgedLeads };
   }
   const cred = await db.query.oauthCredentials.findFirst({
     where: eq(oauthCredentials.id, client.googleAdsOauthTokenId),
   });
-  if (!cred) return { counts, errors: ["oauth credential missing"] };
+  if (!cred) return { counts, errors: ["oauth credential missing"], judgedLeads };
 
   const customer = getCustomer(
     decryptString(cred.refreshTokenEncrypted),
@@ -305,6 +332,16 @@ export async function runLeadRatingDryRun(
     WHERE local_services_lead.creation_date_time BETWEEN '${opts.fromDate} 00:00:00' AND '${opts.toDate} 23:59:59'
   `)) as Array<Record<string, unknown>>;
 
+  // Never classify the same lead twice: a lead with a verdict is done, and
+  // a retryable one is skipped until its backoff elapses.
+  const existing = new Map(
+    (
+      await db
+        .select()
+        .from(lsaLeadRatingDryRuns)
+        .where(eq(lsaLeadRatingDryRuns.lsaClientId, lsaClientId))
+    ).map((r) => [r.leadId, r]),
+  );
   const wantRated = opts.population === "rated";
   const unrated = leadRows
     .map((r) => (r.local_services_lead ?? {}) as Record<string, unknown>)
@@ -313,7 +350,7 @@ export async function runLeadRatingDryRun(
     )
     .slice(0, opts.limit ?? 200);
   counts.unratedLeads = unrated.length;
-  if (unrated.length === 0) return { counts, errors };
+  if (unrated.length === 0) return { counts, errors, judgedLeads };
 
   // --- Customer messages for those leads.
   const messageByLead = new Map<string, string[]>();
@@ -375,6 +412,46 @@ export async function runLeadRatingDryRun(
     }
   }
 
+  // Today's leads have no snapshot yet — the daily sync writes it for
+  // yesterday. Read the criteria LIVE instead, and persist that read as
+  // today's snapshot so it becomes history for later runs. Past dates still
+  // use the stored snapshot; today's list is never applied to an old lead.
+  const today = todayIsoEastern();
+  let liveEnabled: string[] | null = null;
+  try {
+    const criteria = await pullLocalServiceCriteria(
+      decryptString(cred.refreshTokenEncrypted),
+      client.googleAdsCustomerId,
+      client.loginCustomerId ?? undefined,
+    );
+    const enabledNow = criteria.filter((c) => c.status === "ENABLED" && !c.negative);
+    if (enabledNow.length > 0) {
+      liveEnabled = enabledNow.map((c) => c.serviceId);
+      await db
+        .insert(lsaServiceSnapshots)
+        .values({
+          lsaClientId,
+          date: today,
+          enabledServiceIds: liveEnabled,
+          criteria,
+          leadServiceIds: {},
+          criteriaAvailable: true,
+          capturedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [lsaServiceSnapshots.lsaClientId, lsaServiceSnapshots.date],
+          set: {
+            enabledServiceIds: liveEnabled,
+            criteria,
+            criteriaAvailable: true,
+            capturedAt: new Date(),
+          },
+        });
+    }
+  } catch (err) {
+    errors.push(`live criteria: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // --- Enabled services AS OF each lead's own date. campaign_criterion
   // only ever returns current state, so today's list says nothing about a
   // lead from last month — that is exactly why the snapshot exists.
@@ -390,6 +467,17 @@ export async function runLeadRatingDryRun(
 
   // --- Build evidence, classify, record.
   for (const l of unrated) {
+    const prior = existing.get(String(l.id ?? ""));
+    if (prior) {
+      const done = !!prior.proposedAnswer;
+      const terminal = !!prior.notJudgedReason && !RETRYABLE_REASONS.has(prior.notJudgedReason);
+      const exhausted = prior.attempts >= MAX_ATTEMPTS;
+      const waiting = prior.nextAttemptAfter != null && prior.nextAttemptAfter > new Date();
+      if (done || terminal || exhausted || waiting) {
+        counts.skippedExisting += 1;
+        continue;
+      }
+    }
     const charged = l.lead_charged;
     if (charged === true) counts.charged += 1;
     else if (charged === false) counts.uncharged += 1;
@@ -403,7 +491,8 @@ export async function runLeadRatingDryRun(
     // The lead's own date, in the account's local calendar — the same basis
     // the snapshot is keyed on.
     const leadDate = ev.createdAt.slice(0, 10);
-    const enabled = snapshotByDate.get(leadDate);
+    const enabled =
+      leadDate === today ? (liveEnabled ?? snapshotByDate.get(leadDate)) : snapshotByDate.get(leadDate);
     if (!notJudged && !enabled) notJudged = "no_service_snapshot";
 
     if (!notJudged && ev.text && enabled) {
@@ -428,6 +517,14 @@ export async function runLeadRatingDryRun(
     if (judged && decision) {
       counts.judged += 1;
       counts.byAnswer[decision.answer] = (counts.byAnswer[decision.answer] ?? 0) + 1;
+      if (l.resource_name) {
+        judgedLeads.push({
+          leadId: ev.leadId,
+          leadResourceName: String(l.resource_name),
+          answer: decision.answer,
+          dissatisfiedReason: decision.dissatisfiedReason,
+        });
+      }
     } else if (notJudged) {
       counts.notJudged[notJudged] = (counts.notJudged[notJudged] ?? 0) + 1;
     }
@@ -455,6 +552,11 @@ export async function runLeadRatingDryRun(
         modelReasoning: classification?.reasoning ?? null,
         notJudgedReason: judged ? null : notJudged,
         model: GEMINI_MODEL,
+        attempts: (prior?.attempts ?? 0) + 1,
+        nextAttemptAfter:
+          !judged && notJudged && RETRYABLE_REASONS.has(notJudged)
+            ? new Date(Date.now() + backoffMinutes((prior?.attempts ?? 0) + 1) * 60_000)
+            : null,
       })
       .onConflictDoUpdate({
         target: [lsaLeadRatingDryRuns.lsaClientId, lsaLeadRatingDryRuns.leadId],
@@ -471,12 +573,17 @@ export async function runLeadRatingDryRun(
           modelReasoning: classification?.reasoning ?? null,
           notJudgedReason: judged ? null : notJudged,
           model: GEMINI_MODEL,
+          attempts: (prior?.attempts ?? 0) + 1,
+          nextAttemptAfter:
+            !judged && notJudged && RETRYABLE_REASONS.has(notJudged)
+              ? new Date(Date.now() + backoffMinutes((prior?.attempts ?? 0) + 1) * 60_000)
+              : null,
           createdAt: new Date(),
         },
       });
   }
 
-  return { counts, errors };
+  return { counts, errors, judgedLeads };
 }
 
 function buildEvidence(

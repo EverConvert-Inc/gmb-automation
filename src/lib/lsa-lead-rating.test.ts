@@ -3,7 +3,10 @@ import {
   parseClassification,
   decideRating,
   selectCallForLead,
+  backoffMinutes,
   MATCH_WINDOW_SECONDS,
+  MAX_ATTEMPTS,
+  RETRYABLE_REASONS,
 } from "./lsa-lead-rating";
 
 describe("parseClassification", () => {
@@ -168,5 +171,24 @@ describe("selectCallForLead", () => {
 
   it("uses a 60 second window", () => {
     expect(MATCH_WINDOW_SECONDS).toBe(60);
+  });
+});
+
+describe("retry policy", () => {
+  it("treats only not-ready reasons as retryable", () => {
+    expect(RETRYABLE_REASONS.has("no_matching_call")).toBe(true);
+    expect(RETRYABLE_REASONS.has("no_transcription")).toBe(true);
+    // Terminal: re-running cannot change these.
+    expect(RETRYABLE_REASONS.has("service_unclear")).toBe(false);
+    expect(RETRYABLE_REASONS.has("no_service_snapshot")).toBe(false);
+    expect(RETRYABLE_REASONS.has("model_unparseable")).toBe(false);
+  });
+
+  it("backs off and caps so a lead cannot be retried forever", () => {
+    expect(backoffMinutes(1)).toBe(2);
+    expect(backoffMinutes(2)).toBe(4);
+    expect(backoffMinutes(3)).toBe(8);
+    expect(backoffMinutes(99)).toBe(60);
+    expect(MAX_ATTEMPTS).toBe(6);
   });
 });
