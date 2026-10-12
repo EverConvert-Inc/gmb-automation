@@ -330,6 +330,13 @@
       "when": 1791578110529,
       "tag": "0046_talented_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1791811161128,
+      "tag": "0047_cold_gargoyle",
+      "breakpoints": true
     }
   ]
 }

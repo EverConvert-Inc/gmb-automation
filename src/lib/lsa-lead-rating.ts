@@ -16,7 +16,12 @@
 // would otherwise cross-attribute each other's calls.
 import { and, eq } from "drizzle-orm";
 import { db } from "./db/client";
-import { lsaClients, lsaLeadRatingDryRuns, oauthCredentials } from "./db/schema";
+import {
+  lsaClients,
+  lsaLeadRatingDryRuns,
+  lsaServiceSnapshots,
+  oauthCredentials,
+} from "./db/schema";
 import { decryptString } from "./crypto";
 import { getCustomer } from "./google-ads";
 import { matchesAnyFilter } from "./callrail";
@@ -30,6 +35,8 @@ export type NotJudgedReason =
   | "no_matching_call"
   | "no_transcription"
   | "ambiguous_match"
+  | "no_service_snapshot"
+  | "service_unclear"
   | "model_error"
   | "model_unparseable";
 
@@ -43,33 +50,25 @@ export type DryRunCounts = {
   byAnswer: Record<string, number>;
 };
 
-const VALID_ANSWERS = new Set([
-  "VERY_SATISFIED",
-  "SATISFIED",
-  "NEUTRAL",
-  "DISSATISFIED",
-  "VERY_DISSATISFIED",
-]);
-const VALID_REASONS = new Set([
-  "OTHER_DISSATISFIED_REASON",
-  "GEO_MISMATCH",
-  "JOB_TYPE_MISMATCH",
-  "NOT_READY_TO_BOOK",
+const VALID_CLASSIFICATIONS = new Set([
+  "GENUINE",
   "SPAM",
-  "DUPLICATE",
   "SOLICITATION",
+  "DUPLICATE",
+  "NOT_READY_TO_BOOK",
 ]);
 
-export type Verdict = {
-  answer: string;
-  dissatisfiedReason: string | null;
+export type Classification = {
+  requestedService: string;
+  classification: string;
   reasoning: string;
 };
 
-// Parses the model's JSON reply, rejecting anything that isn't a value the
-// API would actually accept. A hallucinated enum must surface as
-// "model_unparseable", never as a rating we'd later submit.
-export function parseVerdict(raw: string): Verdict | null {
+// The model identifies WHAT the person wanted and whether the contact was
+// genuine. It does NOT choose the rating — that rule is applied in code
+// below, so it stays auditable and consistent rather than depending on the
+// model's judgement of our business rules.
+export function parseClassification(raw: string): Classification | null {
   let obj: unknown;
   try {
     obj = JSON.parse(raw);
@@ -84,45 +83,82 @@ export function parseVerdict(raw: string): Verdict | null {
   }
   if (!obj || typeof obj !== "object") return null;
   const o = obj as Record<string, unknown>;
-  const answer = String(o.answer ?? "").toUpperCase();
-  if (!VALID_ANSWERS.has(answer)) return null;
-  let reason: string | null = null;
-  const rawReason = o.dissatisfied_reason ?? o.dissatisfiedReason;
-  if (rawReason != null && String(rawReason).toUpperCase() !== "NONE") {
-    const r = String(rawReason).toUpperCase();
-    if (!VALID_REASONS.has(r)) return null;
-    reason = r;
-  }
-  // A dissatisfied verdict without a reason is not actionable, and a reason
-  // attached to a satisfied verdict is contradictory — reject both rather
-  // than submitting something incoherent later.
-  const dissatisfied = answer === "DISSATISFIED" || answer === "VERY_DISSATISFIED";
-  if (dissatisfied && !reason) return null;
-  if (!dissatisfied && reason) return null;
+  const classification = String(o.classification ?? "").toUpperCase();
+  if (!VALID_CLASSIFICATIONS.has(classification)) return null;
+  const requestedService = String(o.requested_service ?? o.requestedService ?? "").trim();
+  if (!requestedService) return null;
   return {
-    answer,
-    dissatisfiedReason: reason,
+    requestedService,
+    classification,
     reasoning: String(o.reasoning ?? "").slice(0, 1000),
   };
 }
 
-const SYSTEM_INSTRUCTION = `You rate Local Services Ads leads for a law firm, from what the person actually wanted.
+export type RatingDecision = {
+  answer: string;
+  dissatisfiedReason: string | null;
+  serviceWasEnabled: boolean | null;
+  notJudged: NotJudgedReason | null;
+};
 
-Return ONLY JSON: {"answer": <ANSWER>, "dissatisfied_reason": <REASON or null>, "reasoning": "<one or two sentences>"}
+// The rating rule, as the intake team actually applies it:
+//   - the service the person asked about was ON at the time -> satisfied,
+//     EVEN IF the firm declined the matter on the call. A firm turning
+//     down an at-fault accident while auto_accidents was switched on is
+//     not a job-type mismatch; the lead was for what was advertised.
+//   - the service was NOT on -> dissatisfied + JOB_TYPE_MISMATCH.
+//   - spam / solicitation / duplicate / not-ready -> their own reasons,
+//     regardless of service.
+export function decideRating(
+  c: Classification,
+  enabledServiceIds: string[],
+): RatingDecision {
+  switch (c.classification) {
+    case "SPAM":
+      return { answer: "VERY_DISSATISFIED", dissatisfiedReason: "SPAM", serviceWasEnabled: null, notJudged: null };
+    case "SOLICITATION":
+      return { answer: "VERY_DISSATISFIED", dissatisfiedReason: "SOLICITATION", serviceWasEnabled: null, notJudged: null };
+    case "DUPLICATE":
+      return { answer: "DISSATISFIED", dissatisfiedReason: "DUPLICATE", serviceWasEnabled: null, notJudged: null };
+    case "NOT_READY_TO_BOOK":
+      return { answer: "DISSATISFIED", dissatisfiedReason: "NOT_READY_TO_BOOK", serviceWasEnabled: null, notJudged: null };
+  }
+  // GENUINE from here: the rating turns on whether the service was on.
+  const svc = c.requestedService.toUpperCase();
+  if (svc === "UNKNOWN") {
+    // Do not guess. A genuine lead whose subject can't be identified is
+    // recorded as unjudged rather than rated on an assumption.
+    return { answer: "", dissatisfiedReason: null, serviceWasEnabled: null, notJudged: "service_unclear" };
+  }
+  if (svc === "OTHER_NOT_LISTED") {
+    return { answer: "DISSATISFIED", dissatisfiedReason: "JOB_TYPE_MISMATCH", serviceWasEnabled: false, notJudged: null };
+  }
+  const enabled = enabledServiceIds.includes(c.requestedService);
+  return enabled
+    ? { answer: "SATISFIED", dissatisfiedReason: null, serviceWasEnabled: true, notJudged: null }
+    : { answer: "DISSATISFIED", dissatisfiedReason: "JOB_TYPE_MISMATCH", serviceWasEnabled: false, notJudged: null };
+}
 
-ANSWER is one of VERY_SATISFIED, SATISFIED, NEUTRAL, DISSATISFIED, VERY_DISSATISFIED.
-REASON is required when the answer is DISSATISFIED or VERY_DISSATISFIED, and must be null otherwise.
-REASON is one of GEO_MISMATCH, JOB_TYPE_MISMATCH, NOT_READY_TO_BOOK, SPAM, DUPLICATE, SOLICITATION, OTHER_DISSATISFIED_REASON.
+function systemInstruction(enabledServiceIds: string[]): string {
+  return `You read a Local Services Ads enquiry to a law firm and report TWO things. You do not decide any rating.
 
-Guidance:
-- A genuine prospective client describing a matter the firm handles: SATISFIED, or VERY_SATISFIED when they clearly want to proceed.
-- Someone selling something to the firm: VERY_DISSATISFIED with SOLICITATION.
-- Robocall, silence, or nonsense: VERY_DISSATISFIED with SPAM.
-- An existing client checking on their case, or an obvious repeat of an earlier contact: DISSATISFIED with DUPLICATE.
-- A real person whose matter is a case type this firm does not handle: DISSATISFIED with JOB_TYPE_MISMATCH.
-- Outside the firm's service area: DISSATISFIED with GEO_MISMATCH.
-- Genuine but only enquiring, not ready to engage: NEUTRAL, or DISSATISFIED with NOT_READY_TO_BOOK if they say so.
-- If the evidence is too thin to tell, answer NEUTRAL and say so in the reasoning. Do not guess.`;
+The firm had exactly these services switched on when this enquiry arrived:
+${enabledServiceIds.map((s) => `- ${s}`).join("\n")}
+
+Return ONLY JSON:
+{"requested_service": "<one id from the list above, or OTHER_NOT_LISTED, or UNKNOWN>", "classification": "<GENUINE|SPAM|SOLICITATION|DUPLICATE|NOT_READY_TO_BOOK>", "reasoning": "<one or two sentences>"}
+
+requested_service: which of the listed services the person was asking about. Use the id exactly as written above. Use OTHER_NOT_LISTED when they clearly wanted a legal matter that is not in the list. Use UNKNOWN when the evidence is too thin to tell.
+
+classification:
+- GENUINE: a real prospective client describing their own matter.
+- SPAM: robocall, silence, gibberish, or an obvious automated message.
+- SOLICITATION: someone selling something TO the firm.
+- DUPLICATE: an existing client, or an obvious repeat of an earlier contact.
+- NOT_READY_TO_BOOK: genuine, but explicitly not ready to engage.
+
+IMPORTANT: if the firm declines the matter on the call, that does NOT change requested_service. Report what the person asked about. Whether the firm takes it is not your decision.`;
+}
 
 export type LeadEvidence = {
   leadId: string;
@@ -300,6 +336,19 @@ export async function runLeadRatingDryRun(
     }
   }
 
+  // --- Enabled services AS OF each lead's own date. campaign_criterion
+  // only ever returns current state, so today's list says nothing about a
+  // lead from last month — that is exactly why the snapshot exists.
+  const snapshotByDate = new Map<string, string[]>();
+  const snapRows = await db
+    .select()
+    .from(lsaServiceSnapshots)
+    .where(eq(lsaServiceSnapshots.lsaClientId, lsaClientId));
+  for (const r of snapRows) {
+    if (!r.criteriaAvailable) continue;
+    snapshotByDate.set(String(r.date), r.enabledServiceIds);
+  }
+
   // --- Build evidence, classify, record.
   for (const l of unrated) {
     const charged = l.lead_charged;
@@ -308,23 +357,35 @@ export async function runLeadRatingDryRun(
     else counts.chargedUnknown += 1;
 
     const ev = buildEvidence(l, messageByLead, calls);
-    let verdict: Verdict | null = null;
     let notJudged: string | null = ev.notJudged;
+    let classification: Classification | null = null;
+    let decision: RatingDecision | null = null;
 
-    if (!notJudged && ev.text) {
-      const res = await generateJson(SYSTEM_INSTRUCTION, buildPrompt(l, ev));
+    // The lead's own date, in the account's local calendar — the same basis
+    // the snapshot is keyed on.
+    const leadDate = ev.createdAt.slice(0, 10);
+    const enabled = snapshotByDate.get(leadDate);
+    if (!notJudged && !enabled) notJudged = "no_service_snapshot";
+
+    if (!notJudged && ev.text && enabled) {
+      const res = await generateJson(systemInstruction(enabled), buildPrompt(l, ev));
       if (!res.ok) {
         notJudged = "model_error";
         errors.push(`lead ${ev.leadId}: ${res.error}`.slice(0, 200));
       } else {
-        verdict = parseVerdict(res.text);
-        if (!verdict) notJudged = "model_unparseable";
+        classification = parseClassification(res.text);
+        if (!classification) notJudged = "model_unparseable";
+        else {
+          decision = decideRating(classification, enabled);
+          if (decision.notJudged) notJudged = decision.notJudged;
+        }
       }
     }
 
-    if (verdict) {
+    const judged = !!decision && !decision.notJudged;
+    if (judged && decision) {
       counts.judged += 1;
-      counts.byAnswer[verdict.answer] = (counts.byAnswer[verdict.answer] ?? 0) + 1;
+      counts.byAnswer[decision.answer] = (counts.byAnswer[decision.answer] ?? 0) + 1;
     } else if (notJudged) {
       counts.notJudged[notJudged] = (counts.notJudged[notJudged] ?? 0) + 1;
     }
@@ -340,23 +401,29 @@ export async function runLeadRatingDryRun(
         leadCharged: typeof charged === "boolean" ? charged : null,
         serviceId: ev.serviceId,
         categoryId: ev.categoryId,
-        evidenceSource: verdict ? ev.source : null,
+        evidenceSource: ev.source,
         evidenceExcerpt: ev.text ? ev.text.slice(0, 500) : null,
-        proposedAnswer: verdict?.answer ?? null,
-        proposedDissatisfiedReason: verdict?.dissatisfiedReason ?? null,
-        modelReasoning: verdict?.reasoning ?? null,
-        notJudgedReason: verdict ? null : notJudged,
+        matchedServiceId: classification?.requestedService ?? null,
+        serviceWasEnabled: decision?.serviceWasEnabled ?? null,
+        classification: classification?.classification ?? null,
+        proposedAnswer: judged ? (decision?.answer ?? null) : null,
+        proposedDissatisfiedReason: judged ? (decision?.dissatisfiedReason ?? null) : null,
+        modelReasoning: classification?.reasoning ?? null,
+        notJudgedReason: judged ? null : notJudged,
         model: GEMINI_MODEL,
       })
       .onConflictDoUpdate({
         target: [lsaLeadRatingDryRuns.lsaClientId, lsaLeadRatingDryRuns.leadId],
         set: {
-          evidenceSource: verdict ? ev.source : null,
+          evidenceSource: ev.source,
           evidenceExcerpt: ev.text ? ev.text.slice(0, 500) : null,
-          proposedAnswer: verdict?.answer ?? null,
-          proposedDissatisfiedReason: verdict?.dissatisfiedReason ?? null,
-          modelReasoning: verdict?.reasoning ?? null,
-          notJudgedReason: verdict ? null : notJudged,
+          matchedServiceId: classification?.requestedService ?? null,
+          serviceWasEnabled: decision?.serviceWasEnabled ?? null,
+          classification: classification?.classification ?? null,
+          proposedAnswer: judged ? (decision?.answer ?? null) : null,
+          proposedDissatisfiedReason: judged ? (decision?.dissatisfiedReason ?? null) : null,
+          modelReasoning: classification?.reasoning ?? null,
+          notJudgedReason: judged ? null : notJudged,
           model: GEMINI_MODEL,
           createdAt: new Date(),
         },

@@ -816,6 +816,15 @@ export const lsaLeadRatingDryRuns = pgTable(
     // A short excerpt only. These are legal intake conversations; enough is
     // kept to review the model's reasoning, never the full transcript.
     evidenceExcerpt: text("evidence_excerpt"),
+    // Which service the model judged the person was actually asking about,
+    // chosen from the services enabled on the lead's own date, or
+    // OTHER_NOT_LISTED / UNKNOWN.
+    matchedServiceId: text("matched_service_id"),
+    // Whether that service was switched on when the lead arrived, per
+    // lsa_service_snapshots for that date — NOT today's list.
+    serviceWasEnabled: boolean("service_was_enabled"),
+    // GENUINE | SPAM | SOLICITATION | DUPLICATE | NOT_READY_TO_BOOK.
+    classification: text("classification"),
     // Proposed LocalServicesLeadSurveyAnswer, e.g. "VERY_SATISFIED".
     proposedAnswer: text("proposed_answer"),
     // Proposed LocalServicesLeadSurveyDissatisfiedReason when dissatisfied.

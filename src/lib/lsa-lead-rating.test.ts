@@ -1,37 +1,70 @@
 import { describe, expect, it } from "vitest";
-import { parseVerdict, selectCallForLead, MATCH_WINDOW_SECONDS } from "./lsa-lead-rating";
+import {
+  parseClassification,
+  decideRating,
+  selectCallForLead,
+  MATCH_WINDOW_SECONDS,
+} from "./lsa-lead-rating";
 
-describe("parseVerdict", () => {
-  it("accepts a well-formed satisfied verdict", () => {
-    const v = parseVerdict('{"answer":"SATISFIED","dissatisfied_reason":null,"reasoning":"Real case."}');
-    expect(v).toEqual({ answer: "SATISFIED", dissatisfiedReason: null, reasoning: "Real case." });
+describe("parseClassification", () => {
+  it("accepts a well-formed classification", () => {
+    const c = parseClassification('{"requested_service":"auto_accidents","classification":"GENUINE","reasoning":"Car crash."}');
+    expect(c).toEqual({ requestedService: "auto_accidents", classification: "GENUINE", reasoning: "Car crash." });
   });
 
-  it("accepts a dissatisfied verdict with a valid reason", () => {
-    const v = parseVerdict('{"answer":"VERY_DISSATISFIED","dissatisfied_reason":"SOLICITATION","reasoning":"Vendor."}');
-    expect(v?.answer).toBe("VERY_DISSATISFIED");
-    expect(v?.dissatisfiedReason).toBe("SOLICITATION");
+  it("rejects a hallucinated classification", () => {
+    expect(parseClassification('{"requested_service":"auto_accidents","classification":"PROBABLY_FINE"}')).toBeNull();
   });
 
-  it("rejects a hallucinated answer or reason rather than passing it through", () => {
-    expect(parseVerdict('{"answer":"EXTREMELY_HAPPY","dissatisfied_reason":null}')).toBeNull();
-    expect(parseVerdict('{"answer":"DISSATISFIED","dissatisfied_reason":"BAD_VIBES"}')).toBeNull();
+  it("rejects a missing requested_service", () => {
+    expect(parseClassification('{"classification":"GENUINE"}')).toBeNull();
   });
 
-  it("rejects incoherent combinations", () => {
-    // dissatisfied with no reason is not actionable
-    expect(parseVerdict('{"answer":"DISSATISFIED","dissatisfied_reason":null}')).toBeNull();
-    // a reason attached to a satisfied answer contradicts itself
-    expect(parseVerdict('{"answer":"SATISFIED","dissatisfied_reason":"SPAM"}')).toBeNull();
+  it("recovers JSON wrapped in fences", () => {
+    const c = parseClassification('```json\n{"requested_service":"UNKNOWN","classification":"SPAM","reasoning":"Silence."}\n```');
+    expect(c?.classification).toBe("SPAM");
   });
 
-  it("recovers JSON wrapped in prose or fences", () => {
-    const v = parseVerdict('```json\n{"answer":"NEUTRAL","dissatisfied_reason":null,"reasoning":"Thin."}\n```');
-    expect(v?.answer).toBe("NEUTRAL");
+  it("returns null on prose", () => {
+    expect(parseClassification("this looks like a good lead")).toBeNull();
+  });
+});
+
+describe("decideRating", () => {
+  const enabled = ["auto_accidents", "motorcycle_accidents"];
+  const genuine = (svc: string) => ({ requestedService: svc, classification: "GENUINE", reasoning: "" });
+
+  it("rates a lead SATISFIED when its service was on, even if the firm declines it", () => {
+    // The real Panchenko case: an at-fault accident the firm turned down
+    // while auto_accidents was switched on. Declining is not a mismatch.
+    const d = decideRating(genuine("auto_accidents"), enabled);
+    expect(d.answer).toBe("SATISFIED");
+    expect(d.dissatisfiedReason).toBeNull();
+    expect(d.serviceWasEnabled).toBe(true);
   });
 
-  it("returns null on unparseable output", () => {
-    expect(parseVerdict("I think this lead is fine")).toBeNull();
+  it("rates JOB_TYPE_MISMATCH when the service was not on", () => {
+    const d = decideRating(genuine("dog_bites"), enabled);
+    expect(d.answer).toBe("DISSATISFIED");
+    expect(d.dissatisfiedReason).toBe("JOB_TYPE_MISMATCH");
+    expect(d.serviceWasEnabled).toBe(false);
+  });
+
+  it("rates JOB_TYPE_MISMATCH for a matter outside the list entirely", () => {
+    const d = decideRating(genuine("OTHER_NOT_LISTED"), enabled);
+    expect(d.dissatisfiedReason).toBe("JOB_TYPE_MISMATCH");
+  });
+
+  it("does not guess when the subject is unclear", () => {
+    expect(decideRating(genuine("UNKNOWN"), enabled).notJudged).toBe("service_unclear");
+  });
+
+  it("maps spam, solicitation, duplicate and not-ready regardless of service", () => {
+    const mk = (cl: string) => ({ requestedService: "auto_accidents", classification: cl, reasoning: "" });
+    expect(decideRating(mk("SPAM"), enabled)).toMatchObject({ answer: "VERY_DISSATISFIED", dissatisfiedReason: "SPAM" });
+    expect(decideRating(mk("SOLICITATION"), enabled)).toMatchObject({ answer: "VERY_DISSATISFIED", dissatisfiedReason: "SOLICITATION" });
+    expect(decideRating(mk("DUPLICATE"), enabled)).toMatchObject({ answer: "DISSATISFIED", dissatisfiedReason: "DUPLICATE" });
+    expect(decideRating(mk("NOT_READY_TO_BOOK"), enabled)).toMatchObject({ answer: "DISSATISFIED", dissatisfiedReason: "NOT_READY_TO_BOOK" });
   });
 });
 
