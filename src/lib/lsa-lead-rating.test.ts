@@ -8,8 +8,13 @@ import {
 
 describe("parseClassification", () => {
   it("accepts a well-formed classification", () => {
-    const c = parseClassification('{"requested_service":"auto_accidents","classification":"GENUINE","reasoning":"Car crash."}');
-    expect(c).toEqual({ requestedService: "auto_accidents", classification: "GENUINE", reasoning: "Car crash." });
+    const c = parseClassification('{"requested_service":"auto_accidents","classification":"GENUINE","meets_client_definition":true,"reasoning":"Car crash."}');
+    expect(c).toEqual({
+      requestedService: "auto_accidents",
+      classification: "GENUINE",
+      meetsClientDefinition: true,
+      reasoning: "Car crash.",
+    });
   });
 
   it("rejects a hallucinated classification", () => {
@@ -25,6 +30,11 @@ describe("parseClassification", () => {
     expect(c?.classification).toBe("SPAM");
   });
 
+  it("defaults meets_client_definition to false when the model omits it", () => {
+    const c = parseClassification('{"requested_service":"UNKNOWN","classification":"GENUINE"}');
+    expect(c?.meetsClientDefinition).toBe(false);
+  });
+
   it("returns null on prose", () => {
     expect(parseClassification("this looks like a good lead")).toBeNull();
   });
@@ -32,7 +42,12 @@ describe("parseClassification", () => {
 
 describe("decideRating", () => {
   const enabled = ["auto_accidents", "motorcycle_accidents"];
-  const genuine = (svc: string) => ({ requestedService: svc, classification: "GENUINE", reasoning: "" });
+  const genuine = (svc: string, meets = false) => ({
+    requestedService: svc,
+    classification: "GENUINE",
+    meetsClientDefinition: meets,
+    reasoning: "",
+  });
 
   it("rates a lead SATISFIED when its service was on, even if the firm declines it", () => {
     // The real Panchenko case: an at-fault accident the firm turned down
@@ -55,12 +70,48 @@ describe("decideRating", () => {
     expect(d.dissatisfiedReason).toBe("JOB_TYPE_MISMATCH");
   });
 
-  it("does not guess when the subject is unclear", () => {
+  it("does not guess when the subject is unclear and no definition matches", () => {
     expect(decideRating(genuine("UNKNOWN"), enabled).notJudged).toBe("service_unclear");
   });
 
+  it("rates SATISFIED when the service is unknown but the client definition matches", () => {
+    // Lead 345437040: "I need an attorney for my son and myself to get the
+    // best settlement for our injuries" — an injury, no mechanism stated.
+    const d = decideRating(genuine("UNKNOWN", true), enabled);
+    expect(d.answer).toBe("SATISFIED");
+    expect(d.notJudged).toBeNull();
+    expect(d.serviceWasEnabled).toBeNull();
+  });
+
+  it("lets the enabled list win over the definition when the service IS identifiable", () => {
+    // Medical malpractice: harm from treatment is deliberately outside the
+    // PI definition, so it is judged purely on whether the service was on.
+    const withMedMal = [...enabled, "medical_malpractice"];
+    expect(decideRating(genuine("medical_malpractice", true), withMedMal)).toMatchObject({
+      answer: "SATISFIED",
+      serviceWasEnabled: true,
+    });
+    // Not enabled -> mismatch, even though the definition flag is true.
+    expect(decideRating(genuine("medical_malpractice", true), enabled)).toMatchObject({
+      answer: "DISSATISFIED",
+      dissatisfiedReason: "JOB_TYPE_MISMATCH",
+      serviceWasEnabled: false,
+    });
+  });
+
+  it("does not let the definition rescue a disabled service", () => {
+    const d = decideRating(genuine("dog_bites", true), enabled);
+    expect(d.answer).toBe("DISSATISFIED");
+    expect(d.dissatisfiedReason).toBe("JOB_TYPE_MISMATCH");
+  });
+
   it("maps spam, solicitation, duplicate and not-ready regardless of service", () => {
-    const mk = (cl: string) => ({ requestedService: "auto_accidents", classification: cl, reasoning: "" });
+    const mk = (cl: string) => ({
+      requestedService: "auto_accidents",
+      classification: cl,
+      meetsClientDefinition: true,
+      reasoning: "",
+    });
     expect(decideRating(mk("SPAM"), enabled)).toMatchObject({ answer: "VERY_DISSATISFIED", dissatisfiedReason: "SPAM" });
     expect(decideRating(mk("SOLICITATION"), enabled)).toMatchObject({ answer: "VERY_DISSATISFIED", dissatisfiedReason: "SOLICITATION" });
     expect(decideRating(mk("DUPLICATE"), enabled)).toMatchObject({ answer: "DISSATISFIED", dissatisfiedReason: "DUPLICATE" });

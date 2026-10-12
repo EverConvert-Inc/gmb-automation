@@ -61,6 +61,10 @@ const VALID_CLASSIFICATIONS = new Set([
 export type Classification = {
   requestedService: string;
   classification: string;
+  // Whether the conversation meets this client's own definition of a
+  // genuine lead. Only consulted when requestedService is UNKNOWN — the
+  // enabled-services list always wins when the service is identifiable.
+  meetsClientDefinition: boolean;
   reasoning: string;
 };
 
@@ -87,9 +91,11 @@ export function parseClassification(raw: string): Classification | null {
   if (!VALID_CLASSIFICATIONS.has(classification)) return null;
   const requestedService = String(o.requested_service ?? o.requestedService ?? "").trim();
   if (!requestedService) return null;
+  const meets = o.meets_client_definition ?? o.meetsClientDefinition;
   return {
     requestedService,
     classification,
+    meetsClientDefinition: meets === true || String(meets).toLowerCase() === "true",
     reasoning: String(o.reasoning ?? "").slice(0, 1000),
   };
 }
@@ -126,9 +132,13 @@ export function decideRating(
   // GENUINE from here: the rating turns on whether the service was on.
   const svc = c.requestedService.toUpperCase();
   if (svc === "UNKNOWN") {
-    // Do not guess. A genuine lead whose subject can't be identified is
-    // recorded as unjudged rather than rated on an assumption.
-    return { answer: "", dissatisfiedReason: null, serviceWasEnabled: null, notJudged: "service_unclear" };
+    // The ONLY place the client definition applies. A genuine lead whose
+    // subject can't be identified is satisfied if it meets the client's own
+    // definition (e.g. a personal-injury firm hearing about an injury),
+    // otherwise it stays unjudged rather than guessed.
+    return c.meetsClientDefinition
+      ? { answer: "SATISFIED", dissatisfiedReason: null, serviceWasEnabled: null, notJudged: null }
+      : { answer: "", dissatisfiedReason: null, serviceWasEnabled: null, notJudged: "service_unclear" };
   }
   if (svc === "OTHER_NOT_LISTED") {
     return { answer: "DISSATISFIED", dissatisfiedReason: "JOB_TYPE_MISMATCH", serviceWasEnabled: false, notJudged: null };
@@ -139,16 +149,25 @@ export function decideRating(
     : { answer: "DISSATISFIED", dissatisfiedReason: "JOB_TYPE_MISMATCH", serviceWasEnabled: false, notJudged: null };
 }
 
-function systemInstruction(enabledServiceIds: string[]): string {
+function systemInstruction(
+  enabledServiceIds: string[],
+  qualificationDefinition: string | null,
+): string {
   return `You read a Local Services Ads enquiry to a law firm and report TWO things. You do not decide any rating.
 
 The firm had exactly these services switched on when this enquiry arrived:
 ${enabledServiceIds.map((s) => `- ${s}`).join("\n")}
 
 Return ONLY JSON:
-{"requested_service": "<one id from the list above, or OTHER_NOT_LISTED, or UNKNOWN>", "classification": "<GENUINE|SPAM|SOLICITATION|DUPLICATE|NOT_READY_TO_BOOK>", "reasoning": "<one or two sentences>"}
+{"requested_service": "<one id from the list above, or OTHER_NOT_LISTED, or UNKNOWN>", "classification": "<GENUINE|SPAM|SOLICITATION|DUPLICATE|NOT_READY_TO_BOOK>", "meets_client_definition": <true|false>, "reasoning": "<one or two sentences>"}
 
 requested_service: which of the listed services the person was asking about. Use the id exactly as written above. Use OTHER_NOT_LISTED when they clearly wanted a legal matter that is not in the list. Use UNKNOWN when the evidence is too thin to tell.
+
+meets_client_definition: ${
+    qualificationDefinition
+      ? `true when the conversation meets this firm's own definition of a genuine lead, false otherwise.\n\nThe firm's definition:\n"""\n${qualificationDefinition}\n"""\n\nJudge this independently of requested_service — it is consulted only when the service cannot be identified.`
+      : "always false — this firm has no definition configured."
+  }
 
 classification:
 - GENUINE: a real prospective client describing their own matter.
@@ -368,7 +387,10 @@ export async function runLeadRatingDryRun(
     if (!notJudged && !enabled) notJudged = "no_service_snapshot";
 
     if (!notJudged && ev.text && enabled) {
-      const res = await generateJson(systemInstruction(enabled), buildPrompt(l, ev));
+      const res = await generateJson(
+        systemInstruction(enabled, client.leadQualificationDefinition),
+        buildPrompt(l, ev),
+      );
       if (!res.ok) {
         notJudged = "model_error";
         errors.push(`lead ${ev.leadId}: ${res.error}`.slice(0, 200));

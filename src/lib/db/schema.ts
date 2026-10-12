@@ -715,6 +715,17 @@ export const lsaClients = pgTable(
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
+    // Per-client definition of what counts as a genuine lead, used ONLY by
+    // the lead-rating dry run and only when the conversation doesn't reveal
+    // which service the person wanted. The enabled-services list always
+    // wins when the service IS identifiable — this never overrides a
+    // service that was switched off. Null means no definition, and an
+    // unidentifiable service stays unjudged rather than guessed.
+    //
+    // Varies by practice area: an injury-based definition fits personal
+    // injury clients but not a criminal defence firm, so it is per client
+    // rather than inferred from the category.
+    leadQualificationDefinition: text("lead_qualification_definition"),
     lastAdsSyncAt: timestamp("last_ads_sync_at", { withTimezone: true }),
     lastCallrailSyncAt: timestamp("last_callrail_sync_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),

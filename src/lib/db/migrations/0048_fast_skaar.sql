@@ -1,0 +1,1 @@
+ALTER TABLE "lsa_clients" ADD COLUMN "lead_qualification_definition" text;
