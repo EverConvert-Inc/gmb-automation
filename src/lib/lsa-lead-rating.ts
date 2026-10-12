@@ -168,9 +168,9 @@ Return ONLY JSON:
 
 requested_service: which of the listed services the person was asking about. Use the id exactly as written above. Use OTHER_NOT_LISTED when they clearly wanted a legal matter that is not in the list. Use UNKNOWN when the evidence is too thin to tell.
 
-The enquiry comes with a "Google's label" line. That label is Google's own unverified guess and is often wrong or missing. THE CUSTOMER'S CONVERSATION TAKES PRIORITY: whenever the conversation conflicts with the label, or simply does not support it, follow the conversation and ignore the label. Only when the conversation is too thin to tell may you use the label as a weak hint — and if you do, say so explicitly in your reasoning.
+"Lead service" is Google's label for the lead. If the conversation names the service, use the conversation. If it doesn't, use Google's label.
 
-used_label_as_hint: true only when you relied on Google's label because the conversation alone was not enough. False whenever the conversation itself told you the service.
+used_label_as_hint: true when you used Google's label because the conversation did not name the service. False when the conversation itself named it.
 
 meets_client_definition: ${
     qualificationDefinition
@@ -501,9 +501,8 @@ function buildEvidence(
 
 function buildPrompt(l: Record<string, unknown>, ev: LeadEvidence): string {
   return [
-    `Google's label (unverified guess, may be wrong or missing) — service: ${
-      ev.serviceId ?? "(none recorded)"
-    }, category: ${ev.categoryId ?? "(none recorded)"}`,
+    `Lead service: ${ev.serviceId ?? "(none recorded)"}`,
+    `Lead category: ${ev.categoryId ?? "(none recorded)"}`,
     `Evidence type: ${ev.source === "message" ? "customer message(s)" : "call transcript"}`,
     "",
     ev.source === "message"
