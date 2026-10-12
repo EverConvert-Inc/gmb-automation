@@ -781,6 +781,61 @@ export const lsaServiceSnapshots = pgTable(
 
 export type LsaServiceSnapshot = typeof lsaServiceSnapshots.$inferSelect;
 
+// Dry-run output for automated LSA lead rating. NOTHING here is sent to
+// Google — this records what WOULD be submitted via
+// LocalServicesLeadService.ProvideLeadFeedback, so the proposed ratings can
+// be reviewed against what the intake team would have chosen before any
+// real write is enabled.
+//
+// Full accounting by design: every unrated lead gets a row, either with a
+// proposed rating or with the reason it could not be judged. A lead that
+// silently produced nothing would be indistinguishable from one that was
+// never looked at.
+export const lsaLeadRatingDryRuns = pgTable(
+  "lsa_lead_rating_dry_runs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    lsaClientId: uuid("lsa_client_id")
+      .notNull()
+      .references(() => lsaClients.id, { onDelete: "cascade" }),
+    // Google's local_services_lead.id, as text — ids are int64 and must not
+    // round-trip through a JS number.
+    leadId: text("lead_id").notNull(),
+    leadCreatedAt: timestamp("lead_created_at", { withTimezone: true }),
+    leadType: text("lead_type"),
+    leadStatus: text("lead_status"),
+    // Feedback is requested for every lead in the LSA inbox, not only
+    // charged ones, so uncharged leads are included and counted separately
+    // rather than skipped.
+    leadCharged: boolean("lead_charged"),
+    serviceId: text("service_id"),
+    categoryId: text("category_id"),
+    // "message" | "call_transcript" — which evidence the verdict was based
+    // on, or null when the lead could not be judged.
+    evidenceSource: text("evidence_source"),
+    // A short excerpt only. These are legal intake conversations; enough is
+    // kept to review the model's reasoning, never the full transcript.
+    evidenceExcerpt: text("evidence_excerpt"),
+    // Proposed LocalServicesLeadSurveyAnswer, e.g. "VERY_SATISFIED".
+    proposedAnswer: text("proposed_answer"),
+    // Proposed LocalServicesLeadSurveyDissatisfiedReason when dissatisfied.
+    proposedDissatisfiedReason: text("proposed_dissatisfied_reason"),
+    modelReasoning: text("model_reasoning"),
+    // Set when no rating could be produced: "no_matching_call",
+    // "no_transcription", "no_customer_message", "no_conversation",
+    // "ambiguous_match", "model_error", "model_unparseable".
+    notJudgedReason: text("not_judged_reason"),
+    model: text("model"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("lsa_lead_rating_dry_runs_unique").on(t.lsaClientId, t.leadId),
+    clientIdx: index("lsa_lead_rating_dry_runs_client_idx").on(t.lsaClientId),
+  }),
+);
+
+export type LsaLeadRatingDryRun = typeof lsaLeadRatingDryRuns.$inferSelect;
+
 // One row per (lsa_client, date), merging leads + cost + CallRail in a
 // single write from the sync itself — unlike the PPC tables (ppc_ads_daily /
 // ppc_campaigns / ppc_callrail_daily), which are joined at report-query
