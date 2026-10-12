@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { lsaClients } from "@/lib/db/schema";
+import { lsaClients, lsaLeadRatingDryRuns } from "@/lib/db/schema";
 import { runLeadRatingDryRun, emptyCounts, type DryRunCounts } from "@/lib/lsa-lead-rating";
 
 export const runtime = "nodejs";
@@ -36,7 +36,29 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const customerId = url.searchParams.get("customerId");
+  // Read back what a previous run recorded, without running anything. The
+  // dry run is only useful if its verdicts can actually be reviewed.
+  const resultsOnly = url.searchParams.get("results") === "true";
   const all = url.searchParams.get("all") === "true";
+
+  if (resultsOnly) {
+    const rows = await db
+      .select()
+      .from(lsaLeadRatingDryRuns)
+      .innerJoin(lsaClients, eq(lsaClients.id, lsaLeadRatingDryRuns.lsaClientId))
+      .where(
+        customerId ? eq(lsaClients.googleAdsCustomerId, customerId) : undefined,
+      );
+    return NextResponse.json({
+      dryRun: true,
+      sentToGoogle: false,
+      rowCount: rows.length,
+      rows: rows.map((r) => ({
+        client: r.lsa_clients.name,
+        ...r.lsa_lead_rating_dry_runs,
+      })),
+    });
+  }
   const days = Number(url.searchParams.get("days") ?? "30");
   const limit = Number(url.searchParams.get("limit") ?? "50");
   if (!customerId && !all) {
