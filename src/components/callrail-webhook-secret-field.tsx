@@ -9,6 +9,10 @@ export type CallrailWebhookSecretFieldProps = {
   companyId: string | null;
   configured: boolean;
   updatedAt: string | null; // ISO string — dates cross the server/client prop boundary as strings.
+  // Called after a secret is successfully saved. Lets the parent finish a
+  // company link that the PATCH guard refused for want of this very secret,
+  // instead of making the operator pick the company a second time.
+  onSaved?: (companyId: string) => void;
 };
 
 function relTime(iso: string | null): string {
@@ -32,6 +36,7 @@ export function CallrailWebhookSecretField({
   companyId,
   configured,
   updatedAt,
+  onSaved,
 }: CallrailWebhookSecretFieldProps) {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -42,12 +47,44 @@ export function CallrailWebhookSecretField({
   // always the real URL to paste into CallRail regardless of environment.
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
+  // `configured`/`updatedAt` describe whichever company is SAVED on this
+  // client. Since a company can no longer be linked until its secret
+  // exists, the operator will routinely have a DIFFERENT company drafted in
+  // the picker above — so the status shown here has to be re-read for
+  // whatever company is actually on screen, not the saved one.
+  const [statusCompanyId, setStatusCompanyId] = useState(companyId);
+  useEffect(() => {
+    if (!companyId || companyId === statusCompanyId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/callrail/webhook-secret/${companyId}`);
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          configured?: boolean;
+          updatedAt?: string | null;
+        };
+        if (cancelled) return;
+        setIsConfigured(!!body.configured);
+        setLastUpdatedAt(body.updatedAt ?? null);
+        setStatusCompanyId(companyId);
+      } catch {
+        // Non-fatal: keep showing the last known status. Guessing "not
+        // configured" on a transient fetch failure would be the wrong
+        // direction to fail in — it would tell the operator to re-paste a
+        // secret that is already fine.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, statusCompanyId]);
 
   if (!companyId) {
     return (
       <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-        Link a CallRail company above first — the webhook secret is stored
-        per company.
+        Select a CallRail company above first — the webhook secret is
+        stored per company, and can be saved before the company is linked.
       </div>
     );
   }
@@ -65,7 +102,11 @@ export function CallrailWebhookSecretField({
 
   async function save() {
     const secret = draft.trim();
-    if (!secret) return;
+    // companyId is re-checked here rather than leaning on the early return
+    // above: `save` is a function declaration, so TypeScript won't carry
+    // that narrowing into this closure. It isn't only a type formality —
+    // without it the PUT URL below would happily interpolate "null".
+    if (!secret || !companyId) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/callrail/webhook-secret/${companyId}`, {
@@ -81,7 +122,9 @@ export function CallrailWebhookSecretField({
       setIsConfigured(true);
       setLastUpdatedAt(body.updatedAt ?? new Date().toISOString());
       setDraft("");
+      setStatusCompanyId(companyId);
       toast.success("Webhook secret saved");
+      onSaved?.(companyId);
     } catch (err) {
       toast.error("Couldn't save secret", { description: (err as Error).message });
     } finally {
@@ -100,9 +143,10 @@ export function CallrailWebhookSecretField({
       </div>
       <p className="text-xs text-muted-foreground">
         Paste this exact URL as the endpoint for a &ldquo;Call Modified&rdquo;
-        webhook on this company in CallRail&apos;s settings. The same URL is
-        used for every client — CallRail identifies the company from each
-        event&apos;s own payload.
+        webhook on this company in CallRail&apos;s settings, then copy that
+        webhook&apos;s secret from its Advanced Settings into the field
+        below. The same URL is used for every client — CallRail identifies
+        the company from each event&apos;s own payload.
       </p>
       <div className="flex gap-2">
         <Input
@@ -114,7 +158,7 @@ export function CallrailWebhookSecretField({
           placeholder={
             isConfigured
               ? "•••••••••• already set — paste to replace"
-              : "Paste the secret from CallRail's webhook settings"
+              : "Paste the secret from CallRail \u2192 Advanced Settings"
           }
         />
         <Button type="button" size="sm" onClick={save} disabled={saving || !draft.trim()}>
@@ -124,7 +168,7 @@ export function CallrailWebhookSecretField({
       <p className="text-xs text-muted-foreground">
         {isConfigured
           ? `Configured${lastUpdatedAt ? ` · updated ${relTime(lastUpdatedAt)}` : ""}. Used to verify that real-time "signed" events actually came from CallRail.`
-          : "Not configured yet — real-time sign-date events from CallRail's webhook will be rejected until this is set."}
+          : "Required before this company can be linked. Until it is set, CallRail's sign-date events for this company are acknowledged but discarded unverified."}
       </p>
     </div>
   );

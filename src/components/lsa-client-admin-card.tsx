@@ -606,14 +606,29 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
             )}
             <p className="mt-1 text-xs text-muted-foreground">
               Pre-filtered to <em>{props.name}</em>. Selection saves
-              automatically.
+              automatically — a company can&apos;t be linked until its
+              webhook secret is saved below.
             </p>
           </div>
 
           <CallrailWebhookSecretField
-            companyId={props.callrailCompanyId}
+            // The DRAFTED company, not the saved one: a company can no
+            // longer be linked until its secret exists, so this field has
+            // to be reachable for a company the operator has only just
+            // picked. It re-reads its own status for whatever id it gets.
+            companyId={companyDraft || null}
             configured={props.webhookSecretConfigured}
             updatedAt={props.webhookSecretUpdatedAt}
+            onSaved={(savedCompanyId) => {
+              // Normal path is: pick company -> link refused for the
+              // missing secret -> paste secret -> this fires -> link
+              // succeeds, so the operator never picks twice. Skipped when
+              // the company is already linked, so re-saving a secret for a
+              // live company doesn't fire a pointless re-link.
+              if (savedCompanyId !== props.callrailCompanyId) {
+                void handleCallrailCompanyPick(savedCompanyId);
+              }
+            }}
           />
 
           <div className="grid gap-3 sm:grid-cols-2">

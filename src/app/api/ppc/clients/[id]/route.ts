@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { ppcClients } from "@/lib/db/schema";
+import { callrailWebhookSecrets, ppcClients } from "@/lib/db/schema";
 import { isUsStateCode } from "@/lib/us-states";
 
 export const runtime = "nodejs";
@@ -48,6 +48,38 @@ export async function PATCH(
       { status: 400 },
     );
   }
+  // Refuse to link a CallRail company that has no webhook secret on file.
+  // That combination is the state which silently breaks real-time sign
+  // tracking: the receiver cannot verify any delivery for the company, so
+  // every Call Modified event is acknowledged and discarded (see the
+  // not-configured branch in the call-modified route).
+  //
+  // This is always satisfiable BEFORE linking — CallRail exposes the secret
+  // under Advanced Settings on the webhook config as soon as the webhook is
+  // created, and PUT /api/callrail/webhook-secret/[companyId] is keyed by
+  // company id alone, so the secret can be saved with no client linked to
+  // it yet.
+  //
+  // Keyed on a truthy id on purpose: an absent field (editing anything else
+  // on an already-linked client) and an explicit null or "" (unlinking)
+  // both skip the check, so only an actual link is ever blocked.
+  if (parsed.callrailCompanyId) {
+    const secretRow = await db.query.callrailWebhookSecrets.findFirst({
+      where: eq(
+        callrailWebhookSecrets.callrailCompanyId,
+        parsed.callrailCompanyId,
+      ),
+    });
+    if (!secretRow) {
+      return NextResponse.json(
+        {
+          error: `No webhook secret saved for CallRail company ${parsed.callrailCompanyId}. Paste it from CallRail (that company's Call Modified webhook \u2192 Advanced Settings) into the webhook secret field, then link the company.`,
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const [row] = await db
     .update(ppcClients)
     .set({ ...parsed, updatedAt: new Date() })
