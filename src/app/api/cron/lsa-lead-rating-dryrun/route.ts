@@ -77,8 +77,32 @@ export async function GET(req: Request) {
     );
   }
 
-  const toDate = new Date().toISOString().slice(0, 10);
-  const fromDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  // Honour explicit from/to. These were previously accepted silently and
+  // then ignored, so a request asking for one window was answered for
+  // another — the kind of mismatch that is invisible in the output.
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const fromParam = url.searchParams.get("from");
+  const toParam = url.searchParams.get("to");
+  for (const [k, v] of [["from", fromParam], ["to", toParam]] as const) {
+    if (v !== null && !DATE_RE.test(v)) {
+      return NextResponse.json(
+        { error: `${k} must be YYYY-MM-DD` },
+        { status: 400 },
+      );
+    }
+  }
+  if ((fromParam === null) !== (toParam === null)) {
+    return NextResponse.json(
+      { error: "from and to must be given together, or neither (use days)" },
+      { status: 400 },
+    );
+  }
+  if (fromParam && toParam && fromParam > toParam) {
+    return NextResponse.json({ error: "from must not be after to" }, { status: 400 });
+  }
+  const toDate = toParam ?? new Date().toISOString().slice(0, 10);
+  const fromDate =
+    fromParam ?? new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
   const clients = await db.query.lsaClients.findMany({
     where: and(
