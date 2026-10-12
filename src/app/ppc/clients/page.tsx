@@ -116,6 +116,20 @@ export default async function PpcClientsListPage() {
                               Not linked
                             </span>
                           )}
+                          {/* webhookSecretConfigured is true for an unlinked
+                              client, so this implies "linked but unverifiable"
+                              without needing to re-test callrailLinked. */}
+                          {!c.webhookSecretConfigured && (
+                            <div className="mt-1">
+                              <Badge
+                                variant="destructive"
+                                className="text-[10px]"
+                                title="CallRail's Call Modified webhook can't be verified without a secret, so real-time signed-case tracking is off for this company."
+                              >
+                                No webhook secret
+                              </Badge>
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 align-top text-xs text-muted-foreground">
                           {last ? formatRelativeTime(last) : "never"}
@@ -158,6 +172,11 @@ export default async function PpcClientsListPage() {
                       <div className="text-muted-foreground">CallRail</div>
                       <div className="text-right">
                         {c.callrailLinked ? `tag: ${c.signedCaseTag}` : "—"}
+                        {!c.webhookSecretConfigured && (
+                          <span className="ml-1 font-medium text-destructive">
+                            · no webhook secret
+                          </span>
+                        )}
                       </div>
                       <div className="text-muted-foreground">Last sync</div>
                       <div className="text-right">

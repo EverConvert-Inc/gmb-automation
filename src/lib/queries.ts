@@ -1060,6 +1060,12 @@ export type PpcClientListItem = {
   googleAdsCustomerId: string | null;
   callrailLinked: boolean;
   callrailCompanyId: string | null;
+  // False when this client IS linked to a CallRail company but that
+  // company has no row in callrail_webhook_secrets — the state that
+  // silently disables real-time sign tracking. Always true for an unlinked
+  // client, which has no webhook to configure in the first place, so the
+  // roster badge can key off this alone.
+  webhookSecretConfigured: boolean;
   signedCaseTag: string;
   lastAdsSyncAt: Date | null;
   lastCallrailSyncAt: Date | null;
@@ -1131,6 +1137,14 @@ export async function listPpcClients(): Promise<PpcClientListItem[]> {
   const rows = await db.query.ppcClients.findMany({
     orderBy: (cols, ops) => ops.asc(cols.name),
   });
+  // One row per CallRail company, not per client — a whole-table read is
+  // cheaper and simpler than a join here, and the table only ever holds one
+  // row per connected company.
+  const configuredCompanyIds = new Set(
+    (await db.query.callrailWebhookSecrets.findMany()).map(
+      (s) => s.callrailCompanyId,
+    ),
+  );
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -1141,6 +1155,9 @@ export async function listPpcClients(): Promise<PpcClientListItem[]> {
     googleAdsCustomerId: r.googleAdsCustomerId,
     callrailLinked: r.callrailCompanyId !== null,
     callrailCompanyId: r.callrailCompanyId,
+    webhookSecretConfigured:
+      r.callrailCompanyId === null ||
+      configuredCompanyIds.has(r.callrailCompanyId),
     signedCaseTag: r.signedCaseTag,
     lastAdsSyncAt: r.lastAdsSyncAt,
     lastCallrailSyncAt: r.lastCallrailSyncAt,

@@ -16,6 +16,7 @@ import {
   verifyCallrailWebhookSignature,
   type CallModifiedWebhookPayload,
 } from "@/lib/callrail-webhook";
+import { postCallrailWebhookUnconfiguredAlert } from "@/lib/alerts";
 import { recomputeLsaCallrailDay } from "@/lib/lsa-sync";
 import { syncCallrailForClient } from "@/lib/ppc-sync";
 
@@ -48,9 +49,40 @@ export async function POST(req: Request) {
   });
   if (!secretRow) {
     console.warn(
-      `[callrail-webhook] no webhook secret configured for company ${companyResourceId} — ignoring`,
+      `[callrail-webhook] no webhook secret configured for company ${companyResourceId} — acknowledging without recording`,
     );
-    return NextResponse.json({ error: "not configured" }, { status: 404 });
+    // Deliberately 200, NOT 404. CallRail auto-disables a webhook whose
+    // endpoint keeps answering non-2xx, and a company with no secret on
+    // file answers identically on every single delivery — which is exactly
+    // how two companies' subscriptions were silently killed, leaving their
+    // signed-case data stale for months with no visible symptom (the only
+    // trace was this warn-log, which nobody reads). Answering 200 keeps the
+    // subscription alive so that pasting the secret later is all it takes
+    // to start working, with no re-enable dance in CallRail's UI.
+    //
+    // The 401 on a bad signature below stays a hard reject on purpose:
+    // that one is a genuine authenticity failure, not a misconfiguration,
+    // and quietly 200-ing it would mean accepting unverified payloads.
+    try {
+      await postCallrailWebhookUnconfiguredAlert({
+        callrailCompanyId: companyResourceId,
+        callrailCallId: body.resource_id,
+      });
+    } catch (err) {
+      // Never let a Slack hiccup turn this back into a non-2xx response —
+      // that would re-create the exact auto-disable this branch exists to
+      // prevent. Raw err (not `(err as Error).message`) so a non-Error
+      // rejection still logs something useful.
+      console.error(
+        `[callrail-webhook] failed to post unconfigured-secret alert for company ${companyResourceId}:`,
+        err,
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      recorded: false,
+      reason: "not configured",
+    });
   }
 
   const secret = decryptString(secretRow.secretEncrypted);

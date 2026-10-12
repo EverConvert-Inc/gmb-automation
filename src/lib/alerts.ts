@@ -158,3 +158,59 @@ export async function postTakedownAlert(payload: {
     body: JSON.stringify({ blocks }),
   });
 }
+
+// Fired when CallRail delivers a "Call Modified" event for a company that
+// has no webhook secret on file (see callrailWebhookSecrets in schema.ts).
+// The receiver answers 200 rather than 404 in that case specifically so
+// CallRail does not auto-disable the subscription — see the comment at the
+// not-configured branch in the call-modified route for why. That 200 makes
+// the failure silent on CallRail's side, so this alert is what makes it
+// loud on ours.
+//
+// Deliberately un-throttled: a company should only ever be in this state
+// between "webhook created in CallRail" and "secret pasted into the admin
+// card," so the volume is a symptom, not noise. If this ever does become
+// noisy, the fix is to paste the secret, not to quieten the alert.
+export async function postCallrailWebhookUnconfiguredAlert(payload: {
+  callrailCompanyId: string;
+  callrailCallId: string;
+}): Promise<void> {
+  const webhook = process.env.SLACK_WEBHOOK_URL;
+  if (!webhook) return;
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:warning: *CallRail webhook secret missing*\nA "Call Modified" event arrived for CallRail company \`${payload.callrailCompanyId}\`, but no webhook secret is configured for it. The event was acknowledged and discarded — real-time signed-case tracking is not running for this company.`,
+      },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "Open the client's admin card and paste the secret from CallRail's webhook settings (Advanced Settings on the webhook config) to start recording these events.",
+      },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `Call ${payload.callrailCallId}`,
+        },
+      ],
+    },
+  ];
+
+  // Bounded, unlike the other helpers here: this one is awaited inside the
+  // call-modified webhook's 15s maxDuration, and a hung Slack request would
+  // push that route into a timeout — i.e. the exact non-2xx that would get
+  // the subscription auto-disabled again. The caller catches the abort.
+  await fetch(webhook, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+    signal: AbortSignal.timeout(5_000),
+  });
+}

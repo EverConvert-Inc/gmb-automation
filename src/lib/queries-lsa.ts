@@ -48,6 +48,9 @@ export type LsaClientListItem = {
   googleAdsCustomerId: string | null;
   callrailLinked: boolean;
   callrailCompanyId: string | null;
+  // See the same field on PpcClientListItem in queries.ts — false only
+  // when a linked CallRail company has no webhook secret on file.
+  webhookSecretConfigured: boolean;
   signedCaseTag: string;
   lastAdsSyncAt: Date | null;
   lastCallrailSyncAt: Date | null;
@@ -58,6 +61,13 @@ export async function listLsaClients(): Promise<LsaClientListItem[]> {
   const rows = await db.query.lsaClients.findMany({
     orderBy: (cols, ops) => ops.asc(cols.name),
   });
+  // Keyed by CallRail company, which two lsa_clients can share — so this
+  // is a company-level lookup, not a per-client one.
+  const configuredCompanyIds = new Set(
+    (await db.query.callrailWebhookSecrets.findMany()).map(
+      (row) => row.callrailCompanyId,
+    ),
+  );
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -68,6 +78,9 @@ export async function listLsaClients(): Promise<LsaClientListItem[]> {
     googleAdsCustomerId: r.googleAdsCustomerId,
     callrailLinked: r.callrailCompanyId !== null,
     callrailCompanyId: r.callrailCompanyId,
+    webhookSecretConfigured:
+      r.callrailCompanyId === null ||
+      configuredCompanyIds.has(r.callrailCompanyId),
     signedCaseTag: r.signedCaseTag,
     lastAdsSyncAt: r.lastAdsSyncAt,
     lastCallrailSyncAt: r.lastCallrailSyncAt,
