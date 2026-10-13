@@ -67,9 +67,10 @@ export async function GET(req: Request) {
       });
 
       const submitted: Record<string, number> = {};
-      // Google's rejection text, reported inline. Reading a failed submission
-      // must never require a database query.
+      // Google's rejection text, reported inline. Reading a submission —
+      // sent or rejected — must never require a database query.
       const submitFailures: Array<Record<string, unknown>> = [];
+      const sentLeads: Array<Record<string, unknown>> = [];
       for (const jl of judgedLeads) {
         const r = await submitLeadRating({
           client: c,
@@ -81,6 +82,13 @@ export async function GET(req: Request) {
         const key = r.sent ? "sent" : r.reason;
         submitted[key] = (submitted[key] ?? 0) + 1;
         submitTally[key] = (submitTally[key] ?? 0) + 1;
+        if (r.sent) {
+          sentLeads.push({
+            leadId: jl.leadId,
+            answer: jl.answer,
+            dissatisfiedReason: jl.dissatisfiedReason,
+          });
+        }
         if (!r.sent && r.detail) {
           submitFailures.push({
             leadId: jl.leadId,
@@ -111,6 +119,14 @@ export async function GET(req: Request) {
         const key = out.sent ? "sent" : out.reason;
         resubmitted[key] = (resubmitted[key] ?? 0) + 1;
         submitTally[`retry_${key}`] = (submitTally[`retry_${key}`] ?? 0) + 1;
+        if (out.sent) {
+          sentLeads.push({
+            leadId: r.leadId,
+            answer: r.answer,
+            dissatisfiedReason: r.dissatisfiedReason,
+            retry: true,
+          });
+        }
         if (!out.sent && out.detail) {
           submitFailures.push({
             leadId: r.leadId,
@@ -129,6 +145,7 @@ export async function GET(req: Request) {
         counts,
         submitted,
         resubmitted,
+        sentLeads,
         submitFailures,
         errors,
       });
