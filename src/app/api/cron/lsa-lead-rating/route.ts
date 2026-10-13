@@ -6,6 +6,7 @@ import {
   submitLeadRating,
   submissionEnabled,
   dailyCapPerClient,
+  pendingResubmissions,
 } from "@/lib/lsa-lead-submit";
 
 export const runtime = "nodejs";
@@ -91,11 +92,43 @@ export async function GET(req: Request) {
         }
       }
 
+      // Leads judged on an earlier run whose submission never landed. The
+      // rating pass reports these as skippedExisting and never re-offers
+      // them, so retrying has to be driven off the stored verdict.
+      const handledThisRun = new Set(judgedLeads.map((j) => j.leadId));
+      const retries = (await pendingResubmissions(c, limit)).filter(
+        (r) => !handledThisRun.has(r.leadId),
+      );
+      const resubmitted: Record<string, number> = {};
+      for (const r of retries) {
+        const out = await submitLeadRating({
+          client: c,
+          leadId: r.leadId,
+          leadResourceName: r.leadResourceName,
+          surveyAnswer: r.answer,
+          dissatisfiedReason: r.dissatisfiedReason,
+        });
+        const key = out.sent ? "sent" : out.reason;
+        resubmitted[key] = (resubmitted[key] ?? 0) + 1;
+        submitTally[`retry_${key}`] = (submitTally[`retry_${key}`] ?? 0) + 1;
+        if (!out.sent && out.detail) {
+          submitFailures.push({
+            leadId: r.leadId,
+            answer: r.answer,
+            dissatisfiedReason: r.dissatisfiedReason,
+            reason: out.reason,
+            retry: true,
+            error: out.detail,
+          });
+        }
+      }
+
       perClient.push({
         client: c.name,
         allowlisted: c.leadRatingEnabled,
         counts,
         submitted,
+        resubmitted,
         submitFailures,
         errors,
       });

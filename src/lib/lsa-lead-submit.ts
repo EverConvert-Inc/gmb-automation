@@ -276,6 +276,63 @@ export async function submitLeadRating(args: {
   }
 }
 
+export type PendingResubmission = {
+  leadId: string;
+  leadResourceName: string;
+  answer: string;
+  dissatisfiedReason: string | null;
+};
+
+// Leads that already carry a verdict but never reached Google successfully.
+//
+// Submission has to be driven off the STORED verdict, not off whatever this
+// run happened to classify. The rating pass deliberately never classifies a
+// lead twice, so a lead whose submission failed comes back as
+// "skippedExisting" forever and is never re-offered — making the partial
+// unique index on its own insufficient to actually retry anything.
+//
+// Deliberately excludes already_rated rows: those exist only to compare the
+// model against the intake team's own ratings and must never be sent.
+export async function pendingResubmissions(
+  client: LsaClient,
+  limit = 25,
+): Promise<PendingResubmission[]> {
+  if (!client.googleAdsCustomerId) return [];
+  // Google returns ids as "123-456-7890" in places; resource names need bare
+  // digits.
+  const customerId = client.googleAdsCustomerId.replace(/-/g, "");
+  const result = await db.execute(sql`
+    SELECT dr.lead_id, dr.proposed_answer, dr.proposed_dissatisfied_reason
+    FROM lsa_lead_rating_dry_runs dr
+    WHERE dr.lsa_client_id = ${client.id}
+      AND dr.already_rated = false
+      AND dr.not_judged_reason IS NULL
+      AND dr.proposed_answer IS NOT NULL
+      AND dr.proposed_answer <> ''
+      AND NOT EXISTS (
+        SELECT 1 FROM lsa_lead_rating_submissions s
+        WHERE s.lead_id = dr.lead_id AND s.status <> 'failed'
+      )
+      AND (
+        SELECT count(*) FROM lsa_lead_rating_submissions s2
+        WHERE s2.lead_id = dr.lead_id
+      ) < ${maxAttemptsPerLead()}
+    ORDER BY dr.created_at DESC
+    LIMIT ${limit}
+  `);
+  const rows = (
+    Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? [])
+  ) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    leadId: String(r.lead_id),
+    leadResourceName: `customers/${customerId}/localServicesLeads/${String(r.lead_id)}`,
+    answer: String(r.proposed_answer),
+    dissatisfiedReason: r.proposed_dissatisfied_reason
+      ? String(r.proposed_dissatisfied_reason)
+      : null,
+  }));
+}
+
 // Clients eligible for the round-robin scan, least-recently-scanned first.
 export async function clientsDueForScan(batchSize: number): Promise<LsaClient[]> {
   return db.query.lsaClients.findMany({
