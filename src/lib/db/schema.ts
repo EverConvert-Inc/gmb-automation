@@ -908,8 +908,18 @@ export const lsaLeadRatingSubmissions = pgTable(
     submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    uniq: unique("lsa_lead_rating_submissions_lead_unique").on(t.leadId),
+    // Partial unique, not a plain unique on lead_id: a "pending" or "ok" row
+    // claims the lead absolutely, but a "failed" row must NOT block a
+    // corrected resubmission. A plain unique meant one rejected request
+    // (e.g. a malformed enum) burned the lead permanently — the retry hit
+    // onConflictDoNothing and Google was never called again.
+    // Same shape as review_takedown_alerts' active-review index.
+    uniqLive: uniqueIndex("lsa_lead_rating_submissions_live_lead_idx")
+      .on(t.leadId)
+      .where(sql`${t.status} <> 'failed'`),
     clientIdx: index("lsa_lead_rating_submissions_client_idx").on(t.lsaClientId),
+    // Retries count prior rows per lead to enforce the attempt cap.
+    leadIdx: index("lsa_lead_rating_submissions_lead_idx").on(t.leadId),
   }),
 );
 

@@ -365,6 +365,13 @@
       "when": 1791837199902,
       "tag": "0051_same_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1791903585733,
+      "tag": "0052_awesome_stone_men",
+      "breakpoints": true
     }
   ]
 }

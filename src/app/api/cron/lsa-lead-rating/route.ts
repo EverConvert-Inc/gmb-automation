@@ -66,6 +66,9 @@ export async function GET(req: Request) {
       });
 
       const submitted: Record<string, number> = {};
+      // Google's rejection text, reported inline. Reading a failed submission
+      // must never require a database query.
+      const submitFailures: Array<Record<string, unknown>> = [];
       for (const jl of judgedLeads) {
         const r = await submitLeadRating({
           client: c,
@@ -77,6 +80,15 @@ export async function GET(req: Request) {
         const key = r.sent ? "sent" : r.reason;
         submitted[key] = (submitted[key] ?? 0) + 1;
         submitTally[key] = (submitTally[key] ?? 0) + 1;
+        if (!r.sent && r.detail) {
+          submitFailures.push({
+            leadId: jl.leadId,
+            answer: jl.answer,
+            dissatisfiedReason: jl.dissatisfiedReason,
+            reason: r.reason,
+            error: r.detail,
+          });
+        }
       }
 
       perClient.push({
@@ -84,6 +96,7 @@ export async function GET(req: Request) {
         allowlisted: c.leadRatingEnabled,
         counts,
         submitted,
+        submitFailures,
         errors,
       });
       totals.unratedLeads += counts.unratedLeads;

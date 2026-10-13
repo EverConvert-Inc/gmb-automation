@@ -1,0 +1,3 @@
+ALTER TABLE "lsa_lead_rating_submissions" DROP CONSTRAINT "lsa_lead_rating_submissions_lead_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "lsa_lead_rating_submissions_live_lead_idx" ON "lsa_lead_rating_submissions" USING btree ("lead_id") WHERE "lsa_lead_rating_submissions"."status" <> 'failed';--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "lsa_lead_rating_submissions_lead_idx" ON "lsa_lead_rating_submissions" USING btree ("lead_id");
