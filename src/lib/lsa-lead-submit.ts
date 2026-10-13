@@ -177,7 +177,10 @@ export async function submitLeadRating(args: {
 export async function clientsDueForScan(batchSize: number): Promise<LsaClient[]> {
   return db.query.lsaClients.findMany({
     where: and(eq(lsaClients.isActive, true)),
-    orderBy: (t, { asc }) => [asc(sql`${t.lastRatedScanAt} nulls first`)],
+    // Raw fragment, NOT asc(sql`... nulls first`): wrapping it in asc()
+    // emitted "nulls first asc", which Postgres rejects — the whole route
+    // 500'd on every run. NULLS FIRST must follow the direction.
+    orderBy: () => [sql`${lsaClients.lastRatedScanAt} asc nulls first`],
     limit: batchSize,
   });
 }
