@@ -7,6 +7,7 @@ import {
   fetchCallsForCompany,
   fetchFormSubmissionsForCompany,
   listTrackerCompanyIds,
+  probeTagFilterSemantics,
 } from "./callrail-client";
 import { drizzleLeadStore } from "./store";
 import type { SyncDeps } from "./sync";
@@ -18,6 +19,8 @@ export function createSyncDeps(): SyncDeps {
       fetchCallsForCompany(companyId, from, to, opts),
     fetchForms: (companyId, from, to, opts) =>
       fetchFormSubmissionsForCompany(companyId, from, to, opts),
+    probeTagFilter: (kind, companyId, from, to, opts) =>
+      probeTagFilterSemantics(kind, companyId, from, to, opts),
     store: drizzleLeadStore,
     now: () => new Date(),
   };

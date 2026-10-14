@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CALLRAIL_TRACKER_CALL_FIELDS,
+  LEAD_STATUS_TAGS,
+  inferTagFilterSemantics,
+  probeTagFilterSemantics,
   CALLRAIL_TRACKER_FORM_FIELDS,
   fetchCallsForCompany,
   fetchFormSubmissionsForCompany,
@@ -261,5 +264,239 @@ describe("tagNames", () => {
     [undefined, []],
   ])("%s -> %s", (input, expected) => {
     expect(tagNames(input as never)).toEqual(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-side tag filter
+// ---------------------------------------------------------------------------
+
+function tagsIn(url: unknown): string[] {
+  return new URL(String(url)).searchParams.getAll("tags[]");
+}
+
+describe("LEAD_STATUS_TAGS", () => {
+  // Pinned. These decide what is a lead at all — a record carrying none of
+  // them is never fetched, so an accidental edit silently stops ingestion.
+  it("is Opportunity plus the full status ladder, in that order", () => {
+    expect([...LEAD_STATUS_TAGS]).toEqual([
+      "Opportunity",
+      "Signed",
+      "Pending",
+      "Lost",
+      "Rejected",
+      "No Case",
+      "Referred out",
+      "No Contact",
+      "Declined",
+    ]);
+  });
+
+  it("excludes the tags the first dry run showed are not leads", () => {
+    for (const notALead of ["Client", "Admin", "Duplicate"]) {
+      expect(LEAD_STATUS_TAGS).not.toContain(notALead);
+    }
+  });
+});
+
+describe("the fetch is tag-filtered server-side", () => {
+  it("sends one tags[] param per status tag on calls, by default", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200, { calls: [], total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCallsForCompany("COM1", "2026-10-01", "2026-10-14", NO_WAIT);
+    expect(tagsIn(fetchMock.mock.calls[0][0])).toEqual([...LEAD_STATUS_TAGS]);
+  });
+
+  it("sends the same filter on form submissions", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(res(200, { form_submissions: [], total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchFormSubmissionsForCompany("COM1", "2026-10-01", "2026-10-14", NO_WAIT);
+    expect(tagsIn(fetchMock.mock.calls[0][0])).toEqual([...LEAD_STATUS_TAGS]);
+  });
+
+  // The previous-month pass calls this same function with a different
+  // window, so filtering by default is what makes both passes filtered.
+  it("filters EVERY window, not just the current month", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200, { calls: [], total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCallsForCompany("COM1", "2026-10-01", "2026-10-14", NO_WAIT);
+    await fetchCallsForCompany("COM1", "2026-09-01", "2026-09-30", NO_WAIT);
+    for (const call of fetchMock.mock.calls) {
+      expect(tagsIn(call[0])).toEqual([...LEAD_STATUS_TAGS]);
+    }
+  });
+
+  it("filters every PAGE, not just the first", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(res(200, { calls: [{ id: "1" }], total_pages: 3 }))
+      .mockResolvedValueOnce(res(200, { calls: [{ id: "2" }], total_pages: 3 }))
+      .mockResolvedValueOnce(res(200, { calls: [{ id: "3" }], total_pages: 3 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCallsForCompany("COM1", "2026-10-01", "2026-10-14", NO_WAIT);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const call of fetchMock.mock.calls) {
+      expect(tagsIn(call[0])).toEqual([...LEAD_STATUS_TAGS]);
+    }
+  });
+
+  it("sends NO tags[] when explicitly told not to filter", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200, { calls: [], total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCallsForCompany("COM1", "2026-10-01", "2026-10-14", {
+      ...NO_WAIT,
+      tags: null,
+    });
+    expect(tagsIn(fetchMock.mock.calls[0][0])).toEqual([]);
+  });
+
+  it("honours an explicit tag list", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200, { calls: [], total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCallsForCompany("COM1", "2026-10-01", "2026-10-14", {
+      ...NO_WAIT,
+      tags: ["Signed"],
+    });
+    expect(tagsIn(fetchMock.mock.calls[0][0])).toEqual(["Signed"]);
+  });
+
+  it("leaves the other query parameters untouched", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200, { calls: [], total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCallsForCompany("COM1", "2026-10-01", "2026-10-14", NO_WAIT);
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.get("company_id")).toBe("COM1");
+    expect(url.searchParams.get("start_date")).toBe("2026-10-01");
+    expect(url.searchParams.get("fields")).toBe(CALLRAIL_TRACKER_CALL_FIELDS.join(","));
+  });
+});
+
+describe("inferTagFilterSemantics", () => {
+  it.each([
+    ["OR: all-tags sits between a single tag and unfiltered", 790, 12, 25, "or"],
+    ["AND: all-tags is below a single tag", 790, 12, 0, "and"],
+    ["AND: strictly fewer", 790, 12, 3, "and"],
+    ["IGNORED: all-tags equals unfiltered while one tag is fewer", 790, 12, 790, "ignored"],
+    ["equal counts with a tag present is still OR", 790, 25, 25, "or"],
+  ])("%s", (_label, unfiltered, single, all, expected) => {
+    expect(
+      inferTagFilterSemantics(
+        unfiltered as number,
+        single as number,
+        all as number,
+      ).semantics,
+    ).toBe(expected);
+  });
+
+  it("is inconclusive when nothing in the window carries a tag", () => {
+    const r = inferTagFilterSemantics(790, 0, 0);
+    expect(r.semantics).toBe("inconclusive");
+    expect(r.explanation).toMatch(/does not|no record/i);
+  });
+
+  it.each([
+    [null, 1, 1],
+    [1, null, 1],
+    [1, 1, null],
+  ])("is inconclusive when total_records is missing (%s,%s,%s)", (u, s2, a) => {
+    expect(
+      inferTagFilterSemantics(u as number | null, s2 as number | null, a as number | null)
+        .semantics,
+    ).toBe("inconclusive");
+  });
+});
+
+describe("probeTagFilterSemantics", () => {
+  it("makes three one-record counts and reports OR", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const n = tagsIn(url).length;
+      const total = n === 0 ? 790 : n === 1 ? 12 : 25;
+      return Promise.resolve(res(200, { calls: [], total_records: total, total_pages: 1 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const probe = await probeTagFilterSemantics(
+      "calls",
+      "COM1",
+      "2026-10-01",
+      "2026-10-14",
+      NO_WAIT,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(probe).toMatchObject({
+      path: "calls.json",
+      unfiltered: 790,
+      singleTag: 12,
+      singleTagName: "Opportunity",
+      allTags: 25,
+      semantics: "or",
+    });
+    // One record per probe request, never a full page of PII.
+    for (const call of fetchMock.mock.calls) {
+      expect(new URL(String(call[0])).searchParams.get("per_page")).toBe("1");
+    }
+  });
+
+  it("detects AND semantics", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const n = tagsIn(url).length;
+      const total = n === 0 ? 790 : n === 1 ? 12 : 0;
+      return Promise.resolve(res(200, { calls: [], total_records: total, total_pages: 1 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const probe = await probeTagFilterSemantics(
+      "calls",
+      "COM1",
+      "2026-10-01",
+      "2026-10-14",
+      NO_WAIT,
+    );
+    expect(probe.semantics).toBe("and");
+    expect(probe.explanation).toMatch(/one request per tag/i);
+  });
+
+  it("probes form_submissions when asked", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(res(200, { form_submissions: [], total_records: 3, total_pages: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const probe = await probeTagFilterSemantics(
+      "forms",
+      "COM1",
+      "2026-10-01",
+      "2026-10-14",
+      NO_WAIT,
+    );
+    expect(probe.path).toBe("form_submissions.json");
+    expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toBe(
+      "/v3/a/AC1/form_submissions.json",
+    );
+  });
+
+  it("is inconclusive when CallRail omits total_records", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(res(200, { calls: [], total_pages: 1 })),
+    );
+    const probe = await probeTagFilterSemantics(
+      "calls",
+      "COM1",
+      "2026-10-01",
+      "2026-10-14",
+      NO_WAIT,
+    );
+    expect(probe.semantics).toBe("inconclusive");
+    expect(probe.unfiltered).toBeNull();
   });
 });

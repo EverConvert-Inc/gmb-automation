@@ -835,3 +835,157 @@ describe("dry-run parse-failure tally", () => {
     expect(r.forms.noteStructures).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tag filter: echoed, probed on the dry run only
+// ---------------------------------------------------------------------------
+
+describe("the tag filter in a sync result", () => {
+  const probe = (kind: "calls" | "forms") => ({
+    companyId: "COM1",
+    path: kind === "calls" ? "calls.json" : "form_submissions.json",
+    unfiltered: 790,
+    singleTag: 12,
+    singleTagName: "Opportunity",
+    allTags: 25,
+    semantics: "or" as const,
+    explanation: "ok",
+  });
+
+  it("echoes the nine tags every fetch is filtered to", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    const r = await syncLeadsForMonth(makeDeps(fake.store), { dryRun: true });
+    expect([...r.tagFilter]).toEqual([
+      "Opportunity",
+      "Signed",
+      "Pending",
+      "Lost",
+      "Rejected",
+      "No Case",
+      "Referred out",
+      "No Contact",
+      "Declined",
+    ]);
+  });
+
+  it("probes ONE company on a dry run, for calls and forms", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    const seen: string[][] = [];
+    const deps = makeDeps(fake.store, {
+      listCompanyIds: async () => ["COM1", "COM2", "COM3"],
+      probeTagFilter: async (kind, companyId) => {
+        seen.push([kind, companyId]);
+        return probe(kind);
+      },
+    });
+
+    const r = await syncLeadsForMonth(deps, { dryRun: true });
+    expect(seen).toEqual([
+      ["calls", "COM1"],
+      ["forms", "COM1"],
+    ]);
+    expect(r.tagFilterProbe.calls?.semantics).toBe("or");
+    expect(r.tagFilterProbe.forms?.path).toBe("form_submissions.json");
+  });
+
+  it("never probes on a REAL run", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    let probed = 0;
+    const deps = makeDeps(fake.store, {
+      probeTagFilter: async (kind) => {
+        probed += 1;
+        return probe(kind);
+      },
+    });
+
+    const r = await syncLeadsForMonth(deps, { triggeredBy: "scheduled" });
+    expect(probed).toBe(0);
+    expect(r.tagFilterProbe).toEqual({ calls: null, forms: null });
+  });
+
+  // The probe is a diagnostic. It must never be the reason a run fails.
+  it("a failing probe leaves the dry run intact", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+    });
+    const deps = makeDeps(fake.store, {
+      fetchCalls: async () => [CALL() as never],
+      probeTagFilter: async () => {
+        throw new Error("probe blew up");
+      },
+    });
+
+    const r = await syncLeadsForMonth(deps, { dryRun: true });
+    expect(r.tagFilterProbe).toEqual({ calls: null, forms: null });
+    expect(r.calls.planned).toBe(1);
+    expect(r.calls.error).toBeNull();
+  });
+
+  it("skips the probe when no company was fetched", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    let probed = 0;
+    const deps = makeDeps(fake.store, {
+      listCompanyIds: async () => [],
+      probeTagFilter: async (kind) => {
+        probed += 1;
+        return probe(kind);
+      },
+    });
+    await syncLeadsForMonth(deps, { dryRun: true });
+    expect(probed).toBe(0);
+  });
+});
+
+describe("an empty note on a TAGGED record", () => {
+  // The filter stops untagged records being fetched at all. A record that IS
+  // tagged but has no note is a different thing: a real lead somebody failed
+  // to write up, so it still goes to the queue rather than being dropped.
+  it("is still a parse failure bound for the admin queue", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+    });
+    const deps = makeDeps(fake.store, {
+      fetchCalls: async () => [CALL({ note: null, tags: ["Signed"] }) as never],
+    });
+
+    const r = await syncLeadsForMonth(deps, { triggeredBy: "scheduled" });
+    expect(r.calls.parseFailed).toBe(1);
+
+    const row = [...fake.rows.values()][0];
+    expect(row.parseError).toBe("empty_note");
+    expect(row.needsReview).toBe(true);
+    expect(row.firmId).toBe("firm-a");
+    // The tag still gives it a status, and the fallbacks still give a name.
+    expect(row.statusParsed).toBe("signed");
+    expect(row.nameParsed).toBe("Fallback Name");
+  });
+
+  it("is tallied under empty_note on a dry run, with a null note shape", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    const deps = makeDeps(fake.store, {
+      fetchCalls: async () => [CALL({ note: null, tags: ["Signed"] }) as never],
+    });
+
+    const r = await syncLeadsForMonth(deps, { dryRun: true });
+    expect(r.calls.parseFailureReasons).toEqual({ empty_note: 1 });
+    expect(r.calls.noteStructures[0]).toMatchObject({
+      reason: "empty_note",
+      hasSemicolon: false,
+      noteStructure: null,
+    });
+  });
+});

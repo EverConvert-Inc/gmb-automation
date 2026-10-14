@@ -21,7 +21,9 @@ import {
   type RoutingIndex,
 } from "./routing";
 import {
+  LEAD_STATUS_TAGS,
   tagNames,
+  type TagFilterProbe,
   type TransportOptions,
   type TrackerCallRecord,
   type TrackerFormRecord,
@@ -390,6 +392,17 @@ export type SyncDeps = {
   ) => Promise<TrackerFormRecord[]>;
   store: LeadStore;
   now: () => Date;
+  /**
+   * Dry run only. Optional so a test can leave it out; when absent the
+   * probe is simply skipped.
+   */
+  probeTagFilter?: (
+    kind: "calls" | "forms",
+    companyId: string,
+    from: string,
+    to: string,
+    opts: TransportOptions,
+  ) => Promise<TagFilterProbe>;
 };
 
 export type SyncOptions = {
@@ -422,9 +435,17 @@ export type SyncResult = {
   dryRun: boolean;
   window: SyncWindow;
   companies: number;
+  /** The tags every fetch is filtered to, echoed so a run is self-describing. */
+  tagFilter: readonly string[];
   calls: SourceResult;
   forms: SourceResult;
   sample: MaskedSample[];
+  /**
+   * Dry run only. Whether CallRail's repeated tags[] param unions or
+   * intersects — an assumption the fetch depends on and the docs do not
+   * settle. Null on a real run or when no company was fetched.
+   */
+  tagFilterProbe: { calls: TagFilterProbe | null; forms: TagFilterProbe | null };
 };
 
 function emptySourceResult(): SourceResult {
@@ -496,7 +517,32 @@ export async function syncLeadsForMonth(
     normalize: normalizeForm,
   });
 
-  return { dryRun, window, companies: companyIds.length, calls, forms, sample };
+  // One company is enough to settle the semantics question, and three extra
+  // single-record requests is the whole cost.
+  let tagFilterProbe: SyncResult["tagFilterProbe"] = { calls: null, forms: null };
+  if (dryRun && deps.probeTagFilter && companyIds.length > 0) {
+    const probeCompany = companyIds[0];
+    const [callsProbe, formsProbe] = await Promise.all([
+      deps
+        .probeTagFilter("calls", probeCompany, window.currentFrom, window.currentTo, transport)
+        .catch(() => null),
+      deps
+        .probeTagFilter("forms", probeCompany, window.currentFrom, window.currentTo, transport)
+        .catch(() => null),
+    ]);
+    tagFilterProbe = { calls: callsProbe, forms: formsProbe };
+  }
+
+  return {
+    dryRun,
+    window,
+    companies: companyIds.length,
+    tagFilter: LEAD_STATUS_TAGS,
+    calls,
+    forms,
+    sample,
+    tagFilterProbe,
+  };
 }
 
 type SourcePassInput<R> = {
