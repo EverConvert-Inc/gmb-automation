@@ -1,0 +1,589 @@
+// Ingestion for the client-facing lead tracker.
+//
+// Every dependency is injected. This module never imports the db client or
+// the CallRail client directly — the routes wire the real ones in, the tests
+// wire fakes in, and the orchestration under test is the same code that
+// runs in production.
+
+import {
+  firstOfMonthIsoEastern,
+  firstOfPreviousMonthIsoEastern,
+  easternWallClockToDate,
+  lastDayOfPreviousMonthIsoEastern,
+  todayIsoEastern,
+} from "@/lib/date-utils";
+import { parseNote } from "./parse-note";
+import { resolveContact } from "./form-fallbacks";
+import { resolveStatusFromTags, resolveStatusFromText } from "./status-from-tags";
+import {
+  buildRoutingIndex,
+  resolveFirmsForLead,
+  type RoutingIndex,
+} from "./routing";
+import {
+  tagNames,
+  type TransportOptions,
+  type TrackerCallRecord,
+  type TrackerFormRecord,
+} from "./callrail-client";
+import {
+  leadKey,
+  type JobKind,
+  type LeadSource,
+  type LeadStore,
+  type PlannedLead,
+  type TrackerLead,
+} from "./types";
+
+// Same discipline as ppc-sync.ts's copy, and it exists for the same real
+// production incident: `(err as Error).message` on a non-Error rejection
+// evaluates to undefined, Drizzle's .set() drops undefined fields, and an
+// update with zero fields throws "No values to set" — masking the actual
+// cause entirely.
+export function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Window
+// ---------------------------------------------------------------------------
+
+export type SyncWindow = {
+  currentFrom: string;
+  currentTo: string;
+  previousFrom: string;
+  previousTo: string;
+};
+
+/**
+ * Month-to-date in EASTERN, plus the previous Eastern month for the
+ * still-pending recheck. Every bound comes from date-utils' Eastern helpers:
+ * CallRail interprets start_date/end_date in the account's local time, and a
+ * UTC-derived bound puts a 21:10 ET lead in the wrong month at a boundary.
+ */
+export function resolveSyncWindow(): SyncWindow {
+  return {
+    currentFrom: firstOfMonthIsoEastern(),
+    currentTo: todayIsoEastern(),
+    previousFrom: firstOfPreviousMonthIsoEastern(),
+    previousTo: lastDayOfPreviousMonthIsoEastern(),
+  };
+}
+
+/**
+ * CallRail timestamps carry an offset ("...-04:00"), in which case Date
+ * parses them correctly. If one ever arrives as a bare wall clock, treating
+ * it as UTC would land it 4-5 hours early, so it is read as Eastern instead
+ * — the same correction easternWallClockToDate exists for on the Google Ads
+ * side.
+ */
+export function parseCallrailInstant(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/.test(s)) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return easternWallClockToDate(s);
+}
+
+// ---------------------------------------------------------------------------
+// Normalisation
+// ---------------------------------------------------------------------------
+
+export function normalizeCall(
+  record: TrackerCallRecord,
+  companyId: string,
+): TrackerLead | null {
+  const occurredAt = parseCallrailInstant(record.start_time);
+  if (!record.id || !occurredAt) return null;
+  return {
+    source: "call",
+    callrailId: String(record.id),
+    callrailCompanyId: companyId,
+    occurredAt,
+    tags: tagNames(record.tags),
+    note: record.note ?? null,
+    customerName: record.customer_name ?? null,
+    customerPhoneNumber: record.customer_phone_number ?? null,
+    rawSourceName: record.source_name ?? record.formatted_tracking_source ?? null,
+    rawTrackerId: record.tracker_id ?? null,
+    rawFormData: null,
+  };
+}
+
+export function normalizeForm(
+  record: TrackerFormRecord,
+  companyId: string,
+): TrackerLead | null {
+  const occurredAt = parseCallrailInstant(record.submitted_at);
+  if (!record.id || !occurredAt) return null;
+  return {
+    source: "form",
+    callrailId: String(record.id),
+    callrailCompanyId: companyId,
+    occurredAt,
+    tags: tagNames(record.tags),
+    note: record.note ?? null,
+    customerName: record.customer_name ?? null,
+    customerPhoneNumber: record.customer_phone_number ?? null,
+    // A form has no tracking number; `source` is the closest equivalent and
+    // is admin-only either way, same as a call's tracker name.
+    rawSourceName: record.source ?? record.referrer ?? null,
+    rawTrackerId: null,
+    rawFormData: record.form_data ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Planning — pure
+// ---------------------------------------------------------------------------
+
+export type PlanOptions = {
+  now: Date;
+  /**
+   * Firm ids that already hold a row for a given leadKey. Without this, a
+   * lead an admin assigned out of the queue would be re-created as an
+   * unassigned twin on the very next run: routing still says "no firm", and
+   * the partial unique index only dedupes rows whose firm_id is null.
+   */
+  assignedFirmIds?: Map<string, string[]>;
+};
+
+export function planLeadWrites(
+  incoming: readonly TrackerLead[],
+  index: RoutingIndex,
+  { now, assignedFirmIds }: PlanOptions,
+): PlannedLead[] {
+  const out: PlannedLead[] = [];
+
+  for (const lead of incoming) {
+    const tagStatus = resolveStatusFromTags(lead.tags);
+    const routing = resolveFirmsForLead(
+      { tags: lead.tags, callrailCompanyId: lead.callrailCompanyId },
+      index,
+    );
+    const parsed = parseNote(lead.note, {
+      tags: lead.tags,
+      callerIdPhone: lead.customerPhoneNumber,
+    });
+
+    const fallbackSource = {
+      customerName: lead.customerName,
+      customerPhoneNumber: lead.customerPhoneNumber,
+      formData: lead.rawFormData,
+    };
+
+    type PersonPlan = {
+      personSuffix: string;
+      name: string | null;
+      phone: string | null;
+      status: "pending" | "signed";
+      statusTagMatched: string | null;
+      isOpportunity: boolean;
+    };
+
+    let people: PersonPlan[];
+    let parseFailed = false;
+    let parseError: string | null = null;
+
+    if (parsed.ok) {
+      people = parsed.people.map((p) => {
+        // A multi-person note gives each person their own status text, and
+        // the spec makes that authoritative for that person. With no text,
+        // the lead's own tags apply. The Opportunity flag is unioned: a
+        // lead-level Opportunity tag applies to everyone on the note.
+        const own = p.statusText ? resolveStatusFromText(p.statusText) : tagStatus;
+        const contact = resolveContact({ name: p.name, phone: p.phone }, fallbackSource);
+        return {
+          personSuffix: p.personSuffix,
+          name: contact.name,
+          phone: contact.phone,
+          status: own.status,
+          statusTagMatched: own.matchedTag,
+          isOpportunity: own.isOpportunity || tagStatus.isOpportunity,
+        };
+      });
+    } else {
+      // A parse failure still produces a lead. Dropping it would mean a real
+      // person silently never reaching anyone; the admin queue is where it
+      // goes instead, with whatever the fallbacks could recover.
+      parseFailed = true;
+      parseError = parsed.detail
+        ? `${parsed.reason}: ${parsed.detail}`
+        : parsed.reason;
+      const contact = resolveContact({ name: null, phone: null }, fallbackSource);
+      people = [
+        {
+          personSuffix: "p1",
+          name: contact.name,
+          phone: contact.phone,
+          status: tagStatus.status,
+          statusTagMatched: tagStatus.matchedTag,
+          isOpportunity: tagStatus.isOpportunity,
+        },
+      ];
+    }
+
+    for (const person of people) {
+      let targets: (string | null)[] =
+        routing.firmIds.length > 0 ? routing.firmIds : [null];
+
+      if (routing.firmIds.length === 0) {
+        const existing = assignedFirmIds?.get(
+          leadKey(lead.callrailId, person.personSuffix),
+        );
+        // Refresh the rows an admin already assigned instead of creating a
+        // queue twin beside them. This also covers a firm tag being removed
+        // after delivery: the firm keeps the lead it was already shown
+        // rather than it vanishing from their view into the queue.
+        if (existing && existing.length > 0) targets = existing;
+      }
+
+      for (const firmId of targets) {
+        out.push({
+          firmId,
+          source: lead.source,
+          callrailId: lead.callrailId,
+          personSuffix: person.personSuffix,
+          callrailCompanyId: lead.callrailCompanyId,
+          occurredAt: lead.occurredAt,
+          rawSourceName: lead.rawSourceName,
+          rawTrackerId: lead.rawTrackerId,
+          rawNote: lead.note,
+          rawTags: lead.tags,
+          rawFormData: lead.rawFormData,
+          customerPhoneCallerid: lead.customerPhoneNumber,
+          nameParsed: person.name,
+          phoneParsed: person.phone,
+          statusParsed: person.status,
+          statusTagMatched: person.statusTagMatched,
+          isOpportunityParsed: person.isOpportunity,
+          suggestedStatus: person.status,
+          parseFailed,
+          parseError,
+          needsReview: firmId === null || parseFailed,
+          // Only ever a proposal: the store applies it with
+          // coalesce(existing, new), so a webhook receipt time already on
+          // the row wins.
+          signedAt: person.status === "signed" ? now : null,
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Dry-run masking
+// ---------------------------------------------------------------------------
+
+export function maskName(name: string | null): string | null {
+  if (!name) return name;
+  return name
+    .split(/(\s+)/)
+    .map((part) =>
+      /^\s+$/.test(part) || part.length === 0
+        ? part
+        : part[0] + "*".repeat(Math.max(1, part.length - 1)),
+    )
+    .join("");
+}
+
+export function maskPhone(phone: string | null): string | null {
+  if (!phone) return phone;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 4) return "***";
+  return `***${digits.slice(-4)}`;
+}
+
+export type MaskedSample = {
+  source: LeadSource;
+  callrailId: string;
+  personSuffix: string;
+  firmId: string | null;
+  occurredAt: string;
+  name: string | null;
+  phone: string | null;
+  statusParsed: string;
+  statusTagMatched: string | null;
+  isOpportunity: boolean;
+  parseFailed: boolean;
+  parseError: string | null;
+  needsReview: boolean;
+  tags: string[];
+};
+
+export function toMaskedSample(row: PlannedLead): MaskedSample {
+  return {
+    source: row.source,
+    callrailId: row.callrailId,
+    personSuffix: row.personSuffix,
+    firmId: row.firmId,
+    occurredAt: row.occurredAt.toISOString(),
+    name: maskName(row.nameParsed),
+    phone: maskPhone(row.phoneParsed),
+    statusParsed: row.statusParsed,
+    statusTagMatched: row.statusTagMatched,
+    isOpportunity: row.isOpportunityParsed,
+    parseFailed: row.parseFailed,
+    parseError: row.parseError,
+    needsReview: row.needsReview,
+    tags: row.rawTags,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Orchestration
+// ---------------------------------------------------------------------------
+
+export type SyncDeps = {
+  listCompanyIds: (opts: TransportOptions) => Promise<string[]>;
+  fetchCalls: (
+    companyId: string,
+    from: string,
+    to: string,
+    opts: TransportOptions,
+  ) => Promise<TrackerCallRecord[]>;
+  fetchForms: (
+    companyId: string,
+    from: string,
+    to: string,
+    opts: TransportOptions,
+  ) => Promise<TrackerFormRecord[]>;
+  store: LeadStore;
+  now: () => Date;
+};
+
+export type SyncOptions = {
+  triggeredBy?: string;
+  dryRun?: boolean;
+  /** Overrides company discovery. Narrows what is fetched and stored. */
+  companyIds?: string[];
+  transport?: TransportOptions;
+  sampleSize?: number;
+};
+
+export type SourceResult = {
+  jobId: string | null;
+  fetched: number;
+  recheckedFromPreviousMonth: number;
+  planned: number;
+  assigned: number;
+  unassigned: number;
+  parseFailed: number;
+  written: number;
+  fieldsSeen: string[];
+  error: string | null;
+};
+
+export type SyncResult = {
+  dryRun: boolean;
+  window: SyncWindow;
+  companies: number;
+  calls: SourceResult;
+  forms: SourceResult;
+  sample: MaskedSample[];
+};
+
+function emptySourceResult(): SourceResult {
+  return {
+    jobId: null,
+    fetched: 0,
+    recheckedFromPreviousMonth: 0,
+    planned: 0,
+    assigned: 0,
+    unassigned: 0,
+    parseFailed: 0,
+    written: 0,
+    fieldsSeen: [],
+    error: null,
+  };
+}
+
+export async function syncLeadsForMonth(
+  deps: SyncDeps,
+  options: SyncOptions = {},
+): Promise<SyncResult> {
+  const dryRun = options.dryRun === true;
+  const triggeredBy = options.triggeredBy ?? (dryRun ? "dry-run" : "manual");
+  const transport = options.transport ?? {};
+  const sampleSize = options.sampleSize ?? 10;
+  const window = resolveSyncWindow();
+
+  const companyIds =
+    options.companyIds ?? (await deps.listCompanyIds(transport));
+  const { tagRules, companyRules } = await deps.store.loadRoutingRules();
+  const index = buildRoutingIndex(tagRules, companyRules);
+
+  const sample: MaskedSample[] = [];
+
+  // Calls and forms get their OWN job row and their own try/catch, so a
+  // forms failure never marks the calls ingestion failed — the same
+  // independent-source discipline lsa-sync.ts uses for its two sources.
+  const calls = await runSourcePass<TrackerCallRecord>({
+    source: "call",
+    kind: "callrail_calls",
+    deps,
+    index,
+    window,
+    companyIds,
+    transport,
+    dryRun,
+    triggeredBy,
+    sample,
+    sampleSize,
+    fetchPage: (companyId, from, to) => deps.fetchCalls(companyId, from, to, transport),
+    normalize: normalizeCall,
+  });
+
+  const forms = await runSourcePass<TrackerFormRecord>({
+    source: "form",
+    kind: "callrail_forms",
+    deps,
+    index,
+    window,
+    companyIds,
+    transport,
+    dryRun,
+    triggeredBy,
+    sample,
+    sampleSize,
+    fetchPage: (companyId, from, to) => deps.fetchForms(companyId, from, to, transport),
+    normalize: normalizeForm,
+  });
+
+  return { dryRun, window, companies: companyIds.length, calls, forms, sample };
+}
+
+type SourcePassInput<R> = {
+  source: LeadSource;
+  kind: JobKind;
+  deps: SyncDeps;
+  index: RoutingIndex;
+  window: SyncWindow;
+  companyIds: readonly string[];
+  transport: TransportOptions;
+  dryRun: boolean;
+  triggeredBy: string;
+  sample: MaskedSample[];
+  sampleSize: number;
+  fetchPage: (companyId: string, from: string, to: string) => Promise<R[]>;
+  normalize: (record: R, companyId: string) => TrackerLead | null;
+};
+
+async function runSourcePass<R extends { id: string }>(
+  input: SourcePassInput<R>,
+): Promise<SourceResult> {
+  const { deps, window, dryRun, sample, sampleSize } = input;
+  const result = emptySourceResult();
+  const fieldsSeen = new Set<string>();
+
+  if (!dryRun) {
+    result.jobId = await deps.store.startJob({
+      kind: input.kind,
+      triggeredBy: input.triggeredBy,
+      fromDate: window.currentFrom,
+      toDate: window.currentTo,
+    });
+  }
+
+  try {
+    const collected: TrackerLead[] = [];
+
+    for (const companyId of input.companyIds) {
+      const records = await input.fetchPage(
+        companyId,
+        window.currentFrom,
+        window.currentTo,
+      );
+      result.fetched += records.length;
+      for (const r of records) {
+        for (const k of Object.keys(r ?? {})) fieldsSeen.add(k);
+        const lead = input.normalize(r, companyId);
+        if (lead) collected.push(lead);
+      }
+    }
+
+    // Second pass: the previous Eastern month, narrowed to leads we already
+    // hold that are STILL pending. This is the only path by which a lead
+    // signed after its own month closes ever gets its signed date from a
+    // sync — the month-to-date window above can never see it, because
+    // CallRail's date filter is on the call time, not the tag time.
+    //
+    // The window is re-fetched and matched by callrail_id rather than
+    // fetched id-by-id: it is one paginated request per company instead of
+    // one per lead, and it needs no per-record endpoint.
+    const pendingIds = await deps.store.findPendingCallrailIds(
+      window.previousFrom,
+      window.previousTo,
+      input.source,
+    );
+    if (pendingIds.size > 0) {
+      for (const companyId of input.companyIds) {
+        const records = await input.fetchPage(
+          companyId,
+          window.previousFrom,
+          window.previousTo,
+        );
+        for (const r of records) {
+          if (!pendingIds.has(String(r?.id))) continue;
+          const lead = input.normalize(r, companyId);
+          if (!lead) continue;
+          collected.push(lead);
+          result.recheckedFromPreviousMonth += 1;
+        }
+      }
+    }
+
+    const assignedFirmIds = await deps.store.findAssignedFirmIds(
+      collected.map((l) => l.callrailId),
+    );
+    const planned = planLeadWrites(collected, input.index, {
+      now: deps.now(),
+      assignedFirmIds,
+    });
+
+    result.planned = planned.length;
+    result.assigned = planned.filter((p) => p.firmId !== null).length;
+    result.unassigned = planned.filter((p) => p.firmId === null).length;
+    result.parseFailed = planned.filter((p) => p.parseFailed).length;
+
+    for (const row of planned) {
+      if (sample.length >= sampleSize) break;
+      sample.push(toMaskedSample(row));
+    }
+
+    if (!dryRun) {
+      const { written } = await deps.store.upsertLeads(planned);
+      result.written = written;
+      await deps.store.finishJob({
+        jobId: result.jobId as string,
+        status: "completed",
+        errorMessage: null,
+        leadsIngested: written,
+      });
+    }
+  } catch (err) {
+    result.error = stringifyError(err);
+    if (!dryRun && result.jobId) {
+      await deps.store.finishJob({
+        jobId: result.jobId,
+        status: "failed",
+        errorMessage: result.error,
+        leadsIngested: result.written,
+      });
+    }
+  }
+
+  result.fieldsSeen = [...fieldsSeen].sort();
+  return result;
+}
