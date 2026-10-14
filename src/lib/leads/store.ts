@@ -3,6 +3,7 @@
 // the orchestration can be exercised end to end against a fake.
 
 import { and, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import {
   leadFirmCallrailCompanies,
@@ -12,11 +13,26 @@ import {
   leads,
 } from "@/lib/db/schema";
 import { easternWallClockToDate } from "@/lib/date-utils";
-import { leadKey, type LeadSource, type LeadStore, type PlannedLead } from "./types";
+import {
+  leadKey,
+  type JobKind,
+  type LeadSource,
+  type LeadStore,
+  type PlannedLead,
+} from "./types";
 
 // Postgres has a parameter ceiling per statement and these rows are wide,
 // so writes go in chunks rather than one enormous insert.
 const WRITE_CHUNK = 200;
+
+/**
+ * The drizzle instance. Taken as a parameter by every builder below so the
+ * query-compilation test can pass a connectionless instance and assert on
+ * the SQL and parameters the REAL code produces — the store being injected
+ * meant Drizzle itself was never exercised, which is how a parameter-binding
+ * bug reached production with 606 tests green.
+ */
+export type LeadDb = typeof db;
 
 // Calendar arithmetic on an abstract date, assembled field by field rather
 // than via toISOString().slice(0, 10) — that call reads a UTC calendar date
@@ -52,26 +68,128 @@ export function easternDayRangeToInstants(
   return { start, endExclusive };
 }
 
+/**
+ * Binds a Date for use INSIDE a raw `sql` template.
+ *
+ * This is the fix for a real failure: every write threw "The \"string\"
+ * argument must be of type string or an instance of Buffer or ArrayBuffer.
+ * Received an instance of Date". A Date assigned to a typed column is safe —
+ * Drizzle wraps it in a Param carrying that column as its encoder, which
+ * converts it before the driver sees it. A Date interpolated into a raw
+ * template carries NO encoder, so the Date object itself reaches
+ * postgres.js, which calls Buffer.byteLength on it and throws.
+ *
+ * Passing the column makes this serialise through the exact same encoder the
+ * typed path uses, so the two can never diverge. store-queries.test.ts
+ * compiles every real query here and fails if any parameter is still a Date.
+ */
+function dateParam(value: Date, column: PgColumn) {
+  return sql.param(value, column);
+}
+
 // The effective status: an admin override wins, otherwise what the sync
 // parsed. Mirrors the coalesce(override, parsed) rule the read path uses.
 const effectiveStatus = sql`coalesce(${leads.statusOverride}, ${leads.statusParsed})`;
 
+export function buildTagRulesQuery(database: LeadDb) {
+  return database
+    .select({ firmId: leadFirmTags.firmId, tagName: leadFirmTags.tagName })
+    .from(leadFirmTags)
+    .innerJoin(leadFirms, eq(leadFirms.id, leadFirmTags.firmId))
+    .where(eq(leadFirms.isActive, true));
+}
+
+export function buildCompanyRulesQuery(database: LeadDb) {
+  return database
+    .select({
+      firmId: leadFirmCallrailCompanies.firmId,
+      callrailCompanyId: leadFirmCallrailCompanies.callrailCompanyId,
+    })
+    .from(leadFirmCallrailCompanies)
+    .innerJoin(leadFirms, eq(leadFirms.id, leadFirmCallrailCompanies.firmId))
+    .where(eq(leadFirms.isActive, true));
+}
+
+export function buildPendingCallrailIdsQuery(
+  database: LeadDb,
+  fromIsoEastern: string,
+  toIsoEastern: string,
+  source: LeadSource,
+) {
+  const { start, endExclusive } = easternDayRangeToInstants(
+    fromIsoEastern,
+    toIsoEastern,
+  );
+  return database
+    .selectDistinct({ callrailId: leads.callrailId })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.source, source),
+        gte(leads.occurredAt, start),
+        lt(leads.occurredAt, endExclusive),
+        sql`${effectiveStatus} = 'pending'`,
+      ),
+    );
+}
+
+export function buildAssignedFirmIdsQuery(
+  database: LeadDb,
+  callrailIds: readonly string[],
+) {
+  return database
+    .select({
+      callrailId: leads.callrailId,
+      personSuffix: leads.personSuffix,
+      firmId: leads.firmId,
+    })
+    .from(leads)
+    .where(and(inArray(leads.callrailId, [...callrailIds]), isNotNull(leads.firmId)));
+}
+
+export function buildStartJobInsert(
+  database: LeadDb,
+  input: { kind: JobKind; triggeredBy: string; fromDate: string; toDate: string; startedAt: Date },
+) {
+  return database
+    .insert(leadSyncJobs)
+    .values({
+      kind: input.kind,
+      status: "running",
+      startedAt: input.startedAt,
+      triggeredBy: input.triggeredBy,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    })
+    .returning();
+}
+
+export function buildFinishJobUpdate(
+  database: LeadDb,
+  input: {
+    jobId: string;
+    status: "completed" | "failed";
+    errorMessage: string | null;
+    leadsIngested: number;
+    completedAt: Date;
+  },
+) {
+  return database
+    .update(leadSyncJobs)
+    .set({
+      status: input.status,
+      completedAt: input.completedAt,
+      errorMessage: input.errorMessage?.slice(0, 2000) ?? null,
+      leadsIngested: input.leadsIngested,
+    })
+    .where(eq(leadSyncJobs.id, input.jobId));
+}
+
 export const drizzleLeadStore: LeadStore = {
   async loadRoutingRules() {
     const [tagRows, companyRows] = await Promise.all([
-      db
-        .select({ firmId: leadFirmTags.firmId, tagName: leadFirmTags.tagName })
-        .from(leadFirmTags)
-        .innerJoin(leadFirms, eq(leadFirms.id, leadFirmTags.firmId))
-        .where(eq(leadFirms.isActive, true)),
-      db
-        .select({
-          firmId: leadFirmCallrailCompanies.firmId,
-          callrailCompanyId: leadFirmCallrailCompanies.callrailCompanyId,
-        })
-        .from(leadFirmCallrailCompanies)
-        .innerJoin(leadFirms, eq(leadFirms.id, leadFirmCallrailCompanies.firmId))
-        .where(eq(leadFirms.isActive, true)),
+      buildTagRulesQuery(db),
+      buildCompanyRulesQuery(db),
     ]);
     // Inactive firms are excluded on purpose: deactivating a firm must stop
     // new leads being routed to it, and the alternative (routing then
@@ -80,21 +198,12 @@ export const drizzleLeadStore: LeadStore = {
   },
 
   async findPendingCallrailIds(fromIsoEastern, toIsoEastern, source: LeadSource) {
-    const { start, endExclusive } = easternDayRangeToInstants(
+    const rows = await buildPendingCallrailIdsQuery(
+      db,
       fromIsoEastern,
       toIsoEastern,
+      source,
     );
-    const rows = await db
-      .selectDistinct({ callrailId: leads.callrailId })
-      .from(leads)
-      .where(
-        and(
-          eq(leads.source, source),
-          gte(leads.occurredAt, start),
-          lt(leads.occurredAt, endExclusive),
-          sql`${effectiveStatus} = 'pending'`,
-        ),
-      );
     return new Set(rows.map((r) => r.callrailId));
   },
 
@@ -103,14 +212,7 @@ export const drizzleLeadStore: LeadStore = {
     const out = new Map<string, string[]>();
     for (let i = 0; i < callrailIds.length; i += WRITE_CHUNK) {
       const chunk = callrailIds.slice(i, i + WRITE_CHUNK);
-      const rows = await db
-        .select({
-          callrailId: leads.callrailId,
-          personSuffix: leads.personSuffix,
-          firmId: leads.firmId,
-        })
-        .from(leads)
-        .where(and(inArray(leads.callrailId, chunk), isNotNull(leads.firmId)));
+      const rows = await buildAssignedFirmIdsQuery(db, chunk);
       for (const r of rows) {
         if (!r.firmId) continue;
         const key = leadKey(r.callrailId, r.personSuffix);
@@ -133,30 +235,24 @@ export const drizzleLeadStore: LeadStore = {
   },
 
   async startJob({ kind, triggeredBy, fromDate, toDate }) {
-    const [row] = await db
-      .insert(leadSyncJobs)
-      .values({
-        kind,
-        status: "running",
-        startedAt: new Date(),
-        triggeredBy,
-        fromDate,
-        toDate,
-      })
-      .returning();
+    const [row] = await buildStartJobInsert(db, {
+      kind,
+      triggeredBy,
+      fromDate,
+      toDate,
+      startedAt: new Date(),
+    });
     return row.id;
   },
 
   async finishJob({ jobId, status, errorMessage, leadsIngested }) {
-    await db
-      .update(leadSyncJobs)
-      .set({
-        status,
-        completedAt: new Date(),
-        errorMessage: errorMessage?.slice(0, 2000) ?? null,
-        leadsIngested,
-      })
-      .where(eq(leadSyncJobs.id, jobId));
+    await buildFinishJobUpdate(db, {
+      jobId,
+      status,
+      errorMessage,
+      leadsIngested,
+      completedAt: new Date(),
+    });
   },
 };
 
@@ -216,7 +312,7 @@ function conflictSet(now: Date) {
     // showed it rather than when the sync last ran.
     suggestedStatusSeenAt: sql`case
       when ${leads.suggestedStatus} is distinct from excluded.suggested_status
-        then ${now}
+        then ${dateParam(now, leads.suggestedStatusSeenAt)}
         else ${leads.suggestedStatusSeenAt}
       end`,
     // Never overwritten once set. The webhook's receipt time is the true
@@ -239,6 +335,31 @@ function conflictSet(now: Date) {
   };
 }
 
+export function buildLeadUpsert(
+  database: LeadDb,
+  chunk: readonly PlannedLead[],
+  unassigned: boolean,
+  now: Date,
+) {
+  const stmt = database.insert(leads).values(chunk.map(toInsertValues));
+  if (unassigned) {
+    // Targets leads_unassigned_callrail_person_idx, the PARTIAL unique
+    // index. The plain unique constraint does not constrain these rows at
+    // all: firm_id is null and Postgres treats NULL as distinct from NULL,
+    // so without this predicate every run would insert a fresh duplicate of
+    // every admin-queue lead.
+    return stmt.onConflictDoUpdate({
+      target: [leads.callrailId, leads.personSuffix],
+      targetWhere: isNull(leads.firmId),
+      set: conflictSet(now),
+    });
+  }
+  return stmt.onConflictDoUpdate({
+    target: [leads.firmId, leads.callrailId, leads.personSuffix],
+    set: conflictSet(now),
+  });
+}
+
 async function writeChunks(
   rows: readonly PlannedLead[],
   unassigned: boolean,
@@ -247,25 +368,8 @@ async function writeChunks(
   const now = new Date();
   let written = 0;
   for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
-    const chunk = rows.slice(i, i + WRITE_CHUNK).map(toInsertValues);
-    const stmt = db.insert(leads).values(chunk);
-    if (unassigned) {
-      // Targets leads_unassigned_callrail_person_idx, the PARTIAL unique
-      // index. The plain unique constraint does not constrain these rows at
-      // all: firm_id is null and Postgres treats NULL as distinct from
-      // NULL, so without this predicate every run would insert a fresh
-      // duplicate of every admin-queue lead.
-      await stmt.onConflictDoUpdate({
-        target: [leads.callrailId, leads.personSuffix],
-        targetWhere: isNull(leads.firmId),
-        set: conflictSet(now),
-      });
-    } else {
-      await stmt.onConflictDoUpdate({
-        target: [leads.firmId, leads.callrailId, leads.personSuffix],
-        set: conflictSet(now),
-      });
-    }
+    const chunk = rows.slice(i, i + WRITE_CHUNK);
+    await buildLeadUpsert(db, chunk, unassigned, now);
     written += chunk.length;
   }
   return written;
