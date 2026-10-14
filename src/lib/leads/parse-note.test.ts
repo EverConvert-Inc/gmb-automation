@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  NOTE_STATUS_WORDS,
   declaredPersonCount,
   findPhoneNumbers,
   normalizePhoneDigits,
   parseNote,
   splitSharedNote,
+  splitTrailingNoteStatus,
   toTitleCase,
   type ParseFailureReason,
   type ParseNoteOptions,
@@ -144,6 +146,7 @@ type OkCase = {
   options?: ParseNoteOptions;
   name: string;
   phone: string | null;
+  noteStatus?: string | null;
   sharedNote?: string | null;
 };
 
@@ -226,6 +229,27 @@ describe("parseNote — single person, successes", () => {
       name: "Jane Doe",
       phone: null,
     },
+    {
+      label: "rule 2: a trailing status word is split off the name (Q2)",
+      note: "Jane Doe, 555-123-4567, Signed",
+      name: "Jane Doe",
+      phone: "555-123-4567",
+      noteStatus: "Signed",
+    },
+    {
+      label: "rule 2: a two-word trailing status is split off too",
+      note: "Jane Doe, 555-123-4567, No Case",
+      name: "Jane Doe",
+      phone: "555-123-4567",
+      noteStatus: "No Case",
+    },
+    {
+      label: "rule 2: a trailing status with no comma before it still splits",
+      note: "Jane Doe 555-123-4567 Opportunity",
+      name: "Jane Doe",
+      phone: "555-123-4567",
+      noteStatus: "Opportunity",
+    },
     // Shared note
     {
       label: "a | shared note is stripped before the name is read",
@@ -236,7 +260,9 @@ describe("parseNote — single person, successes", () => {
     },
   ];
 
-  it.each(cases)("$label", ({ note, options, name, phone, sharedNote }) => {
+  it.each(cases)(
+    "$label",
+    ({ note, options, name, phone, noteStatus, sharedNote }) => {
     const result = parseNote(note, options);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -247,6 +273,7 @@ describe("parseNote — single person, successes", () => {
       name,
       phone,
       statusText: null,
+      noteStatus: noteStatus ?? null,
     });
     expect(result.sharedNote).toBe(sharedNote ?? null);
   });
@@ -345,8 +372,20 @@ describe("parseNote — multi person", () => {
     if (!result.ok) return;
     expect(result.isMultiPerson).toBe(true);
     expect(result.people).toEqual([
-      { personSuffix: "p1", name: "Jane Doe", phone: "555-111-2222", statusText: "Signed" },
-      { personSuffix: "p2", name: "John Roe", phone: "555-333-4444", statusText: "Pending" },
+      {
+        personSuffix: "p1",
+        name: "Jane Doe",
+        phone: "555-111-2222",
+        statusText: "Signed",
+        noteStatus: null,
+      },
+      {
+        personSuffix: "p2",
+        name: "John Roe",
+        phone: "555-333-4444",
+        statusText: "Pending",
+        noteStatus: null,
+      },
     ]);
   });
 
@@ -450,42 +489,200 @@ describe("parseNote — multi person", () => {
     expect(result.reason).toBe("name_contains_digits");
   });
 
-  it("a single-person note containing a semicolon still parses as one person", () => {
+  // Q3 ruling, flipped from the Phase 2 behaviour: a ";" note whose segments
+  // do not ALL parse as name + phone is a parse failure bound for the admin
+  // queue. It used to fall through to the single-person rules.
+  it("a single-person note containing a semicolon is now a PARSE FAILURE", () => {
     const result = parseNote("Jane Doe; maiden name Smith, 555-123-4567");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("person_missing_name_or_phone");
+  });
+
+  it("a TRAILING semicolon does not make a note multi-person", () => {
+    const result = parseNote("Jane Doe, 555-123-4567;");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.isMultiPerson).toBe(false);
-    expect(result.people).toHaveLength(1);
+    expect(result.people[0].name).toBe("Jane Doe");
   });
 
-  // Documents a real consequence of the untagged fall-through rather than
-  // hiding it: with no "N Person" tag and a second segment that has no
-  // phone, the note is NOT multi-person, so rule 2 runs over the whole body
-  // and both names end up in one name field. Flagged in the Phase 2
-  // hand-off as a question.
-  it("DOCUMENTED: untagged, second segment lacking a phone merges the names", () => {
+  // Q3 ruling, flipped from the Phase 2 behaviour. This used to merge both
+  // names into one name field and hand the result to a firm as a single
+  // lead; now it goes to the admin queue.
+  it("untagged, a second segment lacking a phone is a PARSE FAILURE", () => {
     const result = parseNote("Jane Doe, 555-111-2222; John Roe");
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.isMultiPerson).toBe(false);
-    expect(result.people[0].name).toBe("Jane Doe John Roe");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("person_missing_name_or_phone");
+    expect(result.detail).toBe('person 2: no usable phone in ""');
   });
 
-  // Likewise: the ported rule says punctuation becomes spaces, which also
-  // splits intra-word punctuation. Flagged as a question.
-  it("DOCUMENTED: punctuation->spaces also splits apostrophes and hyphens", () => {
-    const result = parseNote("mary-jane o'brien, 555-123-4567");
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.people[0].name).toBe("Mary Jane O Brien");
+  it("untagged, a segment with a phone but no name is a PARSE FAILURE", () => {
+    const result = parseNote("Jane Doe, 555-111-2222; , 555-333-4444");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("person_missing_name_or_phone");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Q1 — the dashboard's punctuation list, and only that list
+// --------------------------------------------------------------------------
+
+describe("punctuation handling", () => {
+  it.each([
+    ["mary-jane o'brien, 555-123-4567", "Mary Jane O'Brien"],
+    ["o'brien, 555-123-4567", "O'Brien"],
+    ["d'angelo o'neill, 555-123-4567", "D'Angelo O'Neill"],
+  ])("%s keeps the apostrophe -> %s", (note, expected) => {
+    const r = parseNote(note);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe(expected);
   });
 
-  // Likewise: rule 2 has no status field, so a trailing status on a
-  // single-person note is absorbed into the name. Flagged as a question.
-  it("DOCUMENTED: a trailing status on a single-person note lands in the name", () => {
-    const result = parseNote("Jane Doe, 555-123-4567, Signed");
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.people[0].name).toBe("Jane Doe Signed");
+  it.each([
+    ["hyphen", "mary-jane doe, 555-123-4567"],
+    ["en dash", "mary–jane doe, 555-123-4567"],
+    ["em dash", "mary—jane doe, 555-123-4567"],
+  ])("a %s becomes a space, with no special handling", (_label, note) => {
+    const r = parseNote(note);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe("Mary Jane Doe");
+  });
+
+  it("a colon becomes a space", () => {
+    const r = parseNote("re: jane doe, 555-123-4567");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe("Re Jane Doe");
+  });
+
+  // Anything outside the dashboard's list is left alone, by ruling.
+  it.each([
+    ["Jane Doe. 555-123-4567", "Jane Doe."],
+    ["Jane & John Doe, 555-123-4567", "Jane & John Doe"],
+    ["Jane (cell) Doe, 555-123-4567", "Jane (Cell) Doe"],
+  ])("%s leaves characters outside the list intact -> %s", (note, expected) => {
+    const r = parseNote(note);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe(expected);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Q2 — a trailing status word is informational, never a status
+// --------------------------------------------------------------------------
+
+describe("splitTrailingNoteStatus", () => {
+  it.each([
+    ["Jane Doe,  , Signed", "Jane Doe,  ", "Signed"],
+    ["Jane Doe,  , no  case", "Jane Doe,  ", "no case"],
+    ["Jane Doe   Opportunity", "Jane Doe", "Opportunity"],
+    ["Jane Doe,  , REFERRED OUT", "Jane Doe,  ", "REFERRED OUT"],
+  ])("%s -> rest %s, status %s", (input, rest, status) => {
+    expect(splitTrailingNoteStatus(input)).toEqual({ rest, noteStatus: status });
+  });
+
+  it.each(["Jane Doe,  ", "Lost Cause", "Jane Signedly", "Signed"])(
+    "%s has no trailing status to split",
+    (input) => {
+      expect(splitTrailingNoteStatus(input).noteStatus).toBeNull();
+    },
+  );
+});
+
+describe("trailing status word on a single-person note", () => {
+  // Pinned: this is the dashboard's list, a deliberate SUBSET of the ladder
+  // in status-from-tags.ts — "no contact" and "declined" are not on it.
+  it("is exactly the dashboard's list", () => {
+    expect([...NOTE_STATUS_WORDS]).toEqual([
+      "signed",
+      "pending",
+      "lost",
+      "rejected",
+      "no case",
+      "referred out",
+      "opportunity",
+    ]);
+  });
+
+  it.each(NOTE_STATUS_WORDS.map((w) => [w]))(
+    "splits a trailing %s off the name",
+    (word) => {
+      const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.people[0].name).toBe("Jane Doe");
+      expect(r.people[0].noteStatus).toBe(word);
+    },
+  );
+
+  it.each(["SIGNED", "Signed", "sIgNeD"])("keeps %s as written", (word) => {
+    const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].noteStatus).toBe(word);
+  });
+
+  // Not on the dashboard's list, so NOT stripped — they stay in the name.
+  it.each(["No Contact", "Declined"])(
+    "%s is not on the list and is left in the name",
+    (word) => {
+      const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.people[0].name).toBe(`Jane Doe ${word}`);
+      expect(r.people[0].noteStatus).toBeNull();
+    },
+  );
+
+  it("does not strip a status word that is not trailing", () => {
+    const r = parseNote("Jane Doe, 555-123-4567, Lost Cause");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe("Jane Doe Lost Cause");
+    expect(r.people[0].noteStatus).toBeNull();
+  });
+
+  // Nothing precedes it, so there is no separator — it is the name.
+  it("keeps a name that IS a status word", () => {
+    const r = parseNote("Signed, 555-123-4567");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe("Signed");
+    expect(r.people[0].noteStatus).toBeNull();
+  });
+
+  it("a status word with no name before it is still no_name", () => {
+    const r = parseNote("555-123-4567, Signed");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe("no_name");
+  });
+
+  it("multi-person people never carry noteStatus — statusText is theirs", () => {
+    const r = parseNote(
+      "Jane Doe, 555-111-2222, Signed; John Roe, 555-333-4444, Lost",
+      { tags: ["2 Person"] },
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people.map((x) => x.noteStatus)).toEqual([null, null]);
+    expect(r.people.map((x) => x.statusText)).toEqual(["Signed", "Lost"]);
+  });
+
+  // parse-note.ts stays free of status SEMANTICS: it returns the raw word
+  // and never maps it to pending/signed. status-from-tags.ts owns that, and
+  // Phase 3 must treat this as informational only.
+  it("returns the raw word, not a resolved status", () => {
+    const r = parseNote("Jane Doe, 555-123-4567, lost");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].noteStatus).toBe("lost");
+    expect(r.people[0]).not.toHaveProperty("status");
   });
 });

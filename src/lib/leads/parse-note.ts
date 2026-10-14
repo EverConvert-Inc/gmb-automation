@@ -27,6 +27,11 @@ export type ParsedPerson = {
   phone: string | null;
   /** Multi-person only: the third field, unresolved. Null for single-person. */
   statusText: string | null;
+  /**
+   * Single-person only: a status word that trailed the phone, stripped out
+   * of the name. Informational — never overrides the tag-derived status.
+   */
+  noteStatus: string | null;
 };
 
 export type ParseNoteResult =
@@ -103,14 +108,20 @@ export function findPhoneNumbers(text: string): PhoneMatch[] {
 // Names
 // --------------------------------------------------------------------------
 
-// Every character that is not a letter or whitespace becomes a space, per
-// the ported rule "punctuation turned into spaces". NOTE the consequence:
-// this also splits intra-word punctuation, so "O'Brien" becomes "O Brien"
-// and "Mary-Jane" becomes "Mary Jane". That is what the rule as written
-// says to do; it is called out in the Phase 2 hand-off as a question rather
-// than quietly softened, since it changes names a client will read.
+// The dashboard's own punctuation list, verbatim: comma, semicolon, pipe,
+// colon, hyphen, en dash, em dash. Each becomes a space; NOTHING else is
+// touched.
+//
+// Two consequences, both intended. Apostrophes are not on the list, so
+// "o'brien" survives as "O'Brien" (toTitleCase capitalises either side of
+// it). Hyphens ARE on the list and get no special handling, so "Mary-Jane"
+// becomes "Mary Jane" — matching the sheet rather than preserving the
+// hyphen. Anything outside the list, a trailing full stop for instance,
+// also survives into the name.
+const PUNCTUATION_TO_SPACE = /[,;|:\-\u2013\u2014]/g;
+
 function punctuationToSpaces(text: string): string {
-  return text.replace(/[^\p{L}\s]/gu, " ");
+  return text.replace(PUNCTUATION_TO_SPACE, " ");
 }
 
 function collapse(text: string): string {
@@ -121,6 +132,53 @@ export function toTitleCase(text: string): string {
   return text
     .toLowerCase()
     .replace(/\p{L}+/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+}
+
+// --------------------------------------------------------------------------
+// Trailing status word (single-person notes)
+// --------------------------------------------------------------------------
+
+/**
+ * The status words a single-person note may carry after the phone. This is
+ * deliberately a SUBSET of the full ladder in status-from-tags.ts — it is
+ * the dashboard's own list, which omits "no contact" and "declined".
+ */
+export const NOTE_STATUS_WORDS = [
+  "signed",
+  "pending",
+  "lost",
+  "rejected",
+  "no case",
+  "referred out",
+  "opportunity",
+] as const;
+
+// Must be preceded by whitespace or one of the punctuation separators, so a
+// note whose NAME is a status word ("Signed, 555-123-4567") keeps it — there
+// is nothing before it to separate from.
+const NOTE_STATUS_SUFFIX = new RegExp(
+  "[\\s,;|:\\-\\u2013\\u2014]\\s*(" +
+    NOTE_STATUS_WORDS.map((w) => w.replace(/ /g, "\\s+")).join("|") +
+    ")\\s*[\\s,;|:\\-\\u2013\\u2014]*$",
+  "i",
+);
+
+/**
+ * Splits a trailing status word off the text left after the phone was
+ * removed. Informational only: the returned value is reported as
+ * ParsedPerson.noteStatus and must never override the tag-derived status —
+ * tags are what CallRail actually holds, this is a word someone typed.
+ */
+export function splitTrailingNoteStatus(text: string): {
+  rest: string;
+  noteStatus: string | null;
+} {
+  const m = text.match(NOTE_STATUS_SUFFIX);
+  if (!m) return { rest: text, noteStatus: null };
+  return {
+    rest: text.slice(0, m.index),
+    noteStatus: m[1].replace(/\s+/g, " ").trim(),
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -192,7 +250,13 @@ export function parseNote(
       isMultiPerson: false,
       sharedNote,
       people: [
-        { personSuffix: "p1", name: NO_NAME, phone: NO_NUMBER, statusText: null },
+        {
+          personSuffix: "p1",
+          name: NO_NAME,
+          phone: NO_NUMBER,
+          statusText: null,
+          noteStatus: null,
+        },
       ],
     };
   }
@@ -203,33 +267,27 @@ export function parseNote(
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Multi-person, by either route: a tag declares N > 1, or there is no such
-  // tag but the note splits into 2+ segments that each yield a name AND a
-  // real-looking phone. The second route is deliberately all-or-nothing — a
-  // note where only some segments parse is not quietly treated as the subset
-  // that happened to work.
-  if (declared !== null && declared > 1) {
+  // Multi-person, by either route: a tag declares N > 1, or the note splits
+  // on ";" into 2+ segments.
+  //
+  // All-or-nothing in BOTH directions. A note where only some segments parse
+  // is never quietly accepted as the subset that happened to work, and it
+  // never falls through to the single-person rules either — a ";" note whose
+  // segments do not all yield a name and a phone is a parse failure bound
+  // for the admin queue. Falling through would merge two people's names into
+  // one name field and hand the result to a firm as a single lead.
+  if ((declared !== null && declared > 1) || segments.length >= 2) {
     const parsed = parsePeopleSegments(segments);
     if (!parsed.ok) {
       return fail(parsed.reason, parsed.detail);
     }
-    if (parsed.people.length !== declared) {
+    if (declared !== null && parsed.people.length !== declared) {
       return fail(
         "declared_person_count_mismatch",
         `tag declared ${declared}, note yielded ${parsed.people.length}`,
       );
     }
     return { ok: true, isMultiPerson: true, sharedNote, people: parsed.people };
-  }
-
-  if (declared === null && segments.length >= 2) {
-    const parsed = parsePeopleSegments(segments);
-    if (parsed.ok) {
-      return { ok: true, isMultiPerson: true, sharedNote, people: parsed.people };
-    }
-    // Falls through to the single-person rules on purpose. Without a tag
-    // declaring N, a ";" is only a hint — a single-person note that happens
-    // to contain a semicolon must still parse.
   }
 
   const single = parseSinglePerson(trimmedBody, options.callerIdPhone ?? null);
@@ -270,6 +328,12 @@ function parseSinglePerson(body: string, callerIdPhone: string | null): SingleRe
     let remainder = body;
     for (const p of phones) remainder = remainder.replace(p.raw, " ");
 
+    // A single-person note may still carry the "Status" field of the
+    // "Name, Phone, Status" shape. Split it off here so it never lands in
+    // the name; it is reported as noteStatus and nothing more.
+    const { rest, noteStatus } = splitTrailingNoteStatus(remainder);
+    remainder = rest;
+
     // Checked BEFORE punctuation is flattened, so a leftover digit run is
     // reported as what it is instead of silently becoming part of a name.
     if (/\d/.test(remainder)) {
@@ -290,6 +354,7 @@ function parseSinglePerson(body: string, callerIdPhone: string | null): SingleRe
         name: toTitleCase(name),
         phone: phones[0].raw.trim(),
         statusText: null,
+        noteStatus,
       },
     };
   }
@@ -311,6 +376,7 @@ function parseSinglePerson(body: string, callerIdPhone: string | null): SingleRe
           // admin queue just because the fallback was empty.
           phone: callerIdPhone?.trim() || null,
           statusText: null,
+          noteStatus: null,
         },
       };
     }
@@ -376,6 +442,10 @@ function parsePeopleSegments(segments: readonly string[]): PeopleResult {
       name: toTitleCase(name),
       phone: phones[0].raw.trim(),
       statusText: statusRaw || null,
+      // Multi-person status lives in statusText, which IS authoritative for
+      // that person. noteStatus is the single-person-only informational
+      // field, so it is always null here.
+      noteStatus: null,
     });
   }
 
