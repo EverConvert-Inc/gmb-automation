@@ -596,9 +596,10 @@ describe("splitTrailingNoteStatus", () => {
 });
 
 describe("trailing status word on a single-person note", () => {
-  // Pinned: this is the dashboard's list, a deliberate SUBSET of the ladder
-  // in status-from-tags.ts — "no contact" and "declined" are not on it.
-  it("is exactly the dashboard's list", () => {
+  // Pinned. Wider than the ladder in status-from-tags.ts: every rung plus
+  // Opportunity, plus three the ladder has no rung for — "nocase",
+  // "referred" and "open".
+  it("is the full list", () => {
     expect([...NOTE_STATUS_WORDS]).toEqual([
       "signed",
       "pending",
@@ -607,7 +608,41 @@ describe("trailing status word on a single-person note", () => {
       "no case",
       "referred out",
       "opportunity",
+      "no contact",
+      "declined",
+      "nocase",
+      "referred",
+      "open",
     ]);
+  });
+
+  // The three with no ladder equivalent. They are stripped from the name and
+  // reported, and status-from-tags.ts will resolve none of them — which is
+  // correct, since noteStatus is advisory and never sets a status.
+  it.each(["nocase", "referred", "open"])(
+    "%s has no ladder rung but is still stripped and reported",
+    (word) => {
+      const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.people[0].name).toBe("Jane Doe");
+      expect(r.people[0].noteStatus).toBe(word);
+    },
+  );
+
+  // Longest-first alternation: the shorthand must not shadow the long form.
+  it.each([
+    ["Referred Out", "Referred Out"],
+    ["Referred", "Referred"],
+    ["No Contact", "No Contact"],
+    ["No Case", "No Case"],
+    ["Nocase", "Nocase"],
+  ])("%s is matched whole, not truncated to a prefix", (word, expected) => {
+    const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe("Jane Doe");
+    expect(r.people[0].noteStatus).toBe(expected);
   });
 
   it.each(NOTE_STATUS_WORDS.map((w) => [w]))(
@@ -628,9 +663,18 @@ describe("trailing status word on a single-person note", () => {
     expect(r.people[0].noteStatus).toBe(word);
   });
 
-  // Not on the dashboard's list, so NOT stripped — they stay in the name.
-  it.each(["No Contact", "Declined"])(
-    "%s is not on the list and is left in the name",
+  // Flipped: "No Contact" and "Declined" are now on the list and strip.
+  it.each(["No Contact", "Declined"])("%s is stripped from the name", (word) => {
+    const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.people[0].name).toBe("Jane Doe");
+    expect(r.people[0].noteStatus).toBe(word);
+  });
+
+  // A word genuinely off the list is still left alone.
+  it.each(["Voicemail", "Spanish", "Callback"])(
+    "%s is not a status word and stays in the name",
     (word) => {
       const r = parseNote(`Jane Doe, 555-123-4567, ${word}`);
       expect(r.ok).toBe(true);

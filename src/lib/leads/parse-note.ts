@@ -139,9 +139,15 @@ export function toTitleCase(text: string): string {
 // --------------------------------------------------------------------------
 
 /**
- * The status words a single-person note may carry after the phone. This is
- * deliberately a SUBSET of the full ladder in status-from-tags.ts — it is
- * the dashboard's own list, which omits "no contact" and "declined".
+ * The status words a single-person note may carry after the phone.
+ *
+ * Wider than the ladder in status-from-tags.ts, on purpose. It covers every
+ * ladder rung plus Opportunity, and adds three the ladder has no rung for:
+ * the shorthands "nocase" and "referred", and "open". Those exist because a
+ * human typed them into a note — matching them here only decides what gets
+ * stripped out of a NAME, never what status a lead has, so a word with no
+ * ladder equivalent costs nothing and leaving it in a name costs a wrong
+ * name on a client's screen.
  */
 export const NOTE_STATUS_WORDS = [
   "signed",
@@ -151,14 +157,27 @@ export const NOTE_STATUS_WORDS = [
   "no case",
   "referred out",
   "opportunity",
+  "no contact",
+  "declined",
+  "nocase",
+  "referred",
+  "open",
 ] as const;
 
 // Must be preceded by whitespace or one of the punctuation separators, so a
 // note whose NAME is a status word ("Signed, 555-123-4567") keeps it — there
 // is nothing before it to separate from.
+//
+// Sorted longest-first so a word that is a prefix of another cannot win the
+// alternation: "referred" must not shadow "referred out", nor "no case"
+// "no contact". JS backtracking would recover either way, but relying on
+// that for a correctness property is not worth the subtlety.
 const NOTE_STATUS_SUFFIX = new RegExp(
   "[\\s,;|:\\-\\u2013\\u2014]\\s*(" +
-    NOTE_STATUS_WORDS.map((w) => w.replace(/ /g, "\\s+")).join("|") +
+    [...NOTE_STATUS_WORDS]
+      .sort((a, b) => b.length - a.length)
+      .map((w) => w.replace(/ /g, "\\s+"))
+      .join("|") +
     ")\\s*[\\s,;|:\\-\\u2013\\u2014]*$",
   "i",
 );
