@@ -305,6 +305,35 @@ export function maskPhone(phone: string | null): string | null {
   return `***${digits.slice(-4)}`;
 }
 
+/**
+ * Reduces a note to its SHAPE: every word becomes its initial, every digit a
+ * "#", and all punctuation is left alone. "Jane Doe; maiden name Smith,
+ * 555-123-4567" becomes "J. D.; m. n. S., ###-###-####".
+ *
+ * The point is to make a parse failure diagnosable — where the semicolons
+ * and commas fall is the whole question — without carrying a name or a
+ * phone number out of the function. Dry run only: nothing on the real path
+ * calls this, and no note is ever logged anywhere.
+ */
+export function redactNoteStructure(
+  note: string | null | undefined,
+): string | null {
+  if (note == null) return null;
+  return note.replace(/\p{L}+/gu, (w) => `${w[0]}.`).replace(/\d/g, "#");
+}
+
+export type NoteStructureSample = {
+  source: LeadSource;
+  callrailId: string;
+  /** The ParseFailureReason, without its detail — the detail can quote text. */
+  reason: string;
+  hasSemicolon: boolean;
+  noteStructure: string | null;
+};
+
+/** Keeps a dry-run response readable, and bounds what leaves the function. */
+export const NOTE_STRUCTURE_SAMPLE_CAP = 20;
+
 export type MaskedSample = {
   source: LeadSource;
   callrailId: string;
@@ -382,6 +411,10 @@ export type SourceResult = {
   parseFailed: number;
   written: number;
   fieldsSeen: string[];
+  /** Dry run only — empty on a real run. Counts DISTINCT failed leads. */
+  parseFailureReasons: Record<string, number>;
+  /** Dry run only — empty on a real run. Capped, and carries no PII. */
+  noteStructures: NoteStructureSample[];
   error: string | null;
 };
 
@@ -405,6 +438,8 @@ function emptySourceResult(): SourceResult {
     parseFailed: 0,
     written: 0,
     fieldsSeen: [],
+    parseFailureReasons: {},
+    noteStructures: [],
     error: null,
   };
 }
@@ -562,6 +597,10 @@ async function runSourcePass<R extends { id: string }>(
       sample.push(toMaskedSample(row));
     }
 
+    if (dryRun) {
+      collectParseFailureDiagnostics(planned, result);
+    }
+
     if (!dryRun) {
       const { written } = await deps.store.upsertLeads(planned);
       result.written = written;
@@ -586,4 +625,38 @@ async function runSourcePass<R extends { id: string }>(
 
   result.fieldsSeen = [...fieldsSeen].sort();
   return result;
+}
+
+/**
+ * Tallies parse failures by reason and keeps a bounded set of note SHAPES.
+ *
+ * Counts DISTINCT leads, not planned rows: one lead copied to three firms is
+ * three rows but one failure, and tallying rows would report triple.
+ */
+function collectParseFailureDiagnostics(
+  planned: readonly PlannedLead[],
+  result: SourceResult,
+): void {
+  const seen = new Set<string>();
+  for (const row of planned) {
+    if (!row.parseFailed) continue;
+    const key = leadKey(row.callrailId, row.personSuffix);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // parseError is "<reason>" or "<reason>: <detail>", and the detail can
+    // quote note text — so only the reason is ever carried out.
+    const reason = (row.parseError ?? "unknown").split(":")[0].trim();
+    result.parseFailureReasons[reason] =
+      (result.parseFailureReasons[reason] ?? 0) + 1;
+
+    if (result.noteStructures.length >= NOTE_STRUCTURE_SAMPLE_CAP) continue;
+    result.noteStructures.push({
+      source: row.source,
+      callrailId: row.callrailId,
+      reason,
+      hasSemicolon: (row.rawNote ?? "").includes(";"),
+      noteStructure: redactNoteStructure(row.rawNote),
+    });
+  }
 }

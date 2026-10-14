@@ -6,7 +6,9 @@ import {
   normalizeForm,
   parseCallrailInstant,
   planLeadWrites,
+  redactNoteStructure,
   resolveSyncWindow,
+  NOTE_STRUCTURE_SAMPLE_CAP,
   stringifyError,
   syncLeadsForMonth,
   type SyncDeps,
@@ -677,5 +679,159 @@ describe("stringifyError", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
     expect(typeof stringifyError(circular)).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dry-run parse-failure diagnostics
+// ---------------------------------------------------------------------------
+
+describe("redactNoteStructure", () => {
+  it("reduces every word to its initial and every digit to #", () => {
+    expect(redactNoteStructure("Jane Doe; maiden name Smith, 555-123-4567")).toBe(
+      "J. D.; m. n. S., ###-###-####",
+    );
+  });
+
+  it.each([
+    ["Jane Doe, 555-123-4567", "J. D., ###-###-####"],
+    ["A B", "A. B."],
+    ["No Name, No Number", "N. N., N. N."],
+    ["jane (cell) doe", "j. (c.) d."],
+    ["Jane Doe | referred by Acme", "J. D. | r. b. A."],
+    ["", ""],
+  ])("%s -> %s", (input, expected) => {
+    expect(redactNoteStructure(input)).toBe(expected);
+  });
+
+  it("preserves case, so capitalisation structure survives", () => {
+    expect(redactNoteStructure("jane DOE")).toBe("j. D.");
+  });
+
+  it("handles accented letters as single words", () => {
+    expect(redactNoteStructure("José Ríos, 5551234567")).toBe("J. R., ##########");
+  });
+
+  it.each([[null], [undefined]])("%s -> null", (v) => {
+    expect(redactNoteStructure(v as string | null)).toBeNull();
+  });
+
+  // The guarantee the whole feature rests on.
+  it("leaves no readable name and no dialable number", () => {
+    const out = redactNoteStructure(
+      "Jane Doe 555-111-2222 John Roe 555-333-4444",
+    ) as string;
+    expect(out).toBe("J. D. ###-###-#### J. R. ###-###-####");
+    for (const leak of ["Jane", "Doe", "John", "Roe", "555", "111", "2222"]) {
+      expect(out).not.toContain(leak);
+    }
+    expect(out).not.toMatch(/\d/);
+    // No word longer than one letter survives.
+    expect(out).not.toMatch(/\p{L}\p{L}/u);
+  });
+});
+
+describe("dry-run parse-failure tally", () => {
+  const BAD_NOTE = "Jane Doe 555-111-2222 John Roe 555-333-4444";
+
+  async function dryRunWith(calls: unknown[], over: Parameters<typeof makeFakeStore>[0] = {}) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore(over);
+    const deps = makeDeps(fake.store, { fetchCalls: async () => calls as never });
+    const r = await syncLeadsForMonth(deps, { dryRun: true });
+    return { r, fake };
+  }
+
+  it("tallies by reason and samples the note shape", async () => {
+    const { r } = await dryRunWith([
+      CALL({ id: "c1", note: BAD_NOTE }),
+      CALL({ id: "c2", note: "Jane Doe" }),
+      CALL({ id: "c3", note: "Jane Doe, 555-111-2222; John Roe" }),
+    ]);
+
+    expect(r.calls.parseFailed).toBe(3);
+    expect(r.calls.parseFailureReasons).toEqual({
+      multiple_phone_numbers: 1,
+      unparseable: 1,
+      person_missing_name_or_phone: 1,
+    });
+    expect(r.calls.noteStructures).toHaveLength(3);
+  });
+
+  it("flags which failures came from a semicolon", async () => {
+    const { r } = await dryRunWith([
+      CALL({ id: "c1", note: "Jane Doe, 555-111-2222; John Roe" }),
+      CALL({ id: "c2", note: BAD_NOTE }),
+    ]);
+    const bySemicolon = r.calls.noteStructures.filter((n) => n.hasSemicolon);
+    expect(bySemicolon).toHaveLength(1);
+    expect(bySemicolon[0].callrailId).toBe("c1");
+    expect(bySemicolon[0].noteStructure).toBe("J. D., ###-###-####; J. R.");
+  });
+
+  it("carries the reason WITHOUT its detail — the detail can quote note text", async () => {
+    const { r } = await dryRunWith([CALL({ id: "c1", note: BAD_NOTE })]);
+    expect(r.calls.noteStructures[0].reason).toBe("multiple_phone_numbers");
+    expect(r.calls.noteStructures[0].reason).not.toContain(":");
+  });
+
+  // A lead copied to three firms is three rows but ONE failure.
+  it("counts distinct leads, not planned rows", async () => {
+    const { r } = await dryRunWith([CALL({ id: "c1", note: BAD_NOTE, tags: ["Shared"] })], {
+      tagRules: [
+        { firmId: "firm-a", tagName: "Shared" },
+        { firmId: "firm-b", tagName: "Shared" },
+        { firmId: "firm-c", tagName: "Shared" },
+      ],
+    });
+    expect(r.calls.planned).toBe(3);
+    expect(r.calls.parseFailureReasons).toEqual({ multiple_phone_numbers: 1 });
+    expect(r.calls.noteStructures).toHaveLength(1);
+  });
+
+  it(`caps the samples at ${NOTE_STRUCTURE_SAMPLE_CAP} but keeps counting`, async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      CALL({ id: `c${i}`, note: BAD_NOTE }),
+    );
+    const { r } = await dryRunWith(many);
+    expect(r.calls.parseFailureReasons.multiple_phone_numbers).toBe(25);
+    expect(r.calls.noteStructures).toHaveLength(NOTE_STRUCTURE_SAMPLE_CAP);
+  });
+
+  it("no sample carries a name or a phone", async () => {
+    const { r } = await dryRunWith([CALL({ id: "c1", note: BAD_NOTE })]);
+    const blob = JSON.stringify(r.calls.noteStructures);
+    for (const leak of ["Jane", "Doe", "John", "Roe", "555", "4444"]) {
+      expect(blob).not.toContain(leak);
+    }
+  });
+
+  // The real path must be untouched by any of this.
+  it("a REAL run populates neither field and still writes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+    });
+    const deps = makeDeps(fake.store, {
+      fetchCalls: async () => [CALL({ note: BAD_NOTE }) as never],
+    });
+
+    const r = await syncLeadsForMonth(deps, { triggeredBy: "scheduled" });
+
+    expect(r.calls.parseFailed).toBe(1);
+    expect(r.calls.parseFailureReasons).toEqual({});
+    expect(r.calls.noteStructures).toEqual([]);
+    expect(r.calls.written).toBe(1);
+    expect(fake.rows.size).toBe(1);
+  });
+
+  it("is empty on both sources when nothing fails to parse", async () => {
+    const { r } = await dryRunWith([CALL({ id: "c1" })]);
+    expect(r.calls.parseFailureReasons).toEqual({});
+    expect(r.calls.noteStructures).toEqual([]);
+    expect(r.forms.parseFailureReasons).toEqual({});
+    expect(r.forms.noteStructures).toEqual([]);
   });
 });
