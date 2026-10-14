@@ -27,7 +27,7 @@ import { getCustomer } from "./google-ads";
 import { matchesAnyFilter } from "./callrail";
 import { generateJson, GEMINI_MODEL } from "./gemini";
 import { pullLocalServiceCriteria } from "./google-ads";
-import { todayIsoEastern } from "./date-utils";
+import { easternWallClockToDate, todayIsoEastern } from "./date-utils";
 
 export const MATCH_WINDOW_SECONDS = 60;
 
@@ -534,7 +534,9 @@ export async function runLeadRatingDryRun(
       .values({
         lsaClientId,
         leadId: ev.leadId,
-        leadCreatedAt: ev.createdAt ? new Date(`${ev.createdAt.replace(" ", "T")}Z`) : null,
+        // Google returns creation_date_time as a bare account-local wall
+        // clock. Appending "Z" labelled it UTC and stored it 4-5h early.
+        leadCreatedAt: easternWallClockToDate(ev.createdAt),
         leadType: ev.leadType,
         leadStatus: ev.leadStatus,
         leadCharged: typeof charged === "boolean" ? charged : null,

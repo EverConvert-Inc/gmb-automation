@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   daysAgoIsoEastern,
+  easternWallClockToDate,
   firstOfMonthIsoEastern,
   firstOfPreviousMonthIsoEastern,
   lastDayOfPreviousMonthIsoEastern,
@@ -141,5 +142,80 @@ describe("toIsoDateEastern", () => {
     const midday = new Date("2026-10-06T16:13:45Z");
     expect(toIsoDateEastern(midday)).toBe("2026-10-06");
     expect(midday.toISOString().slice(0, 10)).toBe("2026-10-06");
+  });
+});
+
+describe("easternWallClockToDate", () => {
+  // Google Ads returns creation_date_time as a bare account-local wall clock.
+  // Appending "Z" to it was storing every lead 4-5 hours early.
+  it("reads a summer wall clock as EDT (UTC-4), not UTC", () => {
+    const d = easternWallClockToDate("2026-10-13 12:12:30") as Date;
+    expect(d.toISOString()).toBe("2026-10-13T16:12:30.000Z");
+    // The old behaviour, for contrast.
+    expect(new Date("2026-10-13T12:12:30Z").toISOString()).toBe("2026-10-13T12:12:30.000Z");
+  });
+
+  it("reads a winter wall clock as EST (UTC-5), not UTC", () => {
+    const d = easternWallClockToDate("2026-01-15 12:00:00") as Date;
+    expect(d.toISOString()).toBe("2026-01-15T17:00:00.000Z");
+  });
+
+  it("accepts both the space and the T separator", () => {
+    expect((easternWallClockToDate("2026-10-13T12:12:30") as Date).toISOString()).toBe(
+      "2026-10-13T16:12:30.000Z",
+    );
+  });
+
+  // The midnight case the snapshot lookup depends on: a late-evening Eastern
+  // lead must not drift onto the next Eastern day after the round trip.
+  it("round-trips a 23:50 ET lead back to the same Eastern date", () => {
+    const d = easternWallClockToDate("2026-10-12 23:50:00") as Date;
+    expect(d.toISOString()).toBe("2026-10-13T03:50:00.000Z"); // already Oct 13 in UTC
+    expect(toIsoDateEastern(d)).toBe("2026-10-12"); // still Oct 12 in Eastern
+  });
+
+  it("round-trips 00:10 ET without slipping to the previous day", () => {
+    const d = easternWallClockToDate("2026-10-13 00:10:00") as Date;
+    expect(toIsoDateEastern(d)).toBe("2026-10-13");
+  });
+
+  it("keeps an Eastern month boundary on the Eastern side", () => {
+    const d = easternWallClockToDate("2026-10-31 23:30:00") as Date;
+    expect(d.toISOString()).toBe("2026-11-01T03:30:00.000Z");
+    expect(toIsoDateEastern(d)).toBe("2026-10-31");
+  });
+
+  // DST transitions: the offset must come from tzdata, not a fixed -4/-5.
+  it("uses the correct offset either side of the spring-forward boundary", () => {
+    // 2026-03-08: EST until 02:00, EDT after.
+    expect((easternWallClockToDate("2026-03-08 01:30:00") as Date).toISOString()).toBe(
+      "2026-03-08T06:30:00.000Z", // UTC-5
+    );
+    expect((easternWallClockToDate("2026-03-08 03:30:00") as Date).toISOString()).toBe(
+      "2026-03-08T07:30:00.000Z", // UTC-4
+    );
+  });
+
+  it("uses the correct offset either side of the fall-back boundary", () => {
+    // 2026-11-01: EDT until 02:00, EST after.
+    expect((easternWallClockToDate("2026-11-01 00:30:00") as Date).toISOString()).toBe(
+      "2026-11-01T04:30:00.000Z", // UTC-4
+    );
+    expect((easternWallClockToDate("2026-11-01 03:30:00") as Date).toISOString()).toBe(
+      "2026-11-01T08:30:00.000Z", // UTC-5
+    );
+  });
+
+  it("resolves a nonexistent spring-forward wall clock to a real instant", () => {
+    // 02:30 on 2026-03-08 never happens in Eastern. Must not throw or NaN.
+    const d = easternWallClockToDate("2026-03-08 02:30:00");
+    expect(d).toBeInstanceOf(Date);
+    expect(Number.isNaN((d as Date).getTime())).toBe(false);
+  });
+
+  it("returns null for anything it cannot parse", () => {
+    for (const v of ["", "not a date", "2026-10-13", "13/10/2026 12:00:00"]) {
+      expect(easternWallClockToDate(v)).toBeNull();
+    }
   });
 });

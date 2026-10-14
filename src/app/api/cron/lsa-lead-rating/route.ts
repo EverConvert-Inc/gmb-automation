@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runLeadRatingDryRun, emptyCounts, type DryRunCounts } from "@/lib/lsa-lead-rating";
+import { daysAgoIsoEastern, todayIsoEastern } from "@/lib/date-utils";
 import {
   clientsDueForScan,
   markScanned,
@@ -50,8 +51,12 @@ export async function GET(req: Request) {
   const limit = Number(url.searchParams.get("limit") ?? "25");
   const batch = Number(url.searchParams.get("batch") ?? String(BATCH_SIZE));
 
-  const toDate = new Date().toISOString().slice(0, 10);
-  const fromDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  // Eastern, not UTC: Google applies these bounds in the account's own
+  // timezone. Built from UTC, every run between 00:00-04:00 ET used a
+  // fromDate a day late and could skip leads near the boundary — and this
+  // runs every 10 minutes, so it hit that window nightly.
+  const toDate = todayIsoEastern();
+  const fromDate = daysAgoIsoEastern(days);
 
   const clients = await clientsDueForScan(batch);
   const totals: DryRunCounts = emptyCounts();

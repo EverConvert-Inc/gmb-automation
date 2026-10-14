@@ -38,6 +38,56 @@ export function todayIsoEastern(): string {
   return toIsoDateEastern(new Date());
 }
 
+// Reads back the wall clock an instant shows in Eastern, as if that wall
+// clock were UTC. The difference from the real instant IS the zone's offset
+// at that moment, so EST/EDT is resolved from tzdata rather than assumed.
+const wallClockFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: ACCOUNT_TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+function easternOffsetMs(utcMillis: number): number {
+  const p: Record<string, number> = {};
+  for (const { type, value } of wallClockFormatter.formatToParts(new Date(utcMillis))) {
+    if (type !== "literal") p[type] = Number(value);
+  }
+  const asIfUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return asIfUtc - utcMillis;
+}
+
+// The inverse of toIsoDateEastern: turns an Eastern wall-clock string into
+// the real instant it names.
+//
+// Google Ads returns datetime fields (local_services_lead.creation_date_time
+// among them) as a bare "YYYY-MM-DD HH:MM:SS" in the ACCOUNT's timezone,
+// with no offset attached. Appending "Z" to that string labels it UTC and
+// lands the instant 4 hours early under EDT, 5 under EST — the same class of
+// error as reading a stored instant's UTC calendar date (see
+// toIsoDateEastern).
+//
+// Resolved in two passes because the offset itself depends on the instant:
+// the first pass guesses using the offset at the wall clock read as UTC, the
+// second corrects it if that guess landed on the other side of a DST
+// boundary. Within the two annual transition hours a wall clock is either
+// ambiguous (fall back) or nonexistent (spring forward); this resolves to
+// one deterministic answer rather than throwing, which is the right
+// trade-off for timestamps Google has already assigned.
+export function easternWallClockToDate(s: string): Date | null {
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  const asIfUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  const firstGuess = asIfUtc - easternOffsetMs(asIfUtc);
+  const corrected = asIfUtc - easternOffsetMs(firstGuess);
+  return new Date(corrected);
+}
+
 export function yesterdayIsoEastern(): string {
   return daysAgoIsoEastern(1);
 }

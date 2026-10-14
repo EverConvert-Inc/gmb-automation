@@ -3,6 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { lsaClients, lsaLeadRatingDryRuns } from "@/lib/db/schema";
 import { runLeadRatingDryRun, emptyCounts, type DryRunCounts } from "@/lib/lsa-lead-rating";
+import { daysAgoIsoEastern, todayIsoEastern } from "@/lib/date-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -100,9 +101,10 @@ export async function GET(req: Request) {
   if (fromParam && toParam && fromParam > toParam) {
     return NextResponse.json({ error: "from must not be after to" }, { status: 400 });
   }
-  const toDate = toParam ?? new Date().toISOString().slice(0, 10);
-  const fromDate =
-    fromParam ?? new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  // Eastern, not UTC — Google applies these bounds in the account's own
+  // timezone. Explicit from/to are passed through untouched.
+  const toDate = toParam ?? todayIsoEastern();
+  const fromDate = fromParam ?? daysAgoIsoEastern(days);
 
   const clients = await db.query.lsaClients.findMany({
     where: and(
