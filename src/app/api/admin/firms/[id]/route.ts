@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { leadFirms, leads } from "@/lib/db/schema";
 import { PG_UNIQUE_VIOLATION, pgErrorCode, slugify } from "@/lib/leads/firm-admin";
+import { requireAdminRoute } from "@/lib/leads/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,10 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   const { id } = await params;
   const row = await db.query.leadFirms.findFirst({ where: eq(leadFirms.id, id) });
   if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -29,6 +34,10 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   const { id } = await params;
   let parsed;
   try {
@@ -71,6 +80,10 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   const { id } = await params;
 
   // leads.firm_id is ON DELETE RESTRICT, so this would fail at the database

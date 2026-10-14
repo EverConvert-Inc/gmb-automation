@@ -19,6 +19,9 @@ import {
 } from "@/components/ui/card";
 import { NewFirmForm } from "@/components/leads/new-firm-form";
 
+import { checkAdmin } from "@/lib/leads/admin-auth";
+import { NotAuthorized } from "@/components/leads/not-authorized";
+
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Firms" };
@@ -34,6 +37,11 @@ async function countsBy(
 }
 
 export default async function AdminFirmsPage() {
+  // Staff-only. The middleware gate cannot tell a staff member from a
+  // client user, and this page reads across every firm.
+  const auth = await checkAdmin();
+  if (!auth.ok) return <NotAuthorized />;
+
   const [firms, tagCounts, companyCounts, userCounts, leadRows, unassignedRow] =
     await Promise.all([
       db.query.leadFirms.findMany({ orderBy: asc(leadFirms.name) }),

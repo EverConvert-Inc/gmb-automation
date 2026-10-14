@@ -10,6 +10,7 @@ import {
   leads,
 } from "@/lib/db/schema";
 import { PG_UNIQUE_VIOLATION, pgErrorCode, slugify } from "@/lib/leads/firm-admin";
+import { requireAdminRoute } from "@/lib/leads/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,10 @@ async function countsBy(
 }
 
 export async function GET() {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   const [firms, tagCounts, companyCounts, userCounts, leadRows] = await Promise.all([
     db.query.leadFirms.findMany({ orderBy: asc(leadFirms.name) }),
     countsBy(leadFirmTags),
@@ -76,6 +81,10 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   let parsed;
   try {
     parsed = CreateBody.parse(await req.json());

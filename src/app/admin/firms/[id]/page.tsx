@@ -15,6 +15,9 @@ import { FirmStringListCard } from "@/components/leads/firm-string-list-card";
 import { FirmUsersCard } from "@/components/leads/firm-users-card";
 import { FirmDangerZoneCard } from "@/components/leads/firm-danger-zone-card";
 
+import { checkAdmin } from "@/lib/leads/admin-auth";
+import { NotAuthorized } from "@/components/leads/not-authorized";
+
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
@@ -32,6 +35,11 @@ export default async function FirmDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Staff-only. The middleware gate cannot tell a staff member from a
+  // client user, and this page reads across every firm.
+  const auth = await checkAdmin();
+  if (!auth.ok) return <NotAuthorized />;
+
   const { id } = await params;
 
   const firm = await db.query.leadFirms.findFirst({ where: eq(leadFirms.id, id) });

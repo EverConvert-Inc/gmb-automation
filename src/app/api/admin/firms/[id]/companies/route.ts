@@ -8,6 +8,7 @@ import {
   normalizeCompanyId,
   pgErrorCode,
 } from "@/lib/leads/firm-admin";
+import { requireAdminRoute } from "@/lib/leads/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,10 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   const { id } = await params;
   const rows = await db.query.leadFirmCallrailCompanies.findMany({
     where: eq(leadFirmCallrailCompanies.firmId, id),
@@ -29,6 +34,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Staff-only. Every internal route in this repo is middleware-only, which
+  // cannot tell a staff member from a client user — see admin-auth.ts.
+  const denied = await requireAdminRoute();
+  if (denied) return denied;
   const { id } = await params;
   let parsed;
   try {
