@@ -71,6 +71,7 @@ const ROW: PlannedLead = {
   parseFailed: false,
   parseError: null,
   needsReview: false,
+  possibleDuplicateOf: null,
   signedAt: NOW,
 };
 

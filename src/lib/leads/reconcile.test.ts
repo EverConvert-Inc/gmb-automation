@@ -32,6 +32,7 @@ function planned(firmId: string | null, over: Partial<PlannedLead> = {}): Planne
     parseFailed: false,
     parseError: null,
     needsReview: firmId === null,
+    possibleDuplicateOf: null,
     signedAt: null,
     ...over,
   };

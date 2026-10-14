@@ -56,6 +56,11 @@ export type PlannedLead = {
   parseError: string | null;
   needsReview: boolean;
   /**
+   * Soft dedup, set at sync time: another lead at the SAME firm already has
+   * this effective phone. Never enforced by a constraint — see dedup.ts.
+   */
+  possibleDuplicateOf: string | null;
+  /**
    * Set when this person reads as signed. Applied only if the stored value
    * is still null — the webhook's receipt time is the true sign moment and
    * must never be replaced by a later sync's clock.
@@ -98,6 +103,11 @@ export type LeadStore = {
   applyReconciliation(
     plan: import("./reconcile").ReconcilePlan,
   ): Promise<{ written: number; repointed: number; deleted: number; flagged: number }>;
+
+  /** Effective phones already on file for these firms, for soft dedup. */
+  findFirmPhoneIndex(
+    firmIds: readonly string[],
+  ): Promise<import("./dedup").FirmPhoneRow[]>;
 
   startJob(input: { kind: JobKind; triggeredBy: string; fromDate: string; toDate: string }): Promise<string>;
 

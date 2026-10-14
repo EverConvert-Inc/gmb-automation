@@ -29,6 +29,7 @@ import {
   type TrackerFormRecord,
 } from "./callrail-client";
 import { reconcileLeadRows } from "./reconcile";
+import { firmIdsIn, flagPossibleDuplicates } from "./dedup";
 import {
   leadKey,
   type JobKind,
@@ -265,6 +266,9 @@ export function planLeadWrites(
           parseFailed,
           parseError,
           needsReview: firmId === null || parseFailed,
+          // Filled by the dedup pass, which needs the firm's stored phones
+          // and so cannot run inside the planner.
+          possibleDuplicateOf: null,
           // Only ever a proposal: the store applies it with
           // coalesce(existing, new), so a webhook receipt time already on
           // the row wins.
@@ -418,6 +422,8 @@ export type SourceResult = {
   written: number;
   /** Rows moved between firms (or promoted/demoted) rather than inserted. */
   repointed: number;
+  /** Rows whose effective phone already exists at the same firm. */
+  possibleDuplicates: number;
   /** Surplus rows removed — they carried no overrides and no notes. */
   deleted: number;
   /** Surplus rows kept and flagged because a human had touched them. */
@@ -458,6 +464,7 @@ function emptySourceResult(): SourceResult {
     parseFailed: 0,
     written: 0,
     repointed: 0,
+    possibleDuplicates: 0,
     deleted: 0,
     flaggedStale: 0,
     fieldsSeen: [],
@@ -630,7 +637,18 @@ async function runSourcePass<R extends { id: string }>(
     const existingRows = await deps.store.findExistingLeadRows(
       collected.map((l) => l.callrailId),
     );
-    const planned = planLeadWrites(collected, input.index, { now: deps.now() });
+    const rawPlanned = planLeadWrites(collected, input.index, { now: deps.now() });
+
+    // Soft dedup runs AFTER planning, because it needs the firm each row
+    // routed to, and BEFORE reconciliation, because the flag travels on the
+    // row being written. It compares against rows already stored — two new
+    // leads sharing a phone in the SAME run are caught on the next one,
+    // once the first is on file.
+    const phoneIndex = await deps.store.findFirmPhoneIndex(firmIdsIn(rawPlanned));
+    const deduped = flagPossibleDuplicates(rawPlanned, phoneIndex);
+    const planned = deduped.rows;
+    result.possibleDuplicates = deduped.flagged;
+
     const reconciliation = reconcileLeadRows(planned, existingRows);
 
     result.planned = planned.length;

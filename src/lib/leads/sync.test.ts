@@ -69,6 +69,16 @@ function makeFakeStore(
       counts.pendingLookups += 1;
       return new Set(opts.pending?.[source] ?? []);
     },
+    async findFirmPhoneIndex(firmIds) {
+      return [...rows.values()]
+        .filter((r) => r.firmId !== null && firmIds.includes(r.firmId))
+        .map((r) => ({
+          leadId: r.id,
+          firmId: r.firmId as string,
+          callrailId: r.callrailId,
+          phone: r.phoneParsed,
+        }));
+    },
     async findExistingLeadRows(ids) {
       return [...rows.values()]
         .filter((r) => ids.includes(r.callrailId))
@@ -1093,5 +1103,75 @@ describe("an empty note on a TAGGED record", () => {
       hasSemicolon: false,
       noteStructure: null,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Soft dedup, through the real orchestration
+// ---------------------------------------------------------------------------
+
+describe("soft dedup in a real run", () => {
+  const COMPANY = [{ firmId: "firm-a", callrailCompanyId: "COM1" }];
+
+  it("flags a second lead sharing a phone at the same firm, on the NEXT run", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+
+    // Run 1: one lead lands and is stored.
+    const first = makeFakeStore({ companyRules: COMPANY });
+    await syncLeadsForMonth(
+      makeDeps(first.store, { fetchCalls: async () => [CALL({ id: "c1" }) as never] }),
+      {},
+    );
+    expect(first.rows.size).toBe(1);
+
+    // Run 2: a different call, same person's number, same firm.
+    const second = makeFakeStore({
+      companyRules: COMPANY,
+      seed: [...first.rows.values()],
+    });
+    const r = await syncLeadsForMonth(
+      makeDeps(second.store, {
+        fetchCalls: async () => [
+          CALL({ id: "c1" }) as never,
+          CALL({ id: "c2", note: "Jane Doe, (555) 123-4567" }) as never,
+        ],
+      }),
+      {},
+    );
+
+    expect(r.calls.possibleDuplicates).toBe(1);
+    const flagged = [...second.rows.values()].find((x) => x.callrailId === "c2");
+    expect(flagged?.possibleDuplicateOf).toBeTruthy();
+    expect(flagged?.needsReview).toBe(true);
+    // Flagged, never blocked — both rows are written.
+    expect(second.rows.size).toBe(2);
+  });
+
+  it("does not flag anything on a first run with nothing on file", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore({ companyRules: COMPANY });
+    const r = await syncLeadsForMonth(
+      makeDeps(fake.store, { fetchCalls: async () => [CALL() as never] }),
+      {},
+    );
+    expect(r.calls.possibleDuplicates).toBe(0);
+  });
+
+  it("does not flag an unassigned lead — there is no firm to duplicate within", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    const r = await syncLeadsForMonth(
+      makeDeps(fake.store, {
+        fetchCalls: async () => [
+          CALL({ id: "c1" }) as never,
+          CALL({ id: "c2" }) as never,
+        ],
+      }),
+      {},
+    );
+    expect(r.calls.possibleDuplicates).toBe(0);
   });
 });

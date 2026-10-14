@@ -199,6 +199,23 @@ export function buildDeleteRows(database: LeadDb, rowIds: readonly string[]) {
   return database.delete(leads).where(inArray(leads.id, [...rowIds]));
 }
 
+export function buildFirmPhoneIndexQuery(
+  database: LeadDb,
+  firmIds: readonly string[],
+) {
+  return database
+    .select({
+      leadId: leads.id,
+      firmId: leads.firmId,
+      callrailId: leads.callrailId,
+      // The EFFECTIVE phone: an admin correction is what should be compared,
+      // not whatever the note happened to say.
+      phone: sql<string | null>`coalesce(${leads.phoneOverride}, ${leads.phoneParsed})`,
+    })
+    .from(leads)
+    .where(inArray(leads.firmId, [...firmIds]));
+}
+
 export function buildStartJobInsert(
   database: LeadDb,
   input: { kind: JobKind; triggeredBy: string; fromDate: string; toDate: string; startedAt: Date },
@@ -277,6 +294,19 @@ export const drizzleLeadStore: LeadStore = {
       }
     }
     return out;
+  },
+
+  async findFirmPhoneIndex(firmIds) {
+    if (firmIds.length === 0) return [];
+    const rows = await buildFirmPhoneIndexQuery(db, firmIds);
+    return rows
+      .filter((r): r is typeof r & { firmId: string } => r.firmId !== null)
+      .map((r) => ({
+        leadId: r.leadId,
+        firmId: r.firmId,
+        callrailId: r.callrailId,
+        phone: r.phone,
+      }));
   },
 
   async applyReconciliation(plan) {
@@ -394,6 +424,7 @@ function toInsertValues(r: PlannedLead) {
     parseFailed: r.parseFailed,
     parseError: r.parseError,
     needsReview: r.needsReview,
+    possibleDuplicateOf: r.possibleDuplicateOf,
   };
 }
 
@@ -442,6 +473,9 @@ function conflictSet(now: Date) {
     // underlying cause still holds will see it come back on the next sync.
     // That is the safe direction: the queue reflects the live condition.
     needsReview: sql`excluded.needs_review`,
+    // Recomputed each run, like needs_review: the queue reflects the live
+    // condition rather than a stale one-time verdict.
+    possibleDuplicateOf: sql`excluded.possible_duplicate_of`,
     lastSyncedAt: now,
     updatedAt: now,
   };
