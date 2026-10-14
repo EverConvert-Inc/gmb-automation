@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { formatEasternDate, formatEasternDateTime } from "@/lib/leads/admin-dates";
+import { AdminLeadActions } from "@/components/leads/admin-lead-actions";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 
 /**
@@ -31,7 +32,8 @@ export function AdminLeadsTable({
             <th className="py-2 pr-4 font-medium">Tag</th>
             <th className="py-2 pr-4 font-medium">Channel</th>
             <th className="py-2 pr-4 font-medium">Signed</th>
-            <th className="py-2 font-medium">Latest note</th>
+            <th className="py-2 pr-4 font-medium">Latest note</th>
+            <th className="py-2 font-medium">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -87,7 +89,7 @@ export function AdminLeadsTable({
               <td className="whitespace-nowrap py-2 pr-4 text-xs text-muted-foreground">
                 {formatEasternDate(row.signedAt)}
               </td>
-              <td className="py-2 text-xs text-muted-foreground">
+              <td className="py-2 pr-4 text-xs text-muted-foreground">
                 {row.latestNote ? (
                   <>
                     <span className="line-clamp-2">{row.latestNote.body}</span>
@@ -99,6 +101,9 @@ export function AdminLeadsTable({
                 ) : (
                   "—"
                 )}
+              </td>
+              <td className="py-2 align-top">
+                <AdminLeadActions lead={row} />
               </td>
             </tr>
           ))}
