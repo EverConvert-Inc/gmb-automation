@@ -1263,3 +1263,463 @@ export const callSignedEvents = pgTable(
 );
 
 export type CallSignedEvent = typeof callSignedEvents.$inferSelect;
+
+// ===========================================================================
+// CLIENT-FACING LEAD TRACKER
+//
+// Everything below is new and additive. Nothing above this line is read,
+// written, or referenced by it — deliberately, including no foreign key to
+// clients / ppc_clients / lsa_clients. Those three are independent roots
+// with no key joining them (see the comment on lsaClients above: "ppc_clients
+// and lsa_clients are independent tables with no FK between them"), so there
+// is no existing column that can express "one law firm". lead_firms IS that
+// missing root, and it owns its own routing config rather than borrowing
+// ppc_clients.callrail_company_id — which is nullable AND non-unique on both
+// client tables, the exact ambiguity that makes company->client mapping a
+// heuristic today. For an internal aggregate report a heuristic is fine; for
+// a surface that decides which law firm sees a lead it is a cross-tenant
+// leak, so this side maps companies 1:1 and enforces it in the schema.
+//
+// Table prefix is `lead_`/`leads` throughout so nothing collides with the 37
+// tables above.
+//
+// Every table below calls .enableRLS() — RLS ON, with NO policies, which is
+// deny-all. This is the first table set in this database holding caller PII
+// (names and phone numbers), and Supabase's Data API (PostgREST) serves the
+// `public` schema to the anon key by default. Without RLS, anyone holding
+// NEXT_PUBLIC_SUPABASE_ANON_KEY — which is, by design, in every browser
+// bundle — could read these tables over REST without ever touching this app.
+//
+// ENABLE, deliberately NOT FORCE. Postgres exempts a table's OWNER from row
+// security unless FORCE is set, and these tables are owned by whichever role
+// runs the migration. The app reaches them as that same role over
+// DATABASE_URL (Drizzle on a raw connection — Supabase JS never touches
+// data here), so the app is unaffected while anon/authenticated get nothing.
+// FORCE would subject the owner too and break the app outright.
+//
+// The asymmetry to remember if this is ever wrong: a blocked SELECT returns
+// ZERO ROWS SILENTLY, it does not raise. A blocked INSERT/UPDATE/DELETE does
+// raise. So the symptom of a misconfigured role here is an empty lead list,
+// not a crash.
+// ===========================================================================
+
+// The tenant root. One row per law firm that logs into the portal.
+export const leadFirms = pgTable(
+  "lead_firms",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    activeIdx: index("lead_firms_active_idx").on(t.isActive),
+  }),
+).enableRLS();
+
+// Which Supabase user belongs to which firm. Membership in THIS table is what
+// makes someone a portal user; internal staff are never in here (they're
+// identified by app_metadata.role = 'admin' on the Supabase side, read
+// straight off the JWT in middleware — no row here and no DB lookup).
+//
+// No foreign key to auth.users on purpose: that table lives in Supabase's
+// own `auth` schema, which Drizzle does not model and which migrations here
+// must not touch. The cost is that deleting a Supabase user leaves an orphan
+// row — handled by is_active plus the admin screen, not by a constraint.
+export const leadFirmUsers = pgTable(
+  "lead_firm_users",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    firmId: uuid("firm_id")
+      .notNull()
+      .references(() => leadFirms.id, { onDelete: "cascade" }),
+    // UNIQUE, and that single constraint is what enforces "a portal user only
+    // ever sees one firm." Not a policy in application code that could be
+    // forgotten — one row per user, so a second firm's membership is
+    // physically unrepresentable.
+    authUserId: uuid("auth_user_id").notNull().unique(),
+    // Denormalized so the admin user list renders without reaching into
+    // Supabase's auth schema for every row. Authoritative copy is auth.users;
+    // this one can go stale if an email is changed there.
+    email: text("email").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    firmIdx: index("lead_firm_users_firm_idx").on(t.firmId),
+  }),
+).enableRLS();
+
+// Firm routing rule 1: a lead carrying one of these CallRail tags is copied
+// to this firm. Matching is exact, ignoring case.
+//
+// tag_name_lower is a stored normalized column rather than a lower(tag_name)
+// expression index: expression indexes are the one thing drizzle-kit cannot
+// reliably round-trip through its snapshot diff, and the hard requirement on
+// this migration is SQL that is reviewable and stable across future
+// generates. The check constraint below makes Postgres — not application
+// discipline — guarantee the two columns agree, so this is strictly safer
+// than the expression index it replaces, and the sync's tag lookup becomes a
+// plain indexed equality instead of an expression match.
+export const leadFirmTags = pgTable(
+  "lead_firm_tags",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    firmId: uuid("firm_id")
+      .notNull()
+      .references(() => leadFirms.id, { onDelete: "cascade" }),
+    // As the operator typed it — this is what the admin UI displays.
+    tagName: text("tag_name").notNull(),
+    tagNameLower: text("tag_name_lower").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // NOT globally unique on the tag: routing rule 1 says a tag matching
+    // several firms copies the lead to each of them, so the same tag name
+    // across different firms is a supported configuration, not a conflict.
+    firmTagUniq: unique("lead_firm_tags_firm_tag_unique").on(t.firmId, t.tagNameLower),
+    // The sync resolves firms BY tag, so this is the hot path, not firm_id.
+    tagLookupIdx: index("lead_firm_tags_tag_lookup_idx").on(t.tagNameLower),
+    lowerCheck: check(
+      "lead_firm_tags_lower_check",
+      sql`${t.tagNameLower} = lower(${t.tagName})`,
+    ),
+  }),
+).enableRLS();
+
+// Firm routing rule 2: the fallback when no tag matched. UNIQUE on the
+// company id, so a CallRail company maps to at most one firm.
+//
+// This is deliberately STRICTER than ppc_clients.callrail_company_id and
+// lsa_clients.callrail_company_id, which are both nullable and non-unique —
+// two internal client rows can legitimately share one CallRail company there
+// (the webhook receiver uses findMany, not findFirst, precisely because of
+// it). Allowing that here would mean a fallback-routed lead has no single
+// correct firm, which is a leak rather than a merge. The constraint makes
+// the ambiguous state unrepresentable instead of resolving it at runtime.
+export const leadFirmCallrailCompanies = pgTable(
+  "lead_firm_callrail_companies",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    firmId: uuid("firm_id")
+      .notNull()
+      .references(() => leadFirms.id, { onDelete: "cascade" }),
+    callrailCompanyId: text("callrail_company_id").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    firmIdx: index("lead_firm_callrail_companies_firm_idx").on(t.firmId),
+  }),
+).enableRLS();
+
+// One row per (lead, firm). A lead whose tags match three firms is three
+// rows — copies, not a shared row with a join table, so every portal query
+// is a plain firm_id equality and there is no join a future edit can drop.
+//
+// Two-layer by design: *_parsed columns are owned by the sync and overwritten
+// on every run; *_override columns are owned by admins and never touched by
+// the sync. The effective value is coalesce(override, parsed), computed at
+// read time. This is what lets a resync be a blind upsert without ever
+// clobbering a hand correction.
+export const leads = pgTable(
+  "leads",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    // NULL = the admin queue. Nothing is dropped for want of a firm; an
+    // unroutable lead lands here with firm_id null and needs_review true.
+    // RESTRICT rather than cascade: deleting a firm that still owns leads
+    // should fail loudly, not silently destroy its lead history.
+    firmId: uuid("firm_id").references(() => leadFirms.id, { onDelete: "restrict" }),
+    source: text("source").notNull(),
+    // CallRail's call id or form-submission id. Not unique on its own — the
+    // same CallRail record becomes one row per matched firm.
+    callrailId: text("callrail_id").notNull(),
+    // 'p1', 'p2', ... for a note naming several people. Part of the upsert
+    // key so a second person is a sibling row, not a conflict.
+    personSuffix: text("person_suffix").notNull().default("p1"),
+    callrailCompanyId: text("callrail_company_id").notNull(),
+    // The real instant, timestamptz — never a date string derived from
+    // toISOString().slice(0,10). The Eastern calendar date is computed at
+    // read time via toIsoDateEastern (date-utils.ts), because a 21:10 ET
+    // lead is already the NEXT day in UTC and storing a UTC-derived date
+    // would put it in the wrong month at a month boundary. That exact bug
+    // is already documented in date-utils.test.ts ("the real Weinstein
+    // case").
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    // --- raw CallRail payload, ADMIN-ONLY. Never exposed in the portal. ---
+    // The tracker/channel the lead came through. Admin-only per spec: a firm
+    // should not see which source it was attributed to.
+    rawSourceName: text("raw_source_name"),
+    rawTrackerId: text("raw_tracker_id"),
+    // The CallRail note, verbatim. NEVER client-visible: in a multi-person
+    // note it contains other people's names and numbers, and the portal
+    // shows only notes typed in the portal itself (lead_notes).
+    rawNote: text("raw_note"),
+    rawTags: text("raw_tags").array().notNull().default(sql`ARRAY[]::text[]`),
+    // Form submissions only — the structured payload CallRail returns when
+    // there is no parseable note. The parser reads customer_name and
+    // form_data (name / full_name, phone / phone_number) as fallbacks; this
+    // keeps the original so a parse failure on a form lead is diagnosable in
+    // the admin queue instead of being a dead end.
+    rawFormData: jsonb("raw_form_data"),
+    // Caller ID from CallRail. The fallback when the note yields no phone.
+    customerPhoneCallerid: text("customer_phone_callerid"),
+    // --- parsed (sync-owned) / override (admin-owned) ---
+    nameParsed: text("name_parsed"),
+    phoneParsed: text("phone_parsed"),
+    nameOverride: text("name_override"),
+    phoneOverride: text("phone_override"),
+    statusParsed: text("status_parsed").notNull().default("pending"),
+    statusOverride: text("status_override"),
+    // Which tag actually won the priority ladder. The status enum is only
+    // pending|signed, so Lost / Rejected / No Case / Referred out /
+    // No Contact / Declined all collapse into 'pending' — this column is
+    // the only place that distinction survives. Load-bearing twice over:
+    // the admin view displays it next to the status, and the portal's
+    // visibility predicate excludes those six values, so a lost lead is
+    // never shown to a firm as an open opportunity.
+    statusTagMatched: text("status_tag_matched"),
+    isOpportunityParsed: boolean("is_opportunity_parsed").notNull().default(false),
+    // Nullable on purpose — three-state. NULL means "no admin opinion, use
+    // the parsed value"; false is an explicit admin override to not-an-
+    // opportunity, which coalesce() must be able to tell apart from NULL.
+    isOpportunityOverride: boolean("is_opportunity_override"),
+    // --- the suggested-status "Apply?" flow ---
+    // What CallRail's current tags imply, held pending an admin click rather
+    // than applied automatically. Status is EverConvert-owned; tags are set
+    // by the firm's own staff inside CallRail. They will disagree, and this
+    // column is where that disagreement waits.
+    suggestedStatus: text("suggested_status"),
+    suggestedStatusSeenAt: timestamp("suggested_status_seen_at", { withTimezone: true }),
+    // --- signed date ---
+    // Decides which month the lead counts in. Fed by the tracker's own
+    // Call Modified webhook (receipt time = true sign moment) and, when a
+    // delivery was missed, by the previous-month re-check pass.
+    signedAt: timestamp("signed_at", { withTimezone: true }),
+    signedAtSource: text("signed_at_source"),
+    // --- admin queue ---
+    // A real column, not a sentinel in note text, so the queue is an indexed
+    // predicate rather than a string scan.
+    parseFailed: boolean("parse_failed").notNull().default(false),
+    parseError: text("parse_error"),
+    // Admin queue membership: unassigned (firm_id null) OR parse failure OR
+    // a soft-dedup collision. Stored rather than derived so the queue stays
+    // one index lookup and so an admin can clear it after review without
+    // mutating the underlying reason.
+    needsReview: boolean("needs_review").notNull().default(false),
+    // Soft dedup only — "one person per phone per firm" is enforced at sync
+    // time, not by a constraint. A unique index over coalesce(phone_override,
+    // phone_parsed) would be an expression index over admin-mutable columns:
+    // a collision would throw mid-sync and fail the whole firm's job, and it
+    // could not see the multi-person carve-out. No FK either, so a resolved
+    // duplicate can be deleted without this pointer blocking it.
+    possibleDuplicateOf: uuid("possible_duplicate_of"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // The upsert target for routed leads.
+    firmCallrailPersonUniq: unique("leads_firm_callrail_person_unique").on(
+      t.firmId,
+      t.callrailId,
+      t.personSuffix,
+    ),
+    // REQUIRED, not an optimization. Postgres treats NULL as distinct from
+    // NULL in a unique constraint, so the constraint above does not
+    // constrain unassigned rows at all — without this partial index every
+    // sync run would insert a fresh duplicate of every admin-queue lead.
+    // Same mechanism, opposite direction, as the call_signed_events comment
+    // above (where NULL-distinctness is relied on rather than worked around).
+    unassignedUniq: uniqueIndex("leads_unassigned_callrail_person_idx")
+      .on(t.callrailId, t.personSuffix)
+      .where(sql`${t.firmId} is null`),
+    // The portal's only query shape. Ascending on purpose: a btree scans
+    // backwards at the same cost, so this serves ORDER BY occurred_at DESC
+    // without needing a descending index.
+    firmOccurredIdx: index("leads_firm_occurred_idx").on(t.firmId, t.occurredAt),
+    // The signed-month view. Partial — most rows never get a signed_at.
+    firmSignedIdx: index("leads_firm_signed_idx")
+      .on(t.firmId, t.signedAt)
+      .where(sql`${t.signedAt} is not null`),
+    // Webhook lookup: the receiver knows a callrail_id and nothing else, and
+    // has to find every firm's copy of that lead.
+    callrailIdx: index("leads_callrail_idx").on(t.callrailId),
+    // The admin queue. Partial, so it stays small regardless of table size.
+    needsReviewIdx: index("leads_needs_review_idx")
+      .on(t.needsReview)
+      .where(sql`${t.needsReview}`),
+    // The previous-month re-check pass scans still-pending leads by company.
+    companyStatusIdx: index("leads_company_status_idx").on(
+      t.callrailCompanyId,
+      t.statusParsed,
+    ),
+    sourceCheck: check("leads_source_check", sql`${t.source} IN ('call','form')`),
+    statusParsedCheck: check(
+      "leads_status_parsed_check",
+      sql`${t.statusParsed} IN ('pending','signed')`,
+    ),
+    statusOverrideCheck: check(
+      "leads_status_override_check",
+      sql`${t.statusOverride} IS NULL OR ${t.statusOverride} IN ('pending','signed')`,
+    ),
+    suggestedStatusCheck: check(
+      "leads_suggested_status_check",
+      sql`${t.suggestedStatus} IS NULL OR ${t.suggestedStatus} IN ('pending','signed')`,
+    ),
+    signedAtSourceCheck: check(
+      "leads_signed_at_source_check",
+      sql`${t.signedAtSource} IS NULL OR ${t.signedAtSource} IN ('webhook','sync','admin')`,
+    ),
+  }),
+).enableRLS();
+
+// Notes typed by a person — in the portal by the firm, or in the admin view
+// by staff. This is the ONLY note source the portal ever displays; the
+// CallRail note (leads.raw_note) is admin-only.
+export const leadNotes = pgTable(
+  "lead_notes",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    // Denormalized from leads.firm_id deliberately. Every portal query can
+    // then filter notes on firm_id directly instead of joining back through
+    // leads — a dropped join is the classic way a tenant-scoped query leaks,
+    // and this removes the join entirely rather than relying on it being
+    // right.
+    firmId: uuid("firm_id")
+      .notNull()
+      .references(() => leadFirms.id, { onDelete: "cascade" }),
+    authorKind: text("author_kind").notNull(),
+    authorAuthUserId: uuid("author_auth_user_id"),
+    authorEmail: text("author_email"),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // "Latest note" is a DISTINCT ON (lead_id) ... ORDER BY created_at DESC
+    // or a lateral; either way this is the index it needs.
+    leadCreatedIdx: index("lead_notes_lead_created_idx").on(t.leadId, t.createdAt),
+    firmIdx: index("lead_notes_firm_idx").on(t.firmId),
+    authorKindCheck: check(
+      "lead_notes_author_kind_check",
+      sql`${t.authorKind} IN ('client','staff')`,
+    ),
+  }),
+).enableRLS();
+
+// One row per sync attempt. Mirrors ppc_sync_jobs (above) plus the window
+// that was actually fetched, so a gap in coverage is reconstructable after
+// the fact rather than inferred from row timestamps.
+//
+// error_message is written through this module's own stringifyError copy,
+// never a bare (err as Error).message cast — that cast yields undefined for a
+// non-Error rejection, which Drizzle's .set() treats as "no fields to
+// update" and turns into a masking error that hides the real cause. That was
+// a real production incident; see the helper in ppc-sync.ts.
+export const leadSyncJobs = pgTable("lead_sync_jobs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Null for the full sweep (the cron); populated for a per-firm "Sync Now".
+  firmId: uuid("firm_id").references(() => leadFirms.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // 'callrail_calls' | 'callrail_forms'
+  status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  errorMessage: text("error_message"),
+  triggeredBy: text("triggered_by").notNull().default("scheduled"),
+  // ISO Eastern calendar dates (todayIsoEastern / firstOfMonthIsoEastern),
+  // matching what CallRail's start_date/end_date actually accept — those are
+  // interpreted in account-local time, not UTC.
+  fromDate: date("from_date"),
+  toDate: date("to_date"),
+  leadsIngested: integer("leads_ingested").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
+
+// The tracker's own webhook secrets, separate from callrail_webhook_secrets.
+//
+// Not a reuse of that table, and not a schema change to it: its
+// callrail_company_id is NOT NULL UNIQUE (one secret per company) and
+// PUT /api/callrail/webhook-secret/[companyId] upserts on exactly that
+// target. A second Call Modified subscription has its own secret, so writing
+// it there would OVERWRITE the production webhook's secret and silently
+// break the LSA signed-case pipeline — the same class of silent breakage the
+// not-configured branch in the existing receiver was added to prevent.
+export const leadWebhookSecrets = pgTable("lead_webhook_secrets", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  callrailCompanyId: text("callrail_company_id").notNull().unique(),
+  secretEncrypted: text("secret_encrypted").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
+
+// Landing table for the tracker's Call Modified deliveries.
+//
+// The receiver writes HERE and nothing else, then returns 2xx. It does not
+// update leads inline, because of a real ordering hole: a call tagged minutes
+// after it happened fires the webhook before the daily sync has created any
+// lead row, so a direct UPDATE leads SET signed_at would match zero rows and
+// the receipt time would be lost forever. Landing the event first keeps the
+// route a single indexed INSERT (fast, always 2xx — CallRail auto-disables a
+// subscription whose endpoint keeps answering non-2xx, which has already
+// silently killed two subscriptions on the existing webhook) and lets the
+// sync claim it afterwards, preserving the RECEIPT time rather than
+// substituting the time the sync happened to run.
+//
+// INSERT RULE (binding on the Phase 6 receiver): insert ONLY when the
+// delivery's tags include Signed, and always .onConflictDoNothing() on
+// callrail_id. Non-Signed deliveries are acknowledged with 2xx and dropped
+// without a row.
+//
+// Why the tag filter: CallRail's Call Modified fires on every modification,
+// not just a sign. Landing all of them would make this table grow with rows
+// that can never produce a signed_at, and would leave the unapplied-events
+// index permanently full of work the sync must skip on every pass.
+//
+// Why DO NOTHING rather than an upsert: received_at is the whole point of
+// this table — it is the true sign moment. A redelivery of the same event
+// (CallRail retries, and the existing receiver has confirmed duplicate
+// deliveries in production) must NOT overwrite the first receipt with a
+// later timestamp, which is exactly what onConflictDoUpdate would do. First
+// write wins, permanently.
+export const leadSignedWebhookEvents = pgTable(
+  "lead_signed_webhook_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    callrailId: text("callrail_id").notNull().unique(),
+    callrailCompanyId: text("callrail_company_id").notNull(),
+    // Tags as they stood at delivery, so the status ladder can be re-run
+    // later without a second CallRail fetch.
+    tags: text("tags").array().notNull().default(sql`ARRAY[]::text[]`),
+    // THIS is the signed timestamp that reaches leads.signed_at — the moment
+    // CallRail recorded the tag edit, not the moment a sync noticed it.
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    // Null = not yet consumed by a sync run.
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    companyIdx: index("lead_signed_webhook_events_company_idx").on(t.callrailCompanyId),
+    // The claim query. Partial, so it stays proportional to the backlog
+    // rather than to the total number of events ever received.
+    unappliedIdx: index("lead_signed_webhook_events_unapplied_idx")
+      .on(t.appliedAt)
+      .where(sql`${t.appliedAt} is null`),
+  }),
+).enableRLS();
+
+export type LeadFirm = typeof leadFirms.$inferSelect;
+export type LeadFirmUser = typeof leadFirmUsers.$inferSelect;
+export type LeadFirmTag = typeof leadFirmTags.$inferSelect;
+export type LeadFirmCallrailCompany = typeof leadFirmCallrailCompanies.$inferSelect;
+export type Lead = typeof leads.$inferSelect;
+export type LeadNote = typeof leadNotes.$inferSelect;
+export type LeadSyncJob = typeof leadSyncJobs.$inferSelect;
+export type LeadWebhookSecret = typeof leadWebhookSecrets.$inferSelect;
+export type LeadSignedWebhookEvent = typeof leadSignedWebhookEvents.$inferSelect;
