@@ -14,22 +14,26 @@ import {
   type SyncDeps,
 } from "./sync";
 import { buildRoutingIndex } from "./routing";
-import { leadKey, type LeadSource, type LeadStore, type PlannedLead } from "./types";
+import type { LeadSource, LeadStore, PlannedLead } from "./types";
 
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
 
 type StoredRow = PlannedLead & {
+  id: string;
   signedAtSource: string | null;
   firstSeenAt: Date;
   lastSyncedAt: Date;
+  hasOverrides: boolean;
+  hasNotes: boolean;
 };
 
 /**
- * Mirrors the real store's conflict semantics — keyed on the same unique
- * columns, and signed_at applied with coalesce(existing, new) so "the
- * webhook's receipt time wins" is actually exercised rather than assumed.
+ * Mirrors the real store's semantics: the same conflict keys, signed_at
+ * applied with coalesce(existing, new), and — since step 2 — repointing as
+ * an UPDATE that keeps the row's identity, so "notes and overrides survive a
+ * move" is actually exercised rather than assumed.
  */
 function makeFakeStore(
   opts: {
@@ -40,9 +44,10 @@ function makeFakeStore(
   } = {},
 ) {
   const rows = new Map<string, StoredRow>();
-  for (const r of opts.seed ?? []) {
-    rows.set(`${r.firmId ?? "null"}|${r.callrailId}|${r.personSuffix}`, r);
-  }
+  const keyOf = (r: { firmId: string | null; callrailId: string; personSuffix: string }) =>
+    `${r.firmId ?? "null"}|${r.callrailId}|${r.personSuffix}`;
+  for (const r of opts.seed ?? []) rows.set(keyOf(r), r);
+
   const jobs: {
     kind: string;
     status: string;
@@ -50,7 +55,8 @@ function makeFakeStore(
     errorMessage: string | null;
     leadsIngested: number;
   }[] = [];
-  const counts = { pendingLookups: 0, upserts: 0 };
+  const counts = { pendingLookups: 0, applies: 0 };
+  let nextId = 1;
 
   const store: LeadStore = {
     async loadRoutingRules() {
@@ -63,35 +69,53 @@ function makeFakeStore(
       counts.pendingLookups += 1;
       return new Set(opts.pending?.[source] ?? []);
     },
-    async findAssignedFirmIds(ids) {
-      const map = new Map<string, string[]>();
-      for (const r of rows.values()) {
-        if (r.firmId === null || !ids.includes(r.callrailId)) continue;
-        const k = leadKey(r.callrailId, r.personSuffix);
-        const list = map.get(k) ?? [];
-        if (!list.includes(r.firmId)) list.push(r.firmId);
-        map.set(k, list);
-      }
-      return map;
+    async findExistingLeadRows(ids) {
+      return [...rows.values()]
+        .filter((r) => ids.includes(r.callrailId))
+        .map((r) => ({
+          id: r.id,
+          firmId: r.firmId,
+          callrailId: r.callrailId,
+          personSuffix: r.personSuffix,
+          hasOverrides: r.hasOverrides,
+          hasNotes: r.hasNotes,
+        }));
     },
-    async upsertLeads(incoming) {
-      counts.upserts += 1;
+    async applyReconciliation(plan) {
+      counts.applies += 1;
       const now = new Date();
-      for (const r of incoming) {
-        const key = `${r.firmId ?? "null"}|${r.callrailId}|${r.personSuffix}`;
+
+      // Repoints move the row to a new key WITHOUT losing its identity,
+      // which is the whole point of promoting rather than inserting.
+      const byId = new Map([...rows.values()].map((r) => [r.id, r]));
+      for (const rp of plan.repoint) {
+        const row = byId.get(rp.rowId);
+        if (!row) continue;
+        rows.delete(keyOf(row));
+        row.firmId = rp.toFirmId;
+        row.needsReview = rp.toFirmId === null;
+        rows.set(keyOf(row), row);
+      }
+
+      for (const r of plan.upsert) {
+        const key = keyOf(r);
         const existing = rows.get(key);
         if (!existing) {
           rows.set(key, {
             ...r,
+            id: `row-${nextId++}`,
             signedAtSource: r.signedAt ? "sync" : null,
             firstSeenAt: now,
             lastSyncedAt: now,
+            hasOverrides: false,
+            hasNotes: false,
           });
           continue;
         }
         rows.set(key, {
           ...existing,
           ...r,
+          id: existing.id,
           signedAt: existing.signedAt ?? r.signedAt,
           signedAtSource: existing.signedAt
             ? existing.signedAtSource
@@ -100,9 +124,26 @@ function makeFakeStore(
               : existing.signedAtSource,
           firstSeenAt: existing.firstSeenAt,
           lastSyncedAt: now,
+          hasOverrides: existing.hasOverrides,
+          hasNotes: existing.hasNotes,
         });
       }
-      return { written: incoming.length };
+
+      for (const id of plan.deleteRowIds) {
+        const row = [...rows.values()].find((r) => r.id === id);
+        if (row) rows.delete(keyOf(row));
+      }
+      for (const id of plan.flagStaleRowIds) {
+        const row = [...rows.values()].find((r) => r.id === id);
+        if (row) row.needsReview = true;
+      }
+
+      return {
+        written: plan.upsert.length,
+        repointed: plan.repoint.length,
+        deleted: plan.deleteRowIds.length,
+        flagged: plan.flagStaleRowIds.length,
+      };
     },
     async startJob(i) {
       jobs.push({
@@ -325,17 +366,18 @@ describe("planLeadWrites — routing", () => {
     expect(rows[0].parseFailed).toBe(false);
   });
 
-  // Without this the next run would insert an unassigned twin beside the row
-  // the admin just assigned, forever.
-  it("refreshes an admin-assigned row instead of re-creating a queue twin", () => {
-    const assigned = new Map([[leadKey("c1", "p1"), ["firm-z"]]]);
-    const rows = planLeadWrites([leadOf()], buildRoutingIndex([], []), {
-      now: NOW,
-      assignedFirmIds: assigned,
-    });
+  // CHANGED in step 2. This used to assert that the planner kept a row whose
+  // routing had gone quiet, via an assigned-firm guard. That guard existed
+  // for an admin-assign action the admin surface does not have — admins set
+  // status, opportunity, name and phone, never firm_id — so routing is
+  // authoritative and the planner reports exactly what routing says. What
+  // happens to a row that no longer matches is reconcileLeadRows' decision,
+  // covered in reconcile.test.ts.
+  it("reports what routing says and nothing else", () => {
+    const rows = planLeadWrites([leadOf()], buildRoutingIndex([], []), { now: NOW });
     expect(rows).toHaveLength(1);
-    expect(rows[0].firmId).toBe("firm-z");
-    expect(rows[0].needsReview).toBe(false);
+    expect(rows[0].firmId).toBeNull();
+    expect(rows[0].needsReview).toBe(true);
   });
 });
 
@@ -488,6 +530,70 @@ describe("syncLeadsForMonth", () => {
     expect(row.needsReview).toBe(true);
   });
 
+  // CHANGED in step 2. Before reconciliation this produced TWO rows — the
+  // queue row and a new firm row — because the two uniqueness rules cannot
+  // see each other. It is the case that would have doubled every existing
+  // unassigned lead the moment firms were configured.
+  it("PROMOTES the queue row when routing starts matching, keeping one row", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fake = makeFakeStore();
+    const deps = makeDeps(fake.store, { fetchCalls: async () => [CALL() as never] });
+
+    await syncLeadsForMonth(deps, {});
+    expect(fake.rows.size).toBe(1);
+    const before = [...fake.rows.values()][0];
+    expect(before.firmId).toBeNull();
+
+    // A firm is configured between runs.
+    const routed = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+      seed: [...fake.rows.values()],
+    });
+    const r = await syncLeadsForMonth(
+      makeDeps(routed.store, { fetchCalls: async () => [CALL() as never] }),
+      {},
+    );
+
+    expect(routed.rows.size).toBe(1);
+    const after = [...routed.rows.values()][0];
+    expect(after.firmId).toBe("firm-a");
+    expect(after.needsReview).toBe(false);
+    // Same row, so anything a human wrote on it while it sat in the queue
+    // travels with it.
+    expect(after.id).toBe(before.id);
+    expect(r.calls.repointed).toBe(1);
+  });
+
+  it("MOVES a lead that changes firm, and the old firm stops seeing it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const seeded = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+    });
+    await syncLeadsForMonth(
+      makeDeps(seeded.store, { fetchCalls: async () => [CALL() as never] }),
+      {},
+    );
+    const before = [...seeded.rows.values()][0];
+    expect(before.firmId).toBe("firm-a");
+
+    const remapped = makeFakeStore({
+      companyRules: [{ firmId: "firm-b", callrailCompanyId: "COM1" }],
+      seed: [...seeded.rows.values()],
+    });
+    const r = await syncLeadsForMonth(
+      makeDeps(remapped.store, { fetchCalls: async () => [CALL() as never] }),
+      {},
+    );
+
+    expect(remapped.rows.size).toBe(1);
+    const after = [...remapped.rows.values()][0];
+    expect(after.firmId).toBe("firm-b");
+    expect(after.id).toBe(before.id);
+    expect(r.calls.repointed).toBe(1);
+  });
+
   it("a PARSE FAILURE lands in the queue even when a firm resolved", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
@@ -573,7 +679,7 @@ describe("syncLeadsForMonth", () => {
 
       expect(fake.rows.size).toBe(0);
       expect(fake.jobs).toHaveLength(0);
-      expect(fake.counts.upserts).toBe(0);
+      expect(fake.counts.applies).toBe(0);
       expect(r.dryRun).toBe(true);
       expect(r.calls.planned).toBe(1);
       expect(r.calls.written).toBe(0);

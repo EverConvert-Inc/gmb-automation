@@ -82,15 +82,22 @@ export type LeadStore = {
   ): Promise<Set<string>>;
 
   /**
-   * For each "<callrailId>|<personSuffix>" asked about, the firm ids that
-   * already hold a row for it. Used to stop the sync re-creating an
-   * admin-queue twin of a lead an admin has already assigned.
+   * Every row already held for these callrail ids, across all firms and the
+   * unassigned slot, with enough detail to decide whether a surplus row
+   * carries human work. Feeds reconcileLeadRows.
    */
-  findAssignedFirmIds(
+  findExistingLeadRows(
     callrailIds: readonly string[],
-  ): Promise<Map<string, string[]>>;
+  ): Promise<import("./reconcile").ExistingLeadRow[]>;
 
-  upsertLeads(rows: readonly PlannedLead[]): Promise<{ written: number }>;
+  /**
+   * Applies a reconciliation plan. Repoints must land in the same
+   * transaction as the upserts they make room for — a crash between the two
+   * is exactly the duplicate this whole mechanism exists to prevent.
+   */
+  applyReconciliation(
+    plan: import("./reconcile").ReconcilePlan,
+  ): Promise<{ written: number; repointed: number; deleted: number; flagged: number }>;
 
   startJob(input: { kind: JobKind; triggeredBy: string; fromDate: string; toDate: string }): Promise<string>;
 

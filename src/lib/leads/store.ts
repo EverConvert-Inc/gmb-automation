@@ -2,17 +2,19 @@
 // database. sync.ts takes a LeadStore and never imports the db client, so
 // the orchestration can be exercised end to end against a fake.
 
-import { and, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import {
   leadFirmCallrailCompanies,
   leadFirmTags,
   leadFirms,
+  leadNotes,
   leadSyncJobs,
   leads,
 } from "@/lib/db/schema";
 import { easternWallClockToDate } from "@/lib/date-utils";
+import type { ExistingLeadRow } from "./reconcile";
 import {
   leadKey,
   type JobKind,
@@ -25,6 +27,11 @@ import {
 // so writes go in chunks rather than one enormous insert.
 const WRITE_CHUNK = 200;
 
+// Lead GROUPS per transaction, not rows: a group is one person on one
+// CallRail record and may span several firms, and its repoint and upsert
+// must never be split across two transactions.
+const GROUP_CHUNK = 100;
+
 /**
  * The drizzle instance. Taken as a parameter by every builder below so the
  * query-compilation test can pass a connectionless instance and assert on
@@ -32,7 +39,10 @@ const WRITE_CHUNK = 200;
  * meant Drizzle itself was never exercised, which is how a parameter-binding
  * bug reached production with 606 tests green.
  */
-export type LeadDb = typeof db;
+export type LeadDb = Pick<
+  typeof db,
+  "insert" | "update" | "delete" | "select" | "selectDistinct"
+>;
 
 // Calendar arithmetic on an abstract date, assembled field by field rather
 // than via toISOString().slice(0, 10) — that call reads a UTC calendar date
@@ -133,18 +143,60 @@ export function buildPendingCallrailIdsQuery(
     );
 }
 
-export function buildAssignedFirmIdsQuery(
+export function buildExistingLeadRowsQuery(
   database: LeadDb,
   callrailIds: readonly string[],
 ) {
   return database
     .select({
+      id: leads.id,
+      firmId: leads.firmId,
       callrailId: leads.callrailId,
       personSuffix: leads.personSuffix,
-      firmId: leads.firmId,
+      // Whether a human has touched this row. Decides, for a row whose firm
+      // no longer matches routing, between deleting it and keeping it
+      // flagged — see reconcileLeadRows.
+      hasOverrides: sql<boolean>`(
+        ${leads.nameOverride} is not null
+        or ${leads.phoneOverride} is not null
+        or ${leads.statusOverride} is not null
+        or ${leads.isOpportunityOverride} is not null
+      )`,
+      hasNotes: sql<boolean>`exists (
+        select 1 from ${leadNotes} where ${leadNotes.leadId} = ${leads.id}
+      )`,
     })
     .from(leads)
-    .where(and(inArray(leads.callrailId, [...callrailIds]), isNotNull(leads.firmId)));
+    .where(inArray(leads.callrailId, [...callrailIds]));
+}
+
+export function buildRepointUpdate(
+  database: LeadDb,
+  rowId: string,
+  toFirmId: string | null,
+  now: Date,
+) {
+  return database
+    .update(leads)
+    .set({ firmId: toFirmId, needsReview: toFirmId === null, updatedAt: now })
+    .where(eq(leads.id, rowId));
+}
+
+export function buildFlagStaleUpdate(
+  database: LeadDb,
+  rowIds: readonly string[],
+  now: Date,
+) {
+  // Kept, not deleted: needs_review removes it from client visibility while
+  // leaving it in the admin queue, so nothing a human wrote is destroyed.
+  return database
+    .update(leads)
+    .set({ needsReview: true, updatedAt: now })
+    .where(inArray(leads.id, [...rowIds]));
+}
+
+export function buildDeleteRows(database: LeadDb, rowIds: readonly string[]) {
+  return database.delete(leads).where(inArray(leads.id, [...rowIds]));
 }
 
 export function buildStartJobInsert(
@@ -207,31 +259,91 @@ export const drizzleLeadStore: LeadStore = {
     return new Set(rows.map((r) => r.callrailId));
   },
 
-  async findAssignedFirmIds(callrailIds) {
-    if (callrailIds.length === 0) return new Map();
-    const out = new Map<string, string[]>();
+  async findExistingLeadRows(callrailIds) {
+    if (callrailIds.length === 0) return [];
+    const out: ExistingLeadRow[] = [];
     for (let i = 0; i < callrailIds.length; i += WRITE_CHUNK) {
       const chunk = callrailIds.slice(i, i + WRITE_CHUNK);
-      const rows = await buildAssignedFirmIdsQuery(db, chunk);
+      const rows = await buildExistingLeadRowsQuery(db, chunk);
       for (const r of rows) {
-        if (!r.firmId) continue;
-        const key = leadKey(r.callrailId, r.personSuffix);
-        const list = out.get(key) ?? [];
-        if (!list.includes(r.firmId)) list.push(r.firmId);
-        out.set(key, list);
+        out.push({
+          id: r.id,
+          firmId: r.firmId,
+          callrailId: r.callrailId,
+          personSuffix: r.personSuffix,
+          hasOverrides: !!r.hasOverrides,
+          hasNotes: !!r.hasNotes,
+        });
       }
     }
     return out;
   },
 
-  async upsertLeads(rows) {
-    if (rows.length === 0) return { written: 0 };
-    const assigned = rows.filter((r) => r.firmId !== null);
-    const unassigned = rows.filter((r) => r.firmId === null);
+  async applyReconciliation(plan) {
+    const now = new Date();
     let written = 0;
-    written += await writeChunks(assigned, false);
-    written += await writeChunks(unassigned, true);
-    return { written };
+
+    // Chunked BY LEAD GROUP, never mid-group, so a group's repoint and its
+    // upsert always land in the same transaction. Splitting them is exactly
+    // how a crash leaves the duplicate row this mechanism exists to stop.
+    const repointsByKey = new Map<string, typeof plan.repoint>();
+    for (const r of plan.repoint) {
+      const key = leadKey(r.callrailId, r.personSuffix);
+      const list = repointsByKey.get(key) ?? [];
+      list.push(r);
+      repointsByKey.set(key, list);
+    }
+    const upsertsByKey = new Map<string, PlannedLead[]>();
+    for (const row of plan.upsert) {
+      const key = leadKey(row.callrailId, row.personSuffix);
+      const list = upsertsByKey.get(key) ?? [];
+      list.push(row);
+      upsertsByKey.set(key, list);
+    }
+    const keys = [...new Set([...repointsByKey.keys(), ...upsertsByKey.keys()])];
+
+    for (let i = 0; i < keys.length; i += GROUP_CHUNK) {
+      const slice = keys.slice(i, i + GROUP_CHUNK);
+      const repoints = slice.flatMap((k) => repointsByKey.get(k) ?? []);
+      const upserts = slice.flatMap((k) => upsertsByKey.get(k) ?? []);
+      await db.transaction(async (tx) => {
+        // Repoints FIRST: each one frees the slot the matching upsert then
+        // lands on, turning what would have been an insert into an update
+        // of the row that already holds the notes and overrides.
+        for (const r of repoints) {
+          await buildRepointUpdate(tx, r.rowId, r.toFirmId, now);
+        }
+        const assigned = upserts.filter((r) => r.firmId !== null);
+        const unassigned = upserts.filter((r) => r.firmId === null);
+        if (assigned.length > 0) await buildLeadUpsert(tx, assigned, false, now);
+        if (unassigned.length > 0) await buildLeadUpsert(tx, unassigned, true, now);
+      });
+      written += upserts.length;
+    }
+
+    // Surplus handling is order-independent: these rows belong to firms that
+    // are not targets, so no upsert above could have touched them.
+    if (plan.deleteRowIds.length > 0 || plan.flagStaleRowIds.length > 0) {
+      await db.transaction(async (tx) => {
+        for (let i = 0; i < plan.deleteRowIds.length; i += WRITE_CHUNK) {
+          await buildDeleteRows(tx, plan.deleteRowIds.slice(i, i + WRITE_CHUNK));
+        }
+        for (let i = 0; i < plan.flagStaleRowIds.length; i += WRITE_CHUNK) {
+          await buildFlagStaleUpdate(
+            tx,
+            plan.flagStaleRowIds.slice(i, i + WRITE_CHUNK),
+            now,
+          );
+        }
+      });
+    }
+
+    return {
+      written,
+      repointed: plan.repoint.length,
+      deleted: plan.deleteRowIds.length,
+      flagged: plan.flagStaleRowIds.length,
+    };
   },
 
   async startJob({ kind, triggeredBy, fromDate, toDate }) {
@@ -360,17 +472,3 @@ export function buildLeadUpsert(
   });
 }
 
-async function writeChunks(
-  rows: readonly PlannedLead[],
-  unassigned: boolean,
-): Promise<number> {
-  if (rows.length === 0) return 0;
-  const now = new Date();
-  let written = 0;
-  for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
-    const chunk = rows.slice(i, i + WRITE_CHUNK);
-    await buildLeadUpsert(db, chunk, unassigned, now);
-    written += chunk.length;
-  }
-  return written;
-}

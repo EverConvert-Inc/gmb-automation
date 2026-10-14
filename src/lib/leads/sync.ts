@@ -28,6 +28,7 @@ import {
   type TrackerCallRecord,
   type TrackerFormRecord,
 } from "./callrail-client";
+import { reconcileLeadRows } from "./reconcile";
 import {
   leadKey,
   type JobKind,
@@ -150,19 +151,18 @@ export function normalizeForm(
 
 export type PlanOptions = {
   now: Date;
-  /**
-   * Firm ids that already hold a row for a given leadKey. Without this, a
-   * lead an admin assigned out of the queue would be re-created as an
-   * unassigned twin on the very next run: routing still says "no firm", and
-   * the partial unique index only dedupes rows whose firm_id is null.
-   */
-  assignedFirmIds?: Map<string, string[]>;
 };
+
+// NOTE: this planner no longer takes an assigned-firm guard. Keeping a row
+// whose routing had gone quiet was the right call while an admin might have
+// assigned it by hand; the admin surface sets status, opportunity, name and
+// phone and never firm_id, so routing is authoritative and reconcileLeadRows
+// decides what happens to rows that no longer match it.
 
 export function planLeadWrites(
   incoming: readonly TrackerLead[],
   index: RoutingIndex,
-  { now, assignedFirmIds }: PlanOptions,
+  { now }: PlanOptions,
 ): PlannedLead[] {
   const out: PlannedLead[] = [];
 
@@ -235,19 +235,12 @@ export function planLeadWrites(
     }
 
     for (const person of people) {
-      let targets: (string | null)[] =
+      // Routing alone decides the targets. What happens to rows that no
+      // longer match — promotion, a move, a demotion back to the queue, or
+      // surplus — is reconcileLeadRows' job, which can see the existing
+      // rows and this cannot.
+      const targets: (string | null)[] =
         routing.firmIds.length > 0 ? routing.firmIds : [null];
-
-      if (routing.firmIds.length === 0) {
-        const existing = assignedFirmIds?.get(
-          leadKey(lead.callrailId, person.personSuffix),
-        );
-        // Refresh the rows an admin already assigned instead of creating a
-        // queue twin beside them. This also covers a firm tag being removed
-        // after delivery: the firm keeps the lead it was already shown
-        // rather than it vanishing from their view into the queue.
-        if (existing && existing.length > 0) targets = existing;
-      }
 
       for (const firmId of targets) {
         out.push({
@@ -423,6 +416,12 @@ export type SourceResult = {
   unassigned: number;
   parseFailed: number;
   written: number;
+  /** Rows moved between firms (or promoted/demoted) rather than inserted. */
+  repointed: number;
+  /** Surplus rows removed — they carried no overrides and no notes. */
+  deleted: number;
+  /** Surplus rows kept and flagged because a human had touched them. */
+  flaggedStale: number;
   fieldsSeen: string[];
   /** Dry run only — empty on a real run. Counts DISTINCT failed leads. */
   parseFailureReasons: Record<string, number>;
@@ -458,6 +457,9 @@ function emptySourceResult(): SourceResult {
     unassigned: 0,
     parseFailed: 0,
     written: 0,
+    repointed: 0,
+    deleted: 0,
+    flaggedStale: 0,
     fieldsSeen: [],
     parseFailureReasons: {},
     noteStructures: [],
@@ -625,13 +627,11 @@ async function runSourcePass<R extends { id: string }>(
       }
     }
 
-    const assignedFirmIds = await deps.store.findAssignedFirmIds(
+    const existingRows = await deps.store.findExistingLeadRows(
       collected.map((l) => l.callrailId),
     );
-    const planned = planLeadWrites(collected, input.index, {
-      now: deps.now(),
-      assignedFirmIds,
-    });
+    const planned = planLeadWrites(collected, input.index, { now: deps.now() });
+    const reconciliation = reconcileLeadRows(planned, existingRows);
 
     result.planned = planned.length;
     result.assigned = planned.filter((p) => p.firmId !== null).length;
@@ -647,14 +647,20 @@ async function runSourcePass<R extends { id: string }>(
       collectParseFailureDiagnostics(planned, result);
     }
 
+    // Reported on a dry run too, so the first run after firms are configured
+    // can be inspected before anything moves.
+    result.repointed = reconciliation.repoint.length;
+    result.deleted = reconciliation.deleteRowIds.length;
+    result.flaggedStale = reconciliation.flagStaleRowIds.length;
+
     if (!dryRun) {
-      const { written } = await deps.store.upsertLeads(planned);
-      result.written = written;
+      const applied = await deps.store.applyReconciliation(reconciliation);
+      result.written = applied.written;
       await deps.store.finishJob({
         jobId: result.jobId as string,
         status: "completed",
         errorMessage: null,
-        leadsIngested: written,
+        leadsIngested: applied.written,
       });
     }
   } catch (err) {

@@ -4,11 +4,14 @@ import { sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { leads } from "@/lib/db/schema";
 import {
-  buildAssignedFirmIdsQuery,
   buildCompanyRulesQuery,
+  buildDeleteRows,
+  buildExistingLeadRowsQuery,
+  buildFlagStaleUpdate,
   buildFinishJobUpdate,
   buildLeadUpsert,
   buildPendingCallrailIdsQuery,
+  buildRepointUpdate,
   buildStartJobInsert,
   buildTagRulesQuery,
   type LeadDb,
@@ -118,7 +121,23 @@ const QUERIES: Array<[string, () => { sql: string; params: unknown[] }]> = [
     "pending callrail ids (previous-month pass)",
     () => buildPendingCallrailIdsQuery(db, "2026-09-01", "2026-09-30", "call").toSQL(),
   ],
-  ["assigned firm ids", () => buildAssignedFirmIdsQuery(db, ["CAL1", "CAL2"]).toSQL()],
+  ["existing lead rows", () => buildExistingLeadRowsQuery(db, ["CAL1", "CAL2"]).toSQL()],
+  [
+    "repoint a row to a firm",
+    () => buildRepointUpdate(db, "33333333-3333-3333-3333-333333333333", "firm-a", NOW).toSQL(),
+  ],
+  [
+    "repoint a row back to the queue",
+    () => buildRepointUpdate(db, "33333333-3333-3333-3333-333333333333", null, NOW).toSQL(),
+  ],
+  [
+    "flag stale rows",
+    () => buildFlagStaleUpdate(db, ["33333333-3333-3333-3333-333333333333"], NOW).toSQL(),
+  ],
+  [
+    "delete surplus rows",
+    () => buildDeleteRows(db, ["33333333-3333-3333-3333-333333333333"]).toSQL(),
+  ],
   [
     "start job",
     () =>
@@ -240,5 +259,26 @@ describe("the suggested_status_seen_at CASE — the construct that failed live",
   it("keeps an existing signed_at with coalesce rather than overwriting it", () => {
     const { sql: text } = buildLeadUpsert(db, [ROW], true, NOW).toSQL();
     expect(text).toContain('coalesce("leads"."signed_at", excluded.signed_at)');
+  });
+});
+
+describe("the reconciliation write path", () => {
+  it("a repoint to the queue also re-raises needs_review", () => {
+    const { sql: text } = buildRepointUpdate(db, "row-1", null, NOW).toSQL();
+    expect(text).toContain('"firm_id"');
+    expect(text).toContain('"needs_review"');
+  });
+
+  it("existing-row lookup reports whether a human has touched the row", () => {
+    const { sql: text } = buildExistingLeadRowsQuery(db, ["CAL1"]).toSQL();
+    for (const col of ["name_override", "phone_override", "status_override", "is_opportunity_override"]) {
+      expect(text).toContain(col);
+    }
+    expect(text).toContain("lead_notes");
+  });
+
+  it("flagging stale rows never touches firm_id", () => {
+    const { sql: text } = buildFlagStaleUpdate(db, ["row-1"], NOW).toSQL();
+    expect(text).not.toContain('"firm_id" =');
   });
 });
