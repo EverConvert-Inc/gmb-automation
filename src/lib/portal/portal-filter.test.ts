@@ -138,6 +138,14 @@ describe("the filter in the page", () => {
     expect((html.match(/role="option" aria-selected="false"/g) ?? []).length).toBe(3);
   });
 
+  it("each option uses the same status badge as the table", () => {
+    const html = render(leads);
+    const list = html.slice(html.indexOf('role="listbox"'), html.indexOf("</ul>", html.indexOf('role="listbox"')));
+    for (const s of ["signed", "pending", "opportunity"]) {
+      expect(list).toContain(`class="portal-status portal-status-${s}"`);
+    }
+  });
+
   it("with no filter, every loaded lead is shown in both the table and the phone cards", () => {
     const html = render(leads);
     for (const l of leads) expect(html.split(l.name!).length - 1).toBe(2);

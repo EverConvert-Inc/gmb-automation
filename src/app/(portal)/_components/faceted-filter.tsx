@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, CirclePlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { portalFocus } from "./ui";
 
-export type FacetOption<V extends string> = { value: V; label: string; dotClass?: string };
+export type FacetOption<V extends string> = {
+  value: V;
+  /** Used for the option search and as the accessible name. */
+  label: string;
+  /** Shown instead of the plain label — e.g. the same status badge as the table. */
+  badge?: ReactNode;
+};
 
 /**
  * A React take on shadcn's "data table faceted filter", without Radix, cmdk
@@ -100,16 +106,13 @@ export function FacetedFilter<V extends string>({
         {selected.size > 0 && (
           <>
             <span aria-hidden className="mx-0.5 h-4 w-px bg-border" />
-            {/* On a phone, or with more than two picked, just the count. */}
-            <span className={cn("portal-filter-pill", selected.size > 2 ? "" : "sm:hidden")}>
-              {selected.size} selected
-            </span>
-            {selected.size <= 2 && (
-              <span className="hidden gap-1 sm:flex">
+            {/* Up to two picked: their badges. More: just the count. */}
+            {selected.size > 2 ? (
+              <span className="portal-filter-pill">{selected.size} selected</span>
+            ) : (
+              <span className="flex gap-1">
                 {selectedOptions.map((o) => (
-                  <span key={o.value} className="portal-filter-pill">
-                    {o.label}
-                  </span>
+                  <span key={o.value}>{o.badge ?? <span className="portal-filter-pill">{o.label}</span>}</span>
                 ))}
               </span>
             )}
@@ -181,8 +184,7 @@ export function FacetedFilter<V extends string>({
                 >
                   {isSelected && <Check className="h-3 w-3" />}
                 </span>
-                {o.dotClass && <span aria-hidden className={o.dotClass} />}
-                <span className="flex-1">{o.label}</span>
+                <span className="flex-1">{o.badge ?? o.label}</span>
                 <span className="font-mono text-xs tabular-nums text-muted-foreground" data-facet-count={o.value}>
                   {counts[o.value]}
                 </span>

@@ -12,10 +12,11 @@ import { LeadNote } from "./lead-note";
 import { StatusBadge } from "./status-badge";
 import { portalButton, portalInput } from "./ui";
 
+// The filter shows the same badges as the table's Status column.
 const STATUS_OPTIONS = FILTER_STATUSES.map((s) => ({
   value: s,
   label: PORTAL_STATUS_TEXT[s],
-  dotClass: `portal-summary-dot portal-summary-dot-${s}`,
+  badge: <StatusBadge status={s} />,
 }));
 
 /**
