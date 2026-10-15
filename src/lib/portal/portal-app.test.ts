@@ -143,6 +143,13 @@ afterEach(() => {
 });
 
 const render = (el: ReactElement) => renderToStaticMarkup(el);
+
+/** The visible text of the status column (4th cell) in the row for `name`. */
+function statusCell(html: string, name: string): string {
+  const row = html.slice(html.lastIndexOf("<tr", html.indexOf(name))).split("</tr>")[0];
+  const cell = row.split(/<td\b/)[4] ?? "";
+  return cell.replace(/<[^>]*>/g, "").replace(/^[^>]*>/, "").trim();
+}
 const searchParams = (sp: Record<string, string> = {}) => ({ searchParams: Promise.resolve(sp) });
 
 async function leadsMarkup(sp: Record<string, string> = {}) {
@@ -262,7 +269,7 @@ describe("the leads page", () => {
       }),
     ];
     const html = await leadsMarkup();
-    expect(html).toContain("Signed Oct 12, 2026");
+    expect(statusCell(html, "Alice Alpha")).toBe("Signed");
     expect(html).toContain("Client says hi");
     expect(html).not.toContain("SECRET");
   });
@@ -277,6 +284,40 @@ describe("the leads page", () => {
     // Anything else falls back to the current month.
     leadsByFirm[FIRM_A] = [];
     expect(await leadsMarkup({ month: "2020-01" })).toContain("October 2026");
+  });
+
+  it("renders each status label", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "Signed Person", { effective_status: "signed", status_tag_matched: "Signed", signed_at: new Date("2026-10-11T15:00:00Z") }),
+      leadRow(FIRM_A, "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3", "Pending Person", { status_tag_matched: "Pending" }),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "Opportunity Person", { status_tag_matched: null }),
+    ];
+    const html = await leadsMarkup();
+    expect(statusCell(html, "Signed Person")).toBe("Signed");
+    expect(statusCell(html, "Pending Person")).toBe("Pending");
+    expect(statusCell(html, "Opportunity Person")).toBe("Opportunity");
+  });
+
+  it("the status cell holds the label only — no date, even for a signed lead with a signed date", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "Signed Person", {
+        effective_status: "signed",
+        status_tag_matched: "Signed",
+        occurred_at: new Date("2026-09-28T15:00:00Z"),
+        signed_at: new Date("2026-10-11T15:00:00Z"),
+      }),
+    ];
+    const html = await leadsMarkup();
+    const cell = statusCell(html, "Signed Person");
+    expect(cell).toBe("Signed");
+    expect(cell).not.toMatch(/\d/);
+    expect(cell).not.toMatch(/Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/);
+    // signed_at still places it: called in September, listed under October.
+    expect(html).toContain("October 2026");
+    expect(html).toContain("Sep 28, 2026"); // the call date, in the date column
+    expect(html).not.toContain("Oct 11");
   });
 
   it("shows an empty state when there are no leads", async () => {

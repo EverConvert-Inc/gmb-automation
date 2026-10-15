@@ -112,7 +112,8 @@ describe("listVisibleLeads — what it returns", () => {
     expect(Object.keys(lead).sort()).toEqual(
       ["date", "id", "latestNote", "name", "phone", "signedDate", "status"].sort(),
     );
-    expect(lead).toMatchObject({ status: "opportunity", date: "2026-10-10", signedDate: null, latestNote: null });
+    // The fixture's matched tag is Pending, so the label is Pending.
+    expect(lead).toMatchObject({ status: "pending", date: "2026-10-10", signedDate: null, latestNote: null });
   });
 
   it("a signed lead shows its Eastern signed date", async () => {

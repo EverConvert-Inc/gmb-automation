@@ -5,7 +5,7 @@
 // Postgres returns: if the two ever disagree, the portal throws rather than
 // showing a row the rules say a firm must not see.
 
-import { CLIENT_HIDDEN_STATUS_TAGS } from "@/lib/leads/status-from-tags";
+import { CLIENT_HIDDEN_STATUS_TAGS, type StatusTag } from "@/lib/leads/status-from-tags";
 import {
   easternWallClockToDate,
   firstOfMonthIsoEastern,
@@ -91,4 +91,59 @@ export function portalMonthRange(month: PortalMonth): {
 
 export function inRange(at: Date, range: { start: Date; endExclusive: Date }): boolean {
   return at.getTime() >= range.start.getTime() && at.getTime() < range.endExclusive.getTime();
+}
+
+// ---------------------------------------------------------------------------
+// The status label a client sees
+// ---------------------------------------------------------------------------
+
+/**
+ * TO ADD A LABEL (e.g. Lost, Declined): add it to this union, give it a
+ * rule in PORTAL_STATUS_RULES at the right position, and give it text in
+ * PORTAL_STATUS_TEXT. Note that the tags those labels come from are
+ * currently in CLIENT_HIDDEN_STATUS_TAGS, so such leads are not visible at
+ * all today; showing them is a visibility change as well as a label one.
+ */
+export type PortalStatusLabel = "signed" | "pending" | "opportunity";
+
+export const PORTAL_STATUS_TEXT: Record<PortalStatusLabel, string> = {
+  signed: "Signed",
+  pending: "Pending",
+  opportunity: "Opportunity",
+};
+
+export type StatusLabelInput = {
+  /** coalesce(status_override, status_parsed) */
+  effectiveStatus: string;
+  /** status_override is not null */
+  hasStatusOverride: boolean;
+  /**
+   * The ladder word that decided status_parsed: the call's matched tag, or —
+   * for a person on a multi-person note who has their own status text — the
+   * word from that text, which the sync stores here in place of the tags'.
+   */
+  statusTagMatched: string | null;
+};
+
+const PENDING_TAG: StatusTag = "Pending";
+
+/**
+ * First match wins; no match is "opportunity". status_parsed alone never
+ * means Pending: it is 'pending' by default whenever no status tag matched,
+ * so a real Pending is told apart by WHERE it came from.
+ */
+const PORTAL_STATUS_RULES: ReadonlyArray<readonly [PortalStatusLabel, (v: StatusLabelInput) => boolean]> = [
+  // Override first, then status_parsed.
+  ["signed", (v) => v.effectiveStatus === "signed"],
+  // An admin who explicitly set the status to pending meant Pending. Without
+  // an override, Pending only when a Pending tag — or the person's own
+  // Pending in a multi-person note — actually matched.
+  ["pending", (v) => (v.hasStatusOverride ? v.effectiveStatus === "pending" : v.statusTagMatched === PENDING_TAG)],
+];
+
+export function portalStatusLabel(v: StatusLabelInput): PortalStatusLabel {
+  for (const [label, applies] of PORTAL_STATUS_RULES) {
+    if (applies(v)) return label;
+  }
+  return "opportunity";
 }

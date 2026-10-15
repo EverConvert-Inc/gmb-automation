@@ -18,7 +18,9 @@ import {
   isClientVisible,
   monthAnchor,
   portalMonthRange,
+  portalStatusLabel,
   type PortalMonth,
+  type PortalStatusLabel,
 } from "./visibility";
 
 type Sql = Parameters<Parameters<typeof portalQuery>[1]>[0];
@@ -58,7 +60,8 @@ export type PortalLead = {
   date: string;
   name: string | null;
   phone: string | null;
-  status: "signed" | "opportunity";
+  /** See portalStatusLabel in visibility.ts. */
+  status: PortalStatusLabel;
   /** Eastern date the lead was signed, when it is signed and the date is known. */
   signedDate: string | null;
   /** The newest note typed in the portal or by staff — never the CallRail note. */
@@ -156,7 +159,11 @@ export async function listVisibleLeads(
       date: toIsoDateEastern(occurredAt),
       name: (r.name as string | null) ?? null,
       phone: (r.phone as string | null) ?? null,
-      status: signed ? "signed" : "opportunity",
+      status: portalStatusLabel({
+        effectiveStatus,
+        hasStatusOverride: r.has_status_override as boolean,
+        statusTagMatched: (r.status_tag_matched as string | null) ?? null,
+      }),
       signedDate: signed && signedAt ? toIsoDateEastern(signedAt) : null,
       latestNote:
         r.note_body === null

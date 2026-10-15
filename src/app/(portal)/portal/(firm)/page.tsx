@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { NOTE_MAX_LENGTH, listVisibleLeads, type PortalLead } from "@/lib/portal/db";
-import { isPortalMonth, portalMonthRange, type PortalMonth } from "@/lib/portal/visibility";
+import {
+  PORTAL_STATUS_TEXT,
+  isPortalMonth,
+  portalMonthRange,
+  type PortalMonth,
+  type PortalStatusLabel,
+} from "@/lib/portal/visibility";
 import { formatPortalDate, formatPortalMonth, formatPortalPhone } from "../../_components/format";
 import { LeadNote } from "../../_components/lead-note";
 import { requirePortalPage } from "../../_lib/session";
@@ -81,22 +87,11 @@ function LeadRow({ lead }: { lead: PortalLead }) {
       <td className="px-4 py-3">{lead.name ?? <span className="text-muted-foreground">—</span>}</td>
       <td className="whitespace-nowrap px-4 py-3">{formatPortalPhone(lead.phone)}</td>
       <td className="whitespace-nowrap px-4 py-3">
-        {lead.status === "signed" ? (
-          <span className="inline-flex flex-col">
-            <span className="w-fit rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-300">
-              Signed
-            </span>
-            {lead.signedDate && (
-              <span className="mt-1 text-xs text-muted-foreground">
-                Signed {formatPortalDate(lead.signedDate)}
-              </span>
-            )}
-          </span>
-        ) : (
-          <span className="rounded-md bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-300">
-            Opportunity
-          </span>
-        )}
+        {/* The label only, never a date. signed_at still decides which
+            month a signed lead is listed under (see db.ts). */}
+        <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[lead.status]}`}>
+          {PORTAL_STATUS_TEXT[lead.status]}
+        </span>
       </td>
       <td className="px-4 py-3">
         <LeadNote leadId={lead.id} latestNote={lead.latestNote} maxLength={NOTE_MAX_LENGTH} />
@@ -104,6 +99,14 @@ function LeadRow({ lead }: { lead: PortalLead }) {
     </tr>
   );
 }
+
+// One entry per label; a new label in visibility.ts fails typecheck here
+// until it has a style.
+const STATUS_STYLE: Record<PortalStatusLabel, string> = {
+  signed: "bg-emerald-500/15 text-emerald-300",
+  pending: "bg-amber-500/15 text-amber-300",
+  opportunity: "bg-sky-500/15 text-sky-300",
+};
 
 function MonthLink({
   month,
