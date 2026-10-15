@@ -16,6 +16,10 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
 // getUser() call below already returns — the Auth server's current record, so
 // tagging or untagging an account takes effect on its next request.
 const ADMIN_ROLE = "admin";
+// Client users: app_metadata.role === "client" plus a lead_firm_users row. The
+// middleware only routes them to the portal; the portal itself checks the
+// membership and the firm on every request.
+const CLIENT_ROLE = "client";
 
 // Upper bound on the Auth call. Matches checkAdmin()'s bound in
 // src/lib/leads/admin-auth.ts so the two gates never disagree about how long
@@ -43,6 +47,10 @@ const under = (p: string, root: string) => p === root || p.startsWith(`${root}/`
 const isPortal = (p: string) => under(p, "/portal") || under(p, "/api/portal");
 const isApi = (p: string) => under(p, "/api");
 const PORTAL_LOGIN = "/portal/login";
+const PORTAL_HOME = "/portal";
+// Where a signed-in account with no recognised tag is sent. It is a portal
+// path, so it stays reachable for them; the page itself grants nothing.
+const PORTAL_NO_ACCESS = "/portal/no-access";
 
 class AuthTimeout extends Error {}
 
@@ -64,6 +72,13 @@ function unavailable(request: NextRequest, reason: string): NextResponse {
       `Your session is unchanged — reload in a moment.</p>`,
     { status: 503, headers: { "content-type": "text/html; charset=utf-8" } },
   );
+}
+
+function redirectTo(request: NextRequest, pathname: string): NextResponse {
+  const target = request.nextUrl.clone();
+  target.pathname = pathname;
+  target.search = ""; // no `next`: the destination is fixed, so nothing can loop
+  return NextResponse.redirect(target);
 }
 
 function redirectToLogin(request: NextRequest, loginPath: string): NextResponse {
@@ -128,7 +143,13 @@ export async function updateSession(request: NextRequest) {
     transient = true; // timed out, or threw
   }
 
-  if (isLogin(path)) return response;
+  // /login stays reachable for everyone, including while Auth is down — with
+  // one exception: a signed-in CLIENT user is never shown the internal login.
+  if (isLogin(path)) {
+    return user?.app_metadata?.role === CLIENT_ROLE
+      ? redirectTo(request, PORTAL_HOME)
+      : response;
+  }
 
   // Fail CLOSED without logging anyone out: no access, no redirect, cookies
   // untouched, so a reload works the moment Auth recovers.
@@ -147,7 +168,8 @@ export async function updateSession(request: NextRequest) {
     return redirectToLogin(request, "/login");
   }
 
-  if (user.app_metadata?.role === ADMIN_ROLE) return response;
+  const role = user.app_metadata?.role;
+  if (role === ADMIN_ROLE) return response;
 
   // Signed in without the staff tag: the portal is the only place left.
   if (isPortal(path)) return response;
@@ -157,8 +179,9 @@ export async function updateSession(request: NextRequest) {
   if (isApi(path) || request.headers.has("next-action")) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const denied = request.nextUrl.clone();
-  denied.pathname = "/login";
-  denied.search = "?denied=1"; // no `next`: going back would only be denied again
-  return NextResponse.redirect(denied);
+
+  // An internal page. A client user is sent to their portal; any other
+  // signed-in account gets the plain no-access page. Neither ever sees the
+  // internal app or its login.
+  return redirectTo(request, role === CLIENT_ROLE ? PORTAL_HOME : PORTAL_NO_ACCESS);
 }

@@ -124,9 +124,17 @@ function walk(dir: string): string[] {
   });
 }
 
-/** /clients/[slug]/page.tsx -> /clients/sample-slug */
+/**
+ * /clients/[slug]/page.tsx -> /clients/sample-slug
+ * Route-group folders like (portal) are not part of the URL, so they are
+ * dropped: (portal)/portal/page.tsx serves /portal.
+ */
 function toPath(file: string, leaf: string): string {
-  const rel = relative(APP, file).split(sep).join("/").replace(new RegExp(`/?${leaf}$`), "");
+  const rel = relative(APP, file)
+    .split(sep)
+    .filter((segment) => !/^\(.*\)$/.test(segment))
+    .join("/")
+    .replace(new RegExp(`/?${leaf}$`), "");
   const path = "/" + rel.replace(/\[([^\]]+)\]/g, "sample-$1");
   return path === "/" ? "/" : path.replace(/\/$/, "");
 }
@@ -137,12 +145,17 @@ const isExempt = (p: string) =>
   p.startsWith("/api/cron") ||
   p.startsWith("/api/webhooks/");
 
+// Portal paths are reachable by any signed-in user by design, so they are
+// not part of the INTERNAL set the deny-by-default tests below walk.
+const isPortalPath = (p: string) =>
+  p === "/portal" || p.startsWith("/portal/") || p === "/api/portal" || p.startsWith("/api/portal/");
+
 // Built from the filesystem, so a page or route added later is covered without
 // anyone remembering to list it here.
 const PAGES = walk(APP)
   .filter((f) => f.endsWith(`${sep}page.tsx`))
   .map((f) => toPath(f, "page.tsx"))
-  .filter((p) => !isExempt(p));
+  .filter((p) => !isExempt(p) && !isPortalPath(p));
 
 const API_HANDLERS = walk(join(APP, "api"))
   .filter((f) => f.endsWith(`${sep}route.ts`))
@@ -153,7 +166,7 @@ const API_HANDLERS = walk(join(APP, "api"))
     );
     return methods.map((method) => [method, path] as const);
   })
-  .filter(([, p]) => !isExempt(p));
+  .filter(([, p]) => !isExempt(p) && !isPortalPath(p));
 
 const STAFF = { id: "u-staff", app_metadata: { role: "admin" }, user_metadata: {} };
 const UNTAGGED = { id: "u-untagged", app_metadata: { provider: "email" }, user_metadata: {} };
@@ -181,6 +194,16 @@ describe("deny by default", () => {
     vi.useRealTimers();
   });
 
+  // No portal page exists yet, so the route-group handling is pinned directly:
+  // once one does, it must be treated as /portal, not as an internal page.
+  it("drops route-group folders when turning files into URLs", () => {
+    expect(toPath(join(APP, "(portal)", "portal", "page.tsx"), "page.tsx")).toBe("/portal");
+    expect(toPath(join(APP, "(portal)", "portal", "login", "page.tsx"), "page.tsx")).toBe("/portal/login");
+    expect(toPath(join(APP, "clients", "[slug]", "page.tsx"), "page.tsx")).toBe("/clients/sample-slug");
+    expect(isPortalPath("/portal/login")).toBe(true);
+    expect(isPortalPath("/portalx")).toBe(false);
+  });
+
   it("found the routes it is meant to cover", () => {
     // Guards the filesystem walk itself: an empty list would pass every test below.
     expect(PAGES.length).toBeGreaterThanOrEqual(24);
@@ -189,15 +212,19 @@ describe("deny by default", () => {
   });
 
   describe.each([
-    ["untagged", UNTAGGED],
-    ["client-role", CLIENT],
-  ])("a signed-in %s session", (_label, user) => {
+    // An untagged account gets the plain no-access page; a client user is sent
+    // to their portal. Neither ever sees the internal app or its login.
+    ["untagged", UNTAGGED, "/portal/no-access"],
+    ["client-role", CLIENT, "/portal"],
+  ])("a signed-in %s session", (_label, user, destination) => {
     it.each(PAGES)("is redirected away from page %s", async (path) => {
       signedInAs(user);
       const res = await call(path);
       expect(res.status).toBe(307);
-      expect(new URL(res.headers.get("location")!).pathname).toBe("/login");
-      expect(new URL(res.headers.get("location")!).searchParams.get("denied")).toBe("1");
+      const loc = new URL(res.headers.get("location")!);
+      expect(loc.pathname).toBe(destination);
+      // A fixed destination, no `next`: nothing to loop on.
+      expect(loc.search).toBe("");
     });
 
     it.each(API_HANDLERS)("gets 403 on %s %s", async (method, path) => {
@@ -232,6 +259,56 @@ describe("deny by default", () => {
         expect([307, 403]).toContain(res.status);
       },
     );
+  });
+
+  describe("the internal /login page", () => {
+    it("sends a signed-in CLIENT user to /portal", async () => {
+      signedInAs(CLIENT);
+      const res = await call("/login");
+      expect(res.status).toBe(307);
+      expect(new URL(res.headers.get("location")!).pathname).toBe("/portal");
+    });
+
+    it("sends a signed-in client user to /portal even with ?next= set", async () => {
+      signedInAs(CLIENT);
+      const res = await call("/login?next=/ppc");
+      expect(new URL(res.headers.get("location")!).pathname).toBe("/portal");
+      expect(new URL(res.headers.get("location")!).search).toBe("");
+    });
+
+    it.each([
+      ["signed out", null],
+      ["untagged", UNTAGGED],
+      ["staff", STAFF],
+    ])("stays reachable for a %s caller", async (_label, user) => {
+      if (user) signedInAs(user);
+      const res = await call("/login");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("location")).toBeNull();
+    });
+
+    it("stays reachable while Auth is down — the role cannot be known", async () => {
+      mocks.getUser.mockRejectedValue(new Error("auth down"));
+      expect((await call("/login")).status).toBe(200);
+    });
+  });
+
+  describe("lookalike client roles are NOT client", () => {
+    it.each([
+      ["capitalised", { app_metadata: { role: "Client" }, user_metadata: {} }],
+      ["padded", { app_metadata: { role: "client " }, user_metadata: {} }],
+      ["only in user_metadata", { app_metadata: {}, user_metadata: { role: "client" } }],
+    ])("%s goes to no-access, not the portal home", async (_label, user) => {
+      signedInAs(user);
+      const res = await call("/settings");
+      expect(new URL(res.headers.get("location")!).pathname).toBe("/portal/no-access");
+      expect((await call("/login")).status).toBe(200);
+    });
+  });
+
+  it("an untagged session can reach /portal/no-access", async () => {
+    signedInAs(UNTAGGED);
+    expect((await call("/portal/no-access")).status).toBe(200);
   });
 
   describe("a tagged staff session", () => {
