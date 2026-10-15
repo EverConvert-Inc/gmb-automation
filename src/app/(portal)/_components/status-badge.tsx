@@ -11,9 +11,6 @@ const STATUS_CLASS: Record<PortalStatusLabel, string> = {
 /** The label only — never a date. */
 export function StatusBadge({ status }: { status: PortalStatusLabel }) {
   return (
-    <span className={STATUS_CLASS[status]}>
-      <span aria-hidden className="portal-status-dot" />
-      {PORTAL_STATUS_TEXT[status]}
-    </span>
+    <span className={STATUS_CLASS[status]}>{PORTAL_STATUS_TEXT[status]}</span>
   );
 }
