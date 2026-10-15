@@ -101,11 +101,11 @@ function LeadRow({ lead }: { lead: PortalLead }) {
 }
 
 // One entry per label; a new label in visibility.ts fails typecheck here
-// until it has a style.
+// until it has a style. Colours for both modes live in portal-theme.css.
 const STATUS_STYLE: Record<PortalStatusLabel, string> = {
-  signed: "bg-emerald-500/15 text-emerald-300",
-  pending: "bg-amber-500/15 text-amber-300",
-  opportunity: "bg-sky-500/15 text-sky-300",
+  signed: "portal-status-signed",
+  pending: "portal-status-pending",
+  opportunity: "portal-status-opportunity",
 };
 
 function MonthLink({

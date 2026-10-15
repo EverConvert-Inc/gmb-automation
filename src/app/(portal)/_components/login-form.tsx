@@ -69,7 +69,7 @@ export function PortalLoginForm() {
         />
       </div>
       {error && (
-        <p role="alert" className="text-sm text-red-400">
+        <p role="alert" className="text-sm portal-error-text">
           {error}
         </p>
       )}

@@ -274,6 +274,16 @@ describe("the leads page", () => {
     expect(html).not.toContain("SECRET");
   });
 
+  it("the header carries the theme toggle next to sign-out, and still no hidden field", async () => {
+    asClientA();
+    const html = await leadsMarkup();
+    const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+    expect(header).toContain("Switch to dark theme");
+    expect(header).toContain("Sign out");
+    expect(header.indexOf("Switch to dark theme")).toBeLessThan(header.indexOf("Sign out"));
+    expect(html).not.toContain("SECRET");
+  });
+
   it("the month switch reads only current/previous and the query uses that month", async () => {
     asClientA();
     leadsByFirm[FIRM_A] = [leadRow(FIRM_A, LEAD_A, "Alice Alpha", { occurred_at: new Date("2026-09-20T15:00:00Z") })];

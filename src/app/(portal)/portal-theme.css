@@ -1,0 +1,62 @@
+/*
+ * The portal's light and dark palettes, scoped to the portal root. Every
+ * selector here starts with .portal-theme, so nothing in this file can reach
+ * the internal app even if the stylesheet stays loaded after a navigation.
+ *
+ * The values are copies of :root and .dark in globals.css. They are repeated
+ * on purpose: when the internal app's own setting puts .dark on <html>, the
+ * portal in light mode must re-declare the light values on its own element.
+ */
+
+.portal-theme {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 13%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 13%;
+  --muted: 240 6% 95%;
+  --muted-foreground: 0 0% 40%;
+  --border: 240 6% 90%;
+  --input: 240 6% 90%;
+  --accent: 240 6% 95%;
+  --accent-foreground: 0 0% 13%;
+  --secondary: 240 6% 95%;
+  --secondary-foreground: 0 0% 13%;
+  --primary: 98 46% 49%;
+  --primary-foreground: 0 0% 8%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 98 46% 49%;
+}
+
+.portal-theme.dark {
+  --background: 222 18% 8%;
+  --foreground: 210 20% 96%;
+  --card: 222 16% 12%;
+  --card-foreground: 210 20% 96%;
+  --muted: 222 14% 17%;
+  --muted-foreground: 215 14% 65%;
+  --border: 222 14% 20%;
+  --input: 222 14% 20%;
+  --accent: 222 14% 17%;
+  --accent-foreground: 210 20% 96%;
+  --secondary: 222 14% 17%;
+  --secondary-foreground: 210 20% 96%;
+  --primary: 98 46% 53%;
+  --primary-foreground: 0 0% 8%;
+  --destructive: 0 70% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 98 46% 53%;
+}
+
+/* Status badges: Signed green, Pending amber, Opportunity blue. Light mode
+   uses dark text on a pale fill; dark mode keeps the original styling. */
+.portal-theme .portal-status-signed { background-color: #d1fae5; color: #065f46; }
+.portal-theme .portal-status-pending { background-color: #fef3c7; color: #92400e; }
+.portal-theme .portal-status-opportunity { background-color: #dbeafe; color: #1e40af; }
+.portal-theme.dark .portal-status-signed { background-color: rgb(16 185 129 / 0.15); color: #6ee7b7; }
+.portal-theme.dark .portal-status-pending { background-color: rgb(245 158 11 / 0.15); color: #fcd34d; }
+.portal-theme.dark .portal-status-opportunity { background-color: rgb(14 165 233 / 0.15); color: #7dd3fc; }
+
+/* Error text, readable on white and on the dark surface. */
+.portal-theme .portal-error-text { color: #b91c1c; }
+.portal-theme.dark .portal-error-text { color: #f87171; }

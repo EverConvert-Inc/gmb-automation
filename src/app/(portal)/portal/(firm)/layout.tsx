@@ -1,4 +1,5 @@
 import { PortalSignOutButton } from "../../_components/sign-out-button";
+import { PortalThemeToggle } from "../../_components/theme-toggle";
 import { requirePortalPage } from "../../_lib/session";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,10 @@ export default async function PortalFirmLayout({ children }: { children: React.R
               <p className="truncate text-sm text-muted-foreground">{session.email}</p>
             )}
           </div>
-          <PortalSignOutButton />
+          <div className="flex items-center gap-2">
+            <PortalThemeToggle />
+            <PortalSignOutButton />
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
