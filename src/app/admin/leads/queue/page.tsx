@@ -38,7 +38,12 @@ const BLURB: Record<QueueReason, string> = {
 
 export default async function AdminLeadQueuePage() {
   const auth = await checkAdmin();
-  if (!auth.ok) return <NotAuthorized />;
+  if (!auth.ok) {
+    // A timed-out auth check is an outage, not a permissions answer: throw so
+    // the error boundary says so instead of rendering "Not authorized".
+    if (auth.status === 503) throw new Error(auth.error);
+    return <NotAuthorized />;
+  }
 
   const rows = await listAdminQueue();
   const byReason = new Map<QueueReason, typeof rows>();

@@ -123,3 +123,26 @@ describe("requireAdminRoute", () => {
     await expect(res!.json()).resolves.toEqual({ error: "not signed in" });
   });
 });
+
+describe("checkAdmin — timeout", () => {
+  it("returns 503 instead of hanging when getUser never answers", async () => {
+    getUser.mockReturnValue(new Promise(() => {}));
+    const started = Date.now();
+    await expect(checkAdmin(20)).resolves.toEqual({
+      ok: false,
+      status: 503,
+      error: "auth check timed out",
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("still passes a tagged admin who answers in time", async () => {
+    session({ role: "admin" });
+    await expect(checkAdmin(1000)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("defaults to a 10s bound", async () => {
+    const { ADMIN_AUTH_TIMEOUT_MS } = await import("./admin-auth");
+    expect(ADMIN_AUTH_TIMEOUT_MS).toBe(10_000);
+  });
+});

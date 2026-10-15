@@ -25,7 +25,27 @@ export const ADMIN_ROLE = "admin";
 
 export type AdminAuthResult =
   | { ok: true; email: string | null }
-  | { ok: false; status: 401 | 403; error: string };
+  | { ok: false; status: 401 | 403 | 503; error: string };
+
+/**
+ * Upper bound on the session lookup. supabase.auth.getUser() is an HTTP call
+ * with no timeout of its own (auth-js sets no AbortSignal), and a hang there
+ * does not throw — it held /admin/firms open until Vercel killed it at 300s.
+ * Failing at 10s turns that into a fast, visible 503.
+ */
+export const ADMIN_AUTH_TIMEOUT_MS = 10_000;
+
+class AdminAuthTimeout extends Error {}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new AdminAuthTimeout()), ms);
+  });
+  // Cleared either way, so a fast answer never leaves a timer holding the
+  // function open.
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 /** Reads app_metadata.role defensively — it is whatever is in the JWT. */
 export function readRole(appMetadata: unknown): string | null {
@@ -40,13 +60,25 @@ export function isAdminRole(role: string | null): boolean {
   return role === ADMIN_ROLE;
 }
 
-export async function checkAdmin(): Promise<AdminAuthResult> {
+export async function checkAdmin(
+  timeoutMs: number = ADMIN_AUTH_TIMEOUT_MS,
+): Promise<AdminAuthResult> {
   let user: { email?: string | null; app_metadata?: unknown } | null = null;
   try {
-    const supabase = await getSupabaseServerClient();
-    const { data } = await supabase.auth.getUser();
+    const { data } = await withTimeout(
+      (async () => {
+        const supabase = await getSupabaseServerClient();
+        return supabase.auth.getUser();
+      })(),
+      timeoutMs,
+    );
     user = data.user ?? null;
-  } catch {
+  } catch (err) {
+    // A timeout is not "signed out" — the session may be fine and the auth
+    // service slow. Reported as 503 so it is never mistaken for a 401/403.
+    if (err instanceof AdminAuthTimeout) {
+      return { ok: false, status: 503, error: "auth check timed out" };
+    }
     // Supabase unconfigured, or the session lookup failed. Treated as
     // signed out rather than as authorised — an auth check that opens up
     // when its dependency breaks is not a check.

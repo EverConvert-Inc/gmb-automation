@@ -59,7 +59,12 @@ export default async function AdminFirmsPage() {
   // Staff-only. The middleware gate cannot tell a staff member from a
   // client user, and this page reads across every firm.
   const auth = await checkAdmin();
-  if (!auth.ok) return <NotAuthorized />;
+  if (!auth.ok) {
+    // A timed-out auth check is an outage, not a permissions answer: throw so
+    // the error boundary says so instead of rendering "Not authorized".
+    if (auth.status === 503) throw new Error(auth.error);
+    return <NotAuthorized />;
+  }
 
   // SEQUENTIAL, not Promise.all. Two round-trips over this much data cost
   // nothing, and zero concurrent queries means nothing can be pipelined onto
