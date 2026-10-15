@@ -46,8 +46,10 @@ describe("flagPossibleDuplicates", () => {
     const r = flagPossibleDuplicates([planned()], [onFile()]);
     expect(r.flagged).toBe(1);
     expect(r.rows[0].possibleDuplicateOf).toBe("existing-1");
-    // Surfaced in the queue, never blocked.
-    expect(r.rows[0].needsReview).toBe(true);
+    // FLIPPED (C8): was needsReview true. needs_review now means "hidden from
+    // clients", and a caller who phoned twice is still a real lead the firm
+    // should see — the flag lives in possible_duplicate_of alone.
+    expect(r.rows[0].needsReview).toBe(false);
   });
 
   it.each([
@@ -124,10 +126,11 @@ describe("flagPossibleDuplicates", () => {
   it("leaves every other field on the row untouched", () => {
     const input = planned();
     const r = flagPossibleDuplicates([input], [onFile()]);
+    // FLIPPED (C8): needsReview is no longer part of the change — only
+    // possibleDuplicateOf moves.
     expect(r.rows[0]).toEqual({
       ...input,
       possibleDuplicateOf: "existing-1",
-      needsReview: true,
     });
   });
 

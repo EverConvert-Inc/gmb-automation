@@ -14,6 +14,7 @@ import {
   type SyncDeps,
 } from "./sync";
 import { buildRoutingIndex } from "./routing";
+import { queueReason } from "./reconcile";
 import type { LeadSource, LeadStore, PlannedLead } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -1143,7 +1144,9 @@ describe("soft dedup in a real run", () => {
     expect(r.calls.possibleDuplicates).toBe(1);
     const flagged = [...second.rows.values()].find((x) => x.callrailId === "c2");
     expect(flagged?.possibleDuplicateOf).toBeTruthy();
-    expect(flagged?.needsReview).toBe(true);
+    // FLIPPED (C8): was needsReview true. A duplicate is flagged for staff but
+    // NOT hidden from the firm.
+    expect(flagged?.needsReview).toBe(false);
     // Flagged, never blocked — both rows are written.
     expect(second.rows.size).toBe(2);
   });
@@ -1173,5 +1176,128 @@ describe("soft dedup in a real run", () => {
       {},
     );
     expect(r.calls.possibleDuplicates).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C8: needs_review means "hidden from clients" — and nothing else
+// ---------------------------------------------------------------------------
+
+describe("needs_review means hidden from clients", () => {
+  it("a stale-routing row keeps needs_review across syncs", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    // Run 1: the lead is tagged for two firms, so both get a row.
+    const both = makeFakeStore({
+      tagRules: [
+        { firmId: "firm-a", tagName: "Shared" },
+        { firmId: "firm-b", tagName: "Shared" },
+      ],
+    });
+    const fetchCalls = async () => [CALL({ tags: ["Signed", "Shared"] }) as never];
+    await syncLeadsForMonth(makeDeps(both.store, { fetchCalls }), {});
+    expect(both.rows.size).toBe(2);
+
+    // Someone writes a note on firm B's copy; then B's tag is removed.
+    const seed = [...both.rows.values()].map((r) =>
+      r.firmId === "firm-b" ? { ...r, hasNotes: true } : r,
+    );
+    let rows = seed;
+    for (const run of [1, 2, 3]) {
+      const fake = makeFakeStore({
+        tagRules: [{ firmId: "firm-a", tagName: "Shared" }],
+        seed: rows,
+      });
+      await syncLeadsForMonth(makeDeps(fake.store, { fetchCalls }), {});
+      rows = [...fake.rows.values()];
+      const b = rows.find((r) => r.firmId === "firm-b");
+      const a = rows.find((r) => r.firmId === "firm-a");
+      // Kept (it carries a note), and hidden — on EVERY run, not just the first.
+      expect(b, `run ${run}`).toBeDefined();
+      expect(b!.needsReview, `run ${run}`).toBe(true);
+      // The firm routing still targets is untouched by it.
+      expect(a!.needsReview, `run ${run}`).toBe(false);
+    }
+  });
+
+  it("a stale row is still hidden — and labelled stale — when it is ALSO a duplicate", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fetchCalls = async () => [CALL({ tags: ["Signed", "Shared"] }) as never];
+    const both = makeFakeStore({
+      tagRules: [
+        { firmId: "firm-a", tagName: "Shared" },
+        { firmId: "firm-b", tagName: "Shared" },
+      ],
+    });
+    await syncLeadsForMonth(makeDeps(both.store, { fetchCalls }), {});
+    // B's copy carries a note AND a duplicate flag; then B's tag goes away.
+    const seed = [...both.rows.values()].map((r) =>
+      r.firmId === "firm-b" ? { ...r, hasNotes: true, possibleDuplicateOf: "other-lead" } : r,
+    );
+    const fake = makeFakeStore({ tagRules: [{ firmId: "firm-a", tagName: "Shared" }], seed });
+    await syncLeadsForMonth(makeDeps(fake.store, { fetchCalls }), {});
+
+    const b = [...fake.rows.values()].find((r) => r.firmId === "firm-b")!;
+    expect(b.needsReview).toBe(true);
+    expect(
+      queueReason({
+        parseFailed: b.parseFailed,
+        firmId: b.firmId,
+        needsReview: b.needsReview,
+        possibleDuplicateOf: b.possibleDuplicateOf,
+      }),
+    ).toBe("stale_routing");
+  });
+
+  // Not a leak: with NO surviving row for the firm routing now targets, the
+  // stale row is MOVED there (same row, notes travel with it) — routing says
+  // that is where the lead belongs, so becoming visible there is correct.
+  it("a stale row with somewhere to go is moved, not left hidden", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const fetchCalls = async () => [CALL({ tags: ["Signed", "Shared"] }) as never];
+    const onlyB = makeFakeStore({ tagRules: [{ firmId: "firm-b", tagName: "Shared" }] });
+    await syncLeadsForMonth(makeDeps(onlyB.store, { fetchCalls }), {});
+    const before = [...onlyB.rows.values()][0];
+
+    const toA = makeFakeStore({
+      tagRules: [{ firmId: "firm-a", tagName: "Shared" }],
+      seed: [{ ...before, hasNotes: true }],
+    });
+    await syncLeadsForMonth(makeDeps(toA.store, { fetchCalls }), {});
+    const rows = [...toA.rows.values()];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(before.id);
+    expect(rows[0].firmId).toBe("firm-a");
+    expect(rows.some((r) => r.firmId === "firm-b")).toBe(false); // B no longer has it
+  });
+
+  it("a duplicate-flagged lead that is otherwise visible is NOT hidden", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T15:00:00Z"));
+    const COMPANY = [{ firmId: "firm-a", callrailCompanyId: "COM1" }];
+    const first = makeFakeStore({ companyRules: COMPANY });
+    await syncLeadsForMonth(
+      makeDeps(first.store, { fetchCalls: async () => [CALL({ id: "c1" }) as never] }),
+      {},
+    );
+    const second = makeFakeStore({ companyRules: COMPANY, seed: [...first.rows.values()] });
+    await syncLeadsForMonth(
+      makeDeps(second.store, {
+        fetchCalls: async () => [
+          CALL({ id: "c1" }) as never,
+          // Same caller, a second, genuinely Signed lead.
+          CALL({ id: "c2", tags: ["Signed"], note: "Jane Doe, (555) 123-4567" }) as never,
+        ],
+      }),
+      {},
+    );
+    const dup = [...second.rows.values()].find((r) => r.callrailId === "c2")!;
+    expect(dup.possibleDuplicateOf).toBeTruthy(); // flagged for staff
+    expect(dup.firmId).toBe("firm-a");            // routed
+    expect(dup.statusParsed).toBe("signed");      // signed
+    expect(dup.parseFailed).toBe(false);
+    expect(dup.needsReview).toBe(false);          // and NOT hidden from the firm
   });
 });

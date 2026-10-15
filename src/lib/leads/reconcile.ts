@@ -136,9 +136,14 @@ export function reconcileLeadRows(
 /**
  * Why a row sits in the admin queue, derived rather than stored.
  *
- * Deliberately exhaustive over the reasons the sync can set needs_review, so
- * the queue can explain itself without a column that would have to be kept
- * in step with this logic.
+ * needs_review means exactly one thing: HIDDEN FROM CLIENTS. Three causes set
+ * it — a parse failure, no firm, or stale routing. A possible duplicate does
+ * not: it is a heads-up for staff on a lead the firm still sees, carried by
+ * possible_duplicate_of alone.
+ *
+ * Order matters. Stale routing is checked BEFORE duplicates, so a row that is
+ * both is labelled by the reason that hides it — a stale row must never read
+ * as a mere duplicate. Returns null for a row that needs nobody.
  */
 export type QueueReason =
   | "parse_failure"
@@ -149,12 +154,16 @@ export type QueueReason =
 export function queueReason(row: {
   parseFailed: boolean;
   firmId: string | null;
+  needsReview: boolean;
   possibleDuplicateOf: string | null;
-}): QueueReason {
+}): QueueReason | null {
   if (row.parseFailed) return "parse_failure";
   if (row.firmId === null) return "unassigned";
+  // Firm set, note parsed, still hidden: the only remaining cause is stale
+  // routing (reconcileLeadRows' flag on a surplus row someone had touched).
+  if (row.needsReview) return "stale_routing";
   if (row.possibleDuplicateOf) return "possible_duplicate";
-  return "stale_routing";
+  return null;
 }
 
 export const QUEUE_REASON_LABELS: Record<QueueReason, string> = {

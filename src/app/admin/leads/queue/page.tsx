@@ -31,7 +31,7 @@ const BLURB: Record<QueueReason, string> = {
   parse_failure:
     "The CallRail note could not be read as a name and a phone. These never reach a firm.",
   possible_duplicate:
-    "The same phone already exists for this firm. Flagged at sync time, not blocked — people split from one multi-person note are exempt.",
+    "The same phone already exists for this firm. A heads-up only: these leads stay visible to the firm. People split from one multi-person note are exempt.",
   stale_routing:
     "Routing no longer sends this lead to this firm, but someone had edited it or written a note, so it was kept rather than removed.",
 };

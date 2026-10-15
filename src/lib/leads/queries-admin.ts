@@ -5,7 +5,7 @@
 // tenant-scoped accessor that requires a resolved firm id; nothing in this
 // file may ever be imported from it.
 
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { leadFirms, leadNotes, leads } from "@/lib/db/schema";
 import { easternDayRangeToInstants } from "./store";
@@ -188,6 +188,20 @@ export async function listAdminLeads(options: {
 export type AdminQueueRow = AdminLeadRow & { reason: QueueReason };
 
 /**
+ * What puts a lead in the admin queue. Shared by the list and the count so
+ * they cannot drift. needs_review covers everything hidden from clients;
+ * possible_duplicate_of is read separately because a duplicate is NOT hidden.
+ */
+export function adminQueueCondition() {
+  return or(
+    eq(leads.needsReview, true),
+    isNull(leads.firmId),
+    eq(leads.parseFailed, true),
+    isNotNull(leads.possibleDuplicateOf),
+  );
+}
+
+/**
  * The admin queue: anything needing a human. Deliberately NOT month-scoped —
  * a lead that failed to parse in September is still unresolved in October,
  * and a queue that hides it by date is a queue that loses it.
@@ -197,21 +211,23 @@ export async function listAdminQueue(): Promise<AdminQueueRow[]> {
     .select(baseColumns)
     .from(leads)
     .leftJoin(leadFirms, eq(leadFirms.id, leads.firmId))
-    .where(
-      or(eq(leads.needsReview, true), isNull(leads.firmId), eq(leads.parseFailed, true)),
-    )
+    .where(adminQueueCondition())
     .orderBy(desc(leads.occurredAt))
     .limit(ADMIN_LEAD_LIMIT);
 
   const withNotes = await attachNotes(rows, "listAdminQueue");
-  return withNotes.map((r) => ({
-    ...r,
-    reason: queueReason({
+  const out: AdminQueueRow[] = [];
+  for (const r of withNotes) {
+    const reason = queueReason({
       parseFailed: r.parseFailed,
       firmId: r.firmId,
+      needsReview: r.needsReview,
       possibleDuplicateOf: r.possibleDuplicateOf,
-    }),
-  }));
+    });
+    // The condition above guarantees a reason; skipping is purely defensive.
+    if (reason) out.push({ ...r, reason });
+  }
+  return out;
 }
 
 export async function listFirmOptions(): Promise<
@@ -233,8 +249,6 @@ export async function countAdminQueue(): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(leads)
-    .where(
-      or(eq(leads.needsReview, true), isNull(leads.firmId), eq(leads.parseFailed, true)),
-    );
+    .where(adminQueueCondition());
   return row?.n ?? 0;
 }

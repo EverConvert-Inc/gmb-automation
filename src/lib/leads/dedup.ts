@@ -66,12 +66,11 @@ export function flagPossibleDuplicates(
     if (match.callrailId === row.callrailId) return row;
 
     flagged += 1;
-    return {
-      ...row,
-      possibleDuplicateOf: match.leadId,
-      // Surfaced in the admin queue. Never blocks the write.
-      needsReview: true,
-    };
+    // possible_duplicate_of alone carries the flag. needs_review is NOT set:
+    // it means "hidden from clients", and a lead whose caller simply phoned
+    // twice is still a real lead the firm should see. The admin queue reads
+    // possible_duplicate_of directly.
+    return { ...row, possibleDuplicateOf: match.leadId };
   });
 
   return { rows, flagged };

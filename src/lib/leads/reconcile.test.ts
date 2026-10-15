@@ -237,10 +237,17 @@ describe("grouping", () => {
 
 describe("queueReason", () => {
   it.each([
-    ["parse failure wins over everything", { parseFailed: true, firmId: null, possibleDuplicateOf: "x" }, "parse_failure"],
-    ["unassigned", { parseFailed: false, firmId: null, possibleDuplicateOf: null }, "unassigned"],
-    ["duplicate", { parseFailed: false, firmId: "f", possibleDuplicateOf: "x" }, "possible_duplicate"],
-    ["stale routing", { parseFailed: false, firmId: "f", possibleDuplicateOf: null }, "stale_routing"],
+    ["parse failure wins over everything", { parseFailed: true, firmId: null, needsReview: true, possibleDuplicateOf: "x" }, "parse_failure"],
+    ["unassigned", { parseFailed: false, firmId: null, needsReview: true, possibleDuplicateOf: null }, "unassigned"],
+    ["duplicate", { parseFailed: false, firmId: "f", needsReview: false, possibleDuplicateOf: "x" }, "possible_duplicate"],
+    // FLIPPED (C8): stale routing is now read from needs_review itself. It used
+    // to be the fall-through for any firm-assigned row that wasn't a parse
+    // failure or a duplicate, without looking at needs_review at all.
+    ["stale routing", { parseFailed: false, firmId: "f", needsReview: true, possibleDuplicateOf: null }, "stale_routing"],
+    // NEW: a stale row that is ALSO a duplicate is labelled by what hides it.
+    ["stale AND duplicate is stale, never 'duplicate'", { parseFailed: false, firmId: "f", needsReview: true, possibleDuplicateOf: "x" }, "stale_routing"],
+    // NEW: a visible, clean, routed lead is not a queue item at all.
+    ["a clean visible lead needs nobody", { parseFailed: false, firmId: "f", needsReview: false, possibleDuplicateOf: null }, null],
   ])("%s", (_label, row, expected) => {
     expect(queueReason(row as never)).toBe(expected);
   });
