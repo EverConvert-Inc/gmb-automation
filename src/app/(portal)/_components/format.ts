@@ -30,3 +30,11 @@ export function formatPortalMonth(key: string): string {
     ? key
     : new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(d);
 }
+
+const SHORT_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** "2026-10-15" (an Eastern date) → "Oct 15". */
+export function formatPortalShortDate(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? isoDate : SHORT_DATE.format(d);
+}

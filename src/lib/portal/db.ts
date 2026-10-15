@@ -64,8 +64,14 @@ export type PortalLead = {
   status: PortalStatusLabel;
   /** Eastern date the lead was signed, when it is signed and the date is known. */
   signedDate: string | null;
-  /** The newest note typed in the portal or by staff — never the CallRail note. */
-  latestNote: { body: string; author: "client" | "staff"; date: string } | null;
+  /**
+   * The firm's own current note: the newest note written from the client
+   * side of THIS firm. Notes are append-only; this is what the editable field
+   * holds. Never the CallRail note.
+   */
+  firmNote: { body: string; date: string } | null;
+  /** The newest note overall, only when staff wrote it — shown read-only. */
+  staffNote: { body: string; date: string } | null;
 };
 
 export async function listVisibleLeads(
@@ -91,7 +97,10 @@ export async function listVisibleLeads(
       ln.body                                                         as note_body,
       ln.created_at                                                   as note_created_at,
       ln.author_kind                                                  as note_author_kind,
-      ln.firm_id::text                                                as note_firm_id
+      ln.firm_id::text                                                as note_firm_id,
+      cn.body                                                         as client_note_body,
+      cn.created_at                                                   as client_note_created_at,
+      cn.firm_id::text                                                as client_note_firm_id
     from leads l
     left join lateral (
       select n.body, n.created_at, n.author_kind, n.firm_id
@@ -101,6 +110,15 @@ export async function listVisibleLeads(
       order by n.created_at desc, n.id desc
       limit 1
     ) ln on true
+    left join lateral (
+      select n.body, n.created_at, n.firm_id
+      from lead_notes n
+      where n.lead_id = l.id
+        and n.firm_id = ${firmId}::uuid
+        and n.author_kind = 'client'
+      order by n.created_at desc, n.id desc
+      limit 1
+    ) cn on true
     where ${visibleTo(sql, firmId)}
       and (case when coalesce(l.status_override, l.status_parsed) = 'signed'
                 then coalesce(l.signed_at, l.occurred_at)
@@ -127,12 +145,18 @@ export async function listVisibleLeads(
     note_created_at: "date?",
     note_author_kind: "string?",
     note_firm_id: "string?",
+    client_note_body: "string?",
+    client_note_created_at: "date?",
+    client_note_firm_id: "string?",
   });
 
   return rows.map((r, i) => {
     // A note, when present, must belong to the session's firm too.
     if (r.note_body !== null && r.note_firm_id !== firmId) {
       throw new PortalRowError(label, i, "note_firm_id", "does not match the session");
+    }
+    if (r.client_note_body !== null && r.client_note_firm_id !== firmId) {
+      throw new PortalRowError(label, i, "client_note_firm_id", "does not match the session");
     }
     const effectiveStatus = r.effective_status as string;
     const occurredAt = r.occurred_at as Date;
@@ -165,12 +189,18 @@ export async function listVisibleLeads(
         statusTagMatched: (r.status_tag_matched as string | null) ?? null,
       }),
       signedDate: signed && signedAt ? toIsoDateEastern(signedAt) : null,
-      latestNote:
-        r.note_body === null
+      firmNote:
+        r.client_note_body === null
+          ? null
+          : {
+              body: r.client_note_body as string,
+              date: toIsoDateEastern(r.client_note_created_at as Date),
+            },
+      staffNote:
+        r.note_body === null || r.note_author_kind === "client"
           ? null
           : {
               body: r.note_body as string,
-              author: r.note_author_kind === "client" ? "client" : "staff",
               date: toIsoDateEastern(r.note_created_at as Date),
             },
     };

@@ -81,6 +81,9 @@ function leadRow(firm: string, id: string, name: string, over: Record<string, un
     note_created_at: null,
     note_author_kind: null,
     note_firm_id: null,
+    client_note_body: null,
+    client_note_created_at: null,
+    client_note_firm_id: null,
     ...SECRETS,
     ...over,
   };
@@ -91,6 +94,30 @@ let leadsByFirm: Record<string, ReturnType<typeof leadRow>[]> = {};
 let listOverride: ((call: FakeCall) => unknown[]) | null = null;
 let calls: FakeCall[] = [];
 
+/** lead_notes, append-only, as the fake database holds it. */
+type NoteRow = { id: string; lead_id: string; firm_id: string; author_kind: "client" | "staff"; body: string; created_at: Date };
+let notes: NoteRow[] = [];
+
+/** What the two lateral joins return for one lead: newest overall, newest client-authored. */
+function withNotes(row: ReturnType<typeof leadRow>, firm: string) {
+  const mine = notes
+    .filter((n) => n.lead_id === row.id && n.firm_id === firm)
+    .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+  if (mine.length === 0) return row;
+  const newest = mine[0];
+  const client = mine.find((n) => n.author_kind === "client") ?? null;
+  return {
+    ...row,
+    note_body: newest.body,
+    note_created_at: newest.created_at,
+    note_author_kind: newest.author_kind,
+    note_firm_id: newest.firm_id,
+    client_note_body: client?.body ?? null,
+    client_note_created_at: client?.created_at ?? null,
+    client_note_firm_id: client?.firm_id ?? null,
+  };
+}
+
 function respond(call: FakeCall): unknown[] {
   if (call.text.includes("from lead_firm_users")) {
     return memberships.filter((m) => m.auth_user_id === call.params[0]);
@@ -98,7 +125,7 @@ function respond(call: FakeCall): unknown[] {
   if (call.text.includes("from leads l") && call.text.includes("left join lateral")) {
     if (listOverride) return listOverride(call);
     const firm = call.params.find((p) => p === FIRM_A || p === FIRM_B) as string;
-    return leadsByFirm[firm] ?? [];
+    return (leadsByFirm[firm] ?? []).map((r) => withNotes(r, firm));
   }
   if (call.text.includes("insert into lead_notes")) {
     // Honest stand-in for the INSERT … SELECT: inserts only for a lead of the
@@ -106,9 +133,20 @@ function respond(call: FakeCall): unknown[] {
     const leadId = call.params.find((p) => p === LEAD_A || p === LEAD_B);
     const firm = call.params.find((p) => p === FIRM_A || p === FIRM_B) as string;
     const lead = (leadsByFirm[firm] ?? []).find((l) => l.id === leadId);
-    return lead
-      ? [{ id: "d1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1", lead_id: lead.id, firm_id: firm, created_at: new Date("2026-10-15T15:00:00Z") }]
-      : [];
+    if (!lead) return [];
+    // Always a NEW row, author 'client' (the SQL literal), never an update.
+    expect(call.text).toContain("'client'");
+    expect(call.text).not.toMatch(/\bupdate\b|\bdelete\b/i);
+    const row: NoteRow = {
+      id: `d1d1d1d1-d1d1-4d1d-8d1d-${String(notes.length + 1).padStart(12, "0")}`,
+      lead_id: lead.id,
+      firm_id: firm,
+      author_kind: "client",
+      body: call.params[2] as string,
+      created_at: new Date(Date.UTC(2026, 9, 15, 15, 0, notes.length + 1)),
+    };
+    notes.push(row);
+    return [{ id: row.id, lead_id: row.lead_id, firm_id: row.firm_id, created_at: row.created_at }];
   }
   throw new Error(`unexpected query: ${call.text.slice(0, 80)}`);
 }
@@ -132,6 +170,7 @@ beforeEach(() => {
     [FIRM_B]: [leadRow(FIRM_B, LEAD_B, "Bob Bravo")],
   };
   listOverride = null;
+  notes = [];
   const fake = makeFakeSql(respond);
   calls = fake.calls;
   __setPortalSqlForTests(fake.sql);
@@ -266,6 +305,9 @@ describe("the leads page", () => {
         note_created_at: new Date("2026-10-13T15:00:00Z"),
         note_author_kind: "client",
         note_firm_id: FIRM_A,
+        client_note_body: "Client says hi",
+        client_note_created_at: new Date("2026-10-13T15:00:00Z"),
+        client_note_firm_id: FIRM_A,
       }),
     ];
     const html = await leadsMarkup();
@@ -399,7 +441,7 @@ describe("the leads page", () => {
     expect(fields).toHaveLength(2); // the table row and the phone card for the one lead
     for (const f of fields) {
       expect(f).toContain('rows="1"');
-      expect(f).toContain('placeholder="Add note"'); // no note yet
+      expect(f).toContain('placeholder="Add a note"');
       expect(f).toContain('maxLength="2000"');
     }
     expect(html).not.toContain(">Add note<");
@@ -419,6 +461,91 @@ describe("the leads page", () => {
     expect([facet("signed"), facet("pending"), facet("opportunity")]).toEqual(["1", "1", "1"]);
     expect(calls.slice(before).filter((c) => c.text.includes("from leads l"))).toHaveLength(1);
     expect(html).not.toContain("SECRET");
+  });
+
+  // -------------------------------------------------------------------------
+  // The editable note
+  // -------------------------------------------------------------------------
+  /** The text inside the first note field (the desktop table row) for a lead. */
+  function fieldText(html: string, name: string): string {
+    const row = html.slice(html.lastIndexOf("<tr", html.indexOf(name))).split("</tr>")[0];
+    return row.match(/<textarea[^>]*>([\s\S]*?)<\/textarea>/)?.[1] ?? "";
+  }
+
+  it("saving adds a NEW note row and the field then holds it; saving again appends, never updates", async () => {
+    asClientA();
+    expect(fieldText(await leadsMarkup(), "Alice Alpha")).toBe("");
+
+    expect((await note({ body: "First note" })).status).toBe(201);
+    let html = await leadsMarkup();
+    expect(fieldText(html, "Alice Alpha")).toBe("First note");
+    expect(html).toContain("Updated Oct 15");
+
+    expect((await note({ body: "Second note" })).status).toBe(201);
+    html = await leadsMarkup();
+    expect(fieldText(html, "Alice Alpha")).toBe("Second note");
+    expect(notes.map((n) => [n.author_kind, n.body])).toEqual([
+      ["client", "First note"],
+      ["client", "Second note"],
+    ]);
+    expect(inserts()).toHaveLength(2);
+  });
+
+  it("no byline and no 'Note saved' line", async () => {
+    asClientA();
+    await note({ body: "Our note" });
+    const html = await leadsMarkup();
+    expect(html).not.toContain("Your firm");
+    expect(html).not.toContain("Note saved");
+    expect(html).not.toMatch(/EverConvert ·/);
+  });
+
+  it("a newer staff note shows read-only above the field, which still holds the firm's own note", async () => {
+    asClientA();
+    await note({ body: "Our note" });
+    notes.push({
+      id: "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1",
+      lead_id: LEAD_A,
+      firm_id: FIRM_A,
+      author_kind: "staff",
+      body: "Staff follow-up",
+      created_at: new Date("2026-10-15T18:00:00Z"),
+    });
+    const html = await leadsMarkup();
+    const row = html.slice(html.lastIndexOf("<tr", html.indexOf("Alice Alpha"))).split("</tr>")[0];
+    expect(row).toContain("From EverConvert");
+    expect(row.indexOf("Staff follow-up")).toBeLessThan(row.indexOf("<textarea"));
+    expect(fieldText(html, "Alice Alpha")).toBe("Our note");
+  });
+
+  it("a staff note that is not the newest is not shown", async () => {
+    asClientA();
+    notes.push({
+      id: "e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2",
+      lead_id: LEAD_A,
+      firm_id: FIRM_A,
+      author_kind: "staff",
+      body: "Old staff note",
+      created_at: new Date("2026-10-01T15:00:00Z"),
+    });
+    await note({ body: "Our newer note" });
+    const html = await leadsMarkup();
+    expect(html).not.toContain("Old staff note");
+    expect(html).not.toContain("From EverConvert");
+  });
+
+  it("one firm never sees or edits another firm's note", async () => {
+    asClientA();
+    await note({ body: "Alpha's private note" });
+    // A cannot write to B's lead.
+    expect((await note({ body: "Alpha writing on Bravo" }, { leadId: LEAD_B })).status).toBe(404);
+    expect(notes.every((n) => n.firm_id === FIRM_A)).toBe(true);
+    // B sees nothing of A's.
+    asClientB();
+    const html = await leadsMarkup();
+    expect(html).not.toContain("Alpha's private note");
+    expect(html).not.toContain("Alpha writing on Bravo");
+    expect(fieldText(html, "Bob Bravo")).toBe("");
   });
 
   it("shows an empty state when there are no leads", async () => {

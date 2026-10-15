@@ -4,44 +4,61 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, CircleAlert, LoaderCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatPortalDate } from "./format";
-import { portalButton, portalInput } from "./ui";
+import { noteDraftState, revertedDraft } from "../_lib/note-editor";
+import { formatPortalShortDate } from "./format";
+import { portalButton } from "./ui";
 
-export type LatestNote = { body: string; author: "client" | "staff"; date: string } | null;
+export type NoteValue = { body: string; date: string } | null;
 
-/** The field starts one line tall and grows with its text up to this height, then scrolls. */
+/** The field grows with its text up to this height, then scrolls. */
 const MAX_FIELD_HEIGHT_PX = 200;
+/** How long the saved checkmark stays before fading. */
+const SAVED_MARK_MS = 1800;
 
 /**
- * The latest note on a lead (if any), and an always-visible note field. The
- * field is one line tall and grows as you type; Save appears once there is
- * text. Only the lead id and the note text are sent; the firm and the author
- * come from the session on the server.
+ * One editable field holding the firm's current note. Quiet (no border)
+ * until hovered or focused. Save and Cancel appear only when the text
+ * differs from the saved note; Ctrl/Cmd+Enter saves, Escape reverts.
  *
- * Keyboard: Ctrl/Cmd+Enter saves; Escape clears the draft.
+ * Saving never edits or deletes: it adds a NEW note, and the newest of the
+ * firm's own notes is what the field shows. An empty or unchanged field
+ * never saves. A newer note from staff is shown above, read-only.
  */
 export function LeadNote({
   leadId,
-  latestNote,
+  firmNote,
+  staffNote,
   maxLength,
 }: {
   leadId: string;
-  latestNote: LatestNote;
+  firmNote: NoteValue;
+  staffNote: NoteValue;
   maxLength: number;
 }) {
   const router = useRouter();
   const fieldId = useId();
-  const [note, setNote] = useState<LatestNote>(latestNote);
-  const [draft, setDraft] = useState("");
+  const [saved, setSaved] = useState<NoteValue>(firmNote);
+  const [draft, setDraft] = useState(firmNote?.body ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [, startRefresh] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
-  // A refresh after saving brings the server's copy; show that one.
-  useEffect(() => setNote(latestNote), [latestNote]);
+  const savedText = saved?.body ?? "";
+  const { dirty, canSave } = noteDraftState(savedText, draft, maxLength);
+
+  // A refresh brings the server's copy. Adopt it, but never over unsaved typing.
+  const lastServerBody = useRef(firmNote?.body ?? "");
+  useEffect(() => {
+    const incoming = firmNote?.body ?? "";
+    if (incoming === lastServerBody.current) return;
+    lastServerBody.current = incoming;
+    setSaved(firmNote);
+    setDraft((d) => (d.trim() === savedText.trim() ? incoming : d));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firmNote]);
 
   // Grow (or shrink back) to fit the text.
   useEffect(() => {
@@ -52,9 +69,20 @@ export function LeadNote({
     el.style.overflowY = el.scrollHeight > MAX_FIELD_HEIGHT_PX ? "auto" : "hidden";
   }, [draft]);
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    if (busy || draft.trim().length === 0) return;
+  useEffect(() => {
+    if (!justSaved) return;
+    const t = setTimeout(() => setJustSaved(false), SAVED_MARK_MS);
+    return () => clearTimeout(t);
+  }, [justSaved]);
+
+  function revert() {
+    setDraft(revertedDraft(savedText));
+    setError(null);
+  }
+
+  async function save(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (busy || !canSave) return;
     setBusy(true);
     setError(null);
     try {
@@ -69,9 +97,9 @@ export function LeadNote({
         note?: { body: string; date: string };
       };
       if (!res.ok || !data.note) throw new Error(data.error ?? "Could not save the note. Please try again.");
-      setNote({ body: data.note.body, author: "client", date: data.note.date });
-      setDraft("");
-      setSaved(true);
+      setSaved({ body: data.note.body, date: data.note.date });
+      setDraft(data.note.body);
+      setJustSaved(true);
       // Re-reads the list, so what is shown is what the server stored.
       startRefresh(() => router.refresh());
     } catch (err) {
@@ -85,12 +113,14 @@ export function LeadNote({
   const nearLimit = length > maxLength * 0.9;
 
   return (
-    <div className="space-y-2.5">
-      {note && (
-        <div className="space-y-1">
-          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed text-foreground">{note.body}</p>
-          <p className="text-xs text-muted-foreground">
-            {note.author === "client" ? "Your firm" : "EverConvert"} · {formatPortalDate(note.date)}
+    <div className="space-y-2">
+      {staffNote && (
+        <div className="rounded-md bg-muted/60 px-2.5 py-2">
+          <p className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+            From EverConvert
+          </p>
+          <p className="mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed text-muted-foreground">
+            {staffNote.body}
           </p>
         </div>
       )}
@@ -98,20 +128,19 @@ export function LeadNote({
       <form
         ref={formRef}
         onSubmit={save}
-        className="space-y-2"
+        className="space-y-1.5"
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
-            formRef.current?.requestSubmit();
-          } else if (e.key === "Escape" && draft) {
+            void save();
+          } else if (e.key === "Escape" && dirty) {
             e.preventDefault();
-            setDraft("");
-            setError(null);
+            revert();
           }
         }}
       >
         <label htmlFor={fieldId} className="sr-only">
-          Add a note
+          Note
         </label>
         <textarea
           ref={textRef}
@@ -119,39 +148,40 @@ export function LeadNote({
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value);
-            setSaved(false);
             if (error) setError(null);
           }}
           maxLength={maxLength}
           rows={1}
-          placeholder={note ? "Add another note" : "Add note"}
+          placeholder="Add a note"
           disabled={busy}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${fieldId}-error` : undefined}
-          className={cn(portalInput, "resize-none overflow-hidden py-1.5 leading-relaxed", error && "border-destructive")}
+          className={cn(
+            "-mx-2 block w-[calc(100%+1rem)] resize-none overflow-hidden rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed text-foreground transition-colors",
+            "placeholder:text-muted-foreground/80 hover:border-border hover:bg-card",
+            "focus-visible:border-ring focus-visible:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+            "[overflow-wrap:anywhere]",
+            (dirty || error) && "border-border bg-card",
+            error && "border-destructive",
+          )}
         />
+
         {error && (
           <p id={`${fieldId}-error`} role="alert" className="portal-error-text flex items-start gap-1.5 text-xs">
             <CircleAlert aria-hidden className="mt-px h-3.5 w-3.5 shrink-0" />
             {error}
           </p>
         )}
-        {length > 0 ? (
+
+        {dirty ? (
           <div className="flex items-center gap-2">
-            <button type="submit" disabled={busy} className={portalButton("primary", "sm")}>
-              {busy && <LoaderCircle aria-hidden className="h-3.5 w-3.5 animate-spin" />}
-              {busy ? "Saving…" : "Save note"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDraft("");
-                setError(null);
-                textRef.current?.focus();
-              }}
-              disabled={busy}
-              className={portalButton("ghost", "sm")}
-            >
+            {canSave && (
+              <button type="submit" disabled={busy} className={portalButton("primary", "sm")}>
+                {busy && <LoaderCircle aria-hidden className="h-3.5 w-3.5 animate-spin" />}
+                {busy ? "Saving…" : "Save"}
+              </button>
+            )}
+            <button type="button" onClick={revert} disabled={busy} className={portalButton("ghost", "sm")}>
               Cancel
             </button>
             <span className={cn("ml-auto text-xs tabular-nums", nearLimit ? "portal-error-text" : "text-muted-foreground")}>
@@ -159,15 +189,22 @@ export function LeadNote({
             </span>
           </div>
         ) : (
-          <p role="status" className="flex items-center gap-1 text-xs text-muted-foreground empty:hidden">
-            {saved && (
-              <>
-                <Check aria-hidden className="h-3.5 w-3.5" />
-                Note saved
-              </>
-            )}
-          </p>
+          saved && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              Updated {formatPortalShortDate(saved.date)}
+              <Check
+                aria-hidden
+                className={cn(
+                  "h-3.5 w-3.5 text-[hsl(var(--portal-accent))] transition-opacity duration-700",
+                  justSaved ? "opacity-100" : "opacity-0",
+                )}
+              />
+            </p>
+          )
         )}
+        <span role="status" className="sr-only">
+          {justSaved ? "Saved" : ""}
+        </span>
       </form>
     </div>
   );

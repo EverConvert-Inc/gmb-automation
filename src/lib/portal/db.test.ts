@@ -44,16 +44,21 @@ function leadRow(over: Record<string, unknown> = {}) {
     note_created_at: null,
     note_author_kind: null,
     note_firm_id: null,
+    client_note_body: null,
+    client_note_created_at: null,
+    client_note_firm_id: null,
     ...over,
   };
 }
 
 describe("listVisibleLeads — the query", () => {
-  it("binds the session firm in BOTH the visibility rule and the note join", async () => {
+  it("binds the session firm in the visibility rule and BOTH note joins", async () => {
     answer([]);
     await listVisibleLeads(FIRM, "current");
     const firmParams = calls[0].params.filter((p) => p === FIRM);
-    expect(firmParams).toHaveLength(2);
+    expect(firmParams).toHaveLength(3);
+    // The firm's own note: client-authored only.
+    expect(calls[0].text).toMatch(/and n\.author_kind = 'client'\s+order by n\.created_at desc, n\.id desc\s+limit 1/);
     expect(calls[0].text).toContain("l.firm_id = $");
     expect(calls[0].text).toContain("n.firm_id = $");
   });
@@ -110,10 +115,10 @@ describe("listVisibleLeads — what it returns", () => {
     answer([leadRow()]);
     const [lead] = await listVisibleLeads(FIRM, "current");
     expect(Object.keys(lead).sort()).toEqual(
-      ["date", "id", "latestNote", "name", "phone", "signedDate", "status"].sort(),
+      ["date", "firmNote", "id", "name", "phone", "signedDate", "staffNote", "status"].sort(),
     );
     // The fixture's matched tag is Pending, so the label is Pending.
-    expect(lead).toMatchObject({ status: "pending", date: "2026-10-10", signedDate: null, latestNote: null });
+    expect(lead).toMatchObject({ status: "pending", date: "2026-10-10", signedDate: null, firmNote: null, staffNote: null });
   });
 
   it("a signed lead shows its Eastern signed date", async () => {
@@ -132,18 +137,40 @@ describe("listVisibleLeads — what it returns", () => {
     expect(lead.signedDate).toBe("2026-10-02"); // Eastern, not the UTC Oct 3
   });
 
-  it("carries the newest portal/staff note, from the session's firm", async () => {
+  it("a newest note by staff is shown read-only, and the firm's own note is still carried", async () => {
     answer([
       leadRow({
         note_body: "Called back",
         note_created_at: new Date("2026-10-11T02:00:00Z"),
         note_author_kind: "staff",
         note_firm_id: FIRM,
+        client_note_body: "Our note",
+        client_note_created_at: new Date("2026-10-09T15:00:00Z"),
+        client_note_firm_id: FIRM,
       }),
     ]);
     const [lead] = await listVisibleLeads(FIRM, "current");
-    expect(lead.latestNote).toEqual({ body: "Called back", author: "staff", date: "2026-10-10" });
+    expect(lead.staffNote).toEqual({ body: "Called back", date: "2026-10-10" });
+    expect(lead.firmNote).toEqual({ body: "Our note", date: "2026-10-09" });
   });
+
+  it("when the newest note is the firm's own, there is no staff note", async () => {
+    answer([
+      leadRow({
+        note_body: "Our note",
+        note_created_at: new Date("2026-10-12T15:00:00Z"),
+        note_author_kind: "client",
+        note_firm_id: FIRM,
+        client_note_body: "Our note",
+        client_note_created_at: new Date("2026-10-12T15:00:00Z"),
+        client_note_firm_id: FIRM,
+      }),
+    ]);
+    const [lead] = await listVisibleLeads(FIRM, "current");
+    expect(lead.staffNote).toBeNull();
+    expect(lead.firmNote).toEqual({ body: "Our note", date: "2026-10-12" });
+  });
+
 
   it("23:30 Eastern on the last day of the month stays in that month", async () => {
     vi.setSystemTime(new Date("2026-10-31T20:00:00Z"));
@@ -162,6 +189,7 @@ describe("listVisibleLeads — throws instead of rendering", () => {
   it.each([
     ["a row from another firm", { firm_id: OTHER }],
     ["a note from another firm", { note_body: "x", note_created_at: new Date(), note_author_kind: "client", note_firm_id: OTHER }],
+    ["a firm note from another firm", { client_note_body: "x", client_note_created_at: new Date(), client_note_firm_id: OTHER }],
     ["a wrong-keys row", { effective_status: undefined, auth_user_id: USER }],
     ["a crossed row", { name: 1, occurred_at: "2026-10-10" }],
     ["a needs_review lead", { needs_review: true }],

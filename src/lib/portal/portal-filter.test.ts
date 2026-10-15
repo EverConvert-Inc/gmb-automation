@@ -101,7 +101,8 @@ const portalLead = (id: string, name: string, status: PortalStatusLabel, extra: 
     phone: "+15551234567",
     status,
     signedDate: status === "signed" ? "2026-10-11" : null,
-    latestNote: null,
+    firmNote: null,
+    staffNote: null,
     ...extra,
   }) as PortalLead;
 
@@ -162,5 +163,58 @@ describe("the filter in the page", () => {
     const html = render([leaky]);
     expect(html).toContain("Leaky Lead");
     expect(html).not.toContain("SECRET");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Popover close rule (the cause of the filter not filtering) and the note
+// field's rules. Logic only: the repo has no DOM test environment, so the
+// actual click and keypress paths are NOT exercised here.
+// ---------------------------------------------------------------------------
+import { closesOnFocusOut } from "@/app/(portal)/_lib/popover";
+import { noteDraftState, revertedDraft } from "@/app/(portal)/_lib/note-editor";
+
+describe("popover focus-out rule", () => {
+  const inside = { id: "inside" };
+  const container = { contains: (n: unknown) => n === inside };
+
+  it("does NOT close when focus goes nowhere (a press on an option row, or a button in Safari)", () => {
+    expect(closesOnFocusOut(container, null)).toBe(false);
+    expect(closesOnFocusOut(container, undefined)).toBe(false);
+  });
+
+  it("does not close when focus moves to something inside", () => {
+    expect(closesOnFocusOut(container, inside)).toBe(false);
+  });
+
+  it("closes when focus moves to something outside (Tab away)", () => {
+    expect(closesOnFocusOut(container, { id: "elsewhere" })).toBe(true);
+  });
+});
+
+describe("note field rules", () => {
+  it("unchanged text is not dirty and cannot save", () => {
+    expect(noteDraftState("Hello", "Hello", 2000)).toEqual({ dirty: false, canSave: false });
+    expect(noteDraftState("Hello", "  Hello  ", 2000)).toEqual({ dirty: false, canSave: false });
+  });
+
+  it("changed text can save", () => {
+    expect(noteDraftState("Hello", "Hello there", 2000)).toEqual({ dirty: true, canSave: true });
+    expect(noteDraftState("", "First", 2000)).toEqual({ dirty: true, canSave: true });
+  });
+
+  it("clearing the field is dirty but never saves — it is never a deletion", () => {
+    expect(noteDraftState("Hello", "", 2000)).toEqual({ dirty: true, canSave: false });
+    expect(noteDraftState("Hello", "   ", 2000)).toEqual({ dirty: true, canSave: false });
+  });
+
+  it("over the cap cannot save", () => {
+    expect(noteDraftState("", "x".repeat(2001), 2000).canSave).toBe(false);
+    expect(noteDraftState("", "x".repeat(2000), 2000).canSave).toBe(true);
+  });
+
+  it("cancel reverts to exactly the saved note", () => {
+    expect(revertedDraft("Saved text")).toBe("Saved text");
+    expect(noteDraftState("Saved text", revertedDraft("Saved text"), 2000).dirty).toBe(false);
   });
 });

@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, CirclePlus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { closesOnFocusOut } from "../_lib/popover";
 import { portalFocus } from "./ui";
 
 export type FacetOption<V extends string> = {
@@ -83,7 +84,7 @@ export function FacetedFilter<V extends string>({
       ref={wrapRef}
       className="relative"
       onBlur={(e) => {
-        if (open && !wrapRef.current?.contains(e.relatedTarget as Node | null)) {
+        if (open && closesOnFocusOut(wrapRef.current, e.relatedTarget)) {
           setOpen(false);
           setSearch("");
         }
@@ -168,6 +169,9 @@ export function FacetedFilter<V extends string>({
                 id={optionId(i)}
                 role="option"
                 aria-selected={isSelected}
+                // Keep focus in the search box, so pressing an option never
+                // blurs anything and the keyboard keeps working after a click.
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => toggle(o.value)}
                 onMouseEnter={() => setActive(i)}
                 className={cn(

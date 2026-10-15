@@ -150,7 +150,7 @@ function LeadRow({ lead, noteMaxLength }: { lead: PortalLead; noteMaxLength: num
         <StatusBadge status={lead.status} />
       </td>
       <td className="px-5 py-4">
-        <LeadNote leadId={lead.id} latestNote={lead.latestNote} maxLength={noteMaxLength} />
+        <LeadNote leadId={lead.id} firmNote={lead.firmNote} staffNote={lead.staffNote} maxLength={noteMaxLength} />
       </td>
     </tr>
   );
@@ -171,7 +171,7 @@ function LeadCard({ lead, noteMaxLength }: { lead: PortalLead; noteMaxLength: nu
         <PhoneText phone={lead.phone} />
       </p>
       <div className="mt-4 border-t pt-4">
-        <LeadNote leadId={lead.id} latestNote={lead.latestNote} maxLength={noteMaxLength} />
+        <LeadNote leadId={lead.id} firmNote={lead.firmNote} staffNote={lead.staffNote} maxLength={noteMaxLength} />
       </div>
     </li>
   );

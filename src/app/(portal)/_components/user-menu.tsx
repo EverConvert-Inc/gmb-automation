@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { closesOnFocusOut } from "../_lib/popover";
 import { PortalSignOutButton } from "./sign-out-button";
 import { PortalThemeToggle } from "./theme-toggle";
 import { portalFocus } from "./ui";
@@ -48,7 +49,7 @@ export function PortalUserMenu({ email }: { email: string | null }) {
         }
       }}
       onBlur={(e) => {
-        if (open && !wrapRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
+        if (open && closesOnFocusOut(wrapRef.current, e.relatedTarget)) setOpen(false);
       }}
     >
       <button
