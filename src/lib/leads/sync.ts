@@ -200,10 +200,15 @@ export function planLeadWrites(
     if (parsed.ok) {
       people = parsed.people.map((p) => {
         // A multi-person note gives each person their own status text, and
-        // the spec makes that authoritative for that person. With no text,
-        // the lead's own tags apply. The Opportunity flag is unioned: a
-        // lead-level Opportunity tag applies to everyone on the note.
-        const own = p.statusText ? resolveStatusFromText(p.statusText) : tagStatus;
+        // the spec makes that authoritative for that person — but only when
+        // it is a word on the status ladder. A typo or an unknown word ("Signd",
+        // "Retained") says nothing reliable, so that person falls back to the
+        // call's tags, exactly as if they had no status text. Without this, an
+        // unrecognised word silently became the default "pending" and hid a
+        // call tagged Signed. The Opportunity flag is unioned: the person's own
+        // text, or a lead-level Opportunity tag, applies.
+        const fromText = p.statusText ? resolveStatusFromText(p.statusText) : null;
+        const own = fromText && fromText.matchedTag !== null ? fromText : tagStatus;
         const contact = resolveContact({ name: p.name, phone: p.phone }, fallbackSource);
         return {
           personSuffix: p.personSuffix,
@@ -211,7 +216,7 @@ export function planLeadWrites(
           phone: contact.phone,
           status: own.status,
           statusTagMatched: own.matchedTag,
-          isOpportunity: own.isOpportunity || tagStatus.isOpportunity,
+          isOpportunity: (fromText?.isOpportunity ?? false) || tagStatus.isOpportunity,
         };
       });
     } else {

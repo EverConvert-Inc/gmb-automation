@@ -438,6 +438,47 @@ describe("planLeadWrites — parsing and status", () => {
     expect(rows.map((r) => r.statusTagMatched)).toEqual(["Signed", "Lost"]);
   });
 
+  describe("a person's status word that matches nothing on the ladder falls back to the call's tags", () => {
+    const people = (tags: string[], note: string) =>
+      planLeadWrites([leadOf({ tags, note })], index, { now: NOW }).map((r) => ({
+        status: r.statusParsed,
+        tag: r.statusTagMatched,
+        opp: r.isOpportunityParsed,
+        signedAt: r.signedAt,
+      }));
+
+    it("a typo'd word on a call tagged Signed → Signed", () => {
+      const [jane, john] = people(["2 Person", "Signed"], "Jane Doe, 555-111-2222, Signd; John Roe, 555-333-4444, Pending");
+      expect(jane).toEqual({ status: "signed", tag: "Signed", opp: false, signedAt: NOW });
+      expect(john).toEqual({ status: "pending", tag: "Pending", opp: false, signedAt: null });
+    });
+
+    it("an unknown word on a call with no status tag → Opportunity (default pending, no matched tag)", () => {
+      const [jane] = people(["2 Person", "Opportunity"], "Jane Doe, 555-111-2222, Retained; John Roe, 555-333-4444, Signed");
+      expect(jane).toEqual({ status: "pending", tag: null, opp: true, signedAt: null });
+    });
+
+    it("a known word still overrides the call's tags: Signed over a Pending call", () => {
+      const [jane] = people(["2 Person", "Pending"], "Jane Doe, 555-111-2222, Signed; John Roe, 555-333-4444, Signd");
+      expect(jane).toEqual({ status: "signed", tag: "Signed", opp: false, signedAt: NOW });
+    });
+
+    it("a known word still overrides the call's tags: Pending over a Signed call", () => {
+      const [jane] = people(["2 Person", "Signed"], "Jane Doe, 555-111-2222, Pending; John Roe, 555-333-4444, Signed");
+      expect(jane).toEqual({ status: "pending", tag: "Pending", opp: false, signedAt: null });
+    });
+
+    it("a known hidden word (Lost) still overrides a Signed call — only unknown words fall back", () => {
+      const [jane] = people(["2 Person", "Signed"], "Jane Doe, 555-111-2222, Lost; John Roe, 555-333-4444, Signed");
+      expect(jane).toEqual({ status: "pending", tag: "Lost", opp: false, signedAt: null });
+    });
+
+    it("a person whose own word is Opportunity keeps the flag and takes the call's status", () => {
+      const [jane] = people(["2 Person", "Signed"], "Jane Doe, 555-111-2222, Opportunity; John Roe, 555-333-4444, Signed");
+      expect(jane).toEqual({ status: "signed", tag: "Signed", opp: true, signedAt: NOW });
+    });
+  });
+
   it("unions a lead-level Opportunity tag across every person", () => {
     const rows = planLeadWrites(
       [
