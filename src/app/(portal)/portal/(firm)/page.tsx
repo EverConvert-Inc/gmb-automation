@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Inbox, Phone } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { NOTE_MAX_LENGTH, listVisibleLeads, type PortalLead } from "@/lib/portal/db";
 import {
   PORTAL_STATUS_TEXT,
@@ -10,9 +10,8 @@ import {
   type PortalStatusLabel,
 } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
-import { formatPortalDate, formatPortalMonth, formatPortalPhone } from "../../_components/format";
-import { LeadNote } from "../../_components/lead-note";
-import { StatusBadge } from "../../_components/status-badge";
+import { formatPortalMonth } from "../../_components/format";
+import { LeadsView } from "../../_components/leads-view";
 import { portalAccentText, portalButton, portalFocus } from "../../_components/ui";
 import { requirePortalPage } from "../../_lib/session";
 
@@ -72,35 +71,7 @@ export default async function PortalLeadsPage({
       {leads.length === 0 ? (
         <EmptyState label={label} month={month} />
       ) : (
-        <>
-          {/* Desktop and tablet: a table. */}
-          <div className="hidden overflow-hidden rounded-xl border bg-card shadow-sm md:block">
-            <table className="w-full text-left text-sm">
-              <caption className="sr-only">Leads for {label}</caption>
-              <thead className="border-b bg-muted/50">
-                <tr className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  <th scope="col" className="px-5 py-3">Date</th>
-                  <th scope="col" className="px-5 py-3">Name</th>
-                  <th scope="col" className="px-5 py-3">Phone</th>
-                  <th scope="col" className="px-5 py-3">Status</th>
-                  <th scope="col" className="w-[38%] px-5 py-3">Latest note</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {leads.map((lead) => (
-                  <LeadRow key={lead.id} lead={lead} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Phone: one card per lead. */}
-          <ul className="space-y-3 md:hidden" aria-label={`Leads for ${label}`}>
-            {leads.map((lead) => (
-              <LeadCard key={lead.id} lead={lead} />
-            ))}
-          </ul>
-        </>
+        <LeadsView leads={leads} monthLabel={label} noteMaxLength={NOTE_MAX_LENGTH} />
       )}
     </div>
   );
@@ -110,56 +81,6 @@ function countByStatus(leads: readonly PortalLead[]): Record<PortalStatusLabel, 
   const counts: Record<PortalStatusLabel, number> = { signed: 0, pending: 0, opportunity: 0 };
   for (const lead of leads) counts[lead.status] += 1;
   return counts;
-}
-
-/** Plain text, deliberately not a tel: link. */
-function PhoneText({ phone }: { phone: string | null }) {
-  return (
-    <span className={cn("tabular-nums", phone ? "text-foreground" : "text-muted-foreground")}>
-      {formatPortalPhone(phone)}
-    </span>
-  );
-}
-
-function LeadRow({ lead }: { lead: PortalLead }) {
-  return (
-    <tr className="align-top transition-colors hover:bg-muted/40">
-      <td className="whitespace-nowrap px-5 py-4 tabular-nums text-muted-foreground">{formatPortalDate(lead.date)}</td>
-      <td className="px-5 py-4 font-medium text-foreground">
-        {lead.name ?? <span className="font-normal text-muted-foreground">—</span>}
-      </td>
-      <td className="whitespace-nowrap px-5 py-4">
-        <PhoneText phone={lead.phone} />
-      </td>
-      <td className="whitespace-nowrap px-5 py-4">
-        <StatusBadge status={lead.status} />
-      </td>
-      <td className="px-5 py-4">
-        <LeadNote leadId={lead.id} latestNote={lead.latestNote} maxLength={NOTE_MAX_LENGTH} />
-      </td>
-    </tr>
-  );
-}
-
-function LeadCard({ lead }: { lead: PortalLead }) {
-  return (
-    <li className="rounded-xl border bg-card p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate font-semibold text-foreground">{lead.name ?? "No name"}</p>
-          <p className="mt-0.5 text-sm tabular-nums text-muted-foreground">{formatPortalDate(lead.date)}</p>
-        </div>
-        <StatusBadge status={lead.status} />
-      </div>
-      <p className="mt-3 flex items-center gap-2 text-sm">
-        <Phone aria-hidden className="h-4 w-4 text-muted-foreground" />
-        <PhoneText phone={lead.phone} />
-      </p>
-      <div className="mt-4 border-t pt-4">
-        <LeadNote leadId={lead.id} latestNote={lead.latestNote} maxLength={NOTE_MAX_LENGTH} />
-      </div>
-    </li>
-  );
 }
 
 function EmptyState({ label, month }: { label: string; month: PortalMonth }) {

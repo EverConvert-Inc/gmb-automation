@@ -405,6 +405,21 @@ describe("the leads page", () => {
     expect(html).not.toContain(">Add note<");
   });
 
+  it("the status filter's counts match the month summary and use no extra query", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "S1", { effective_status: "signed", status_tag_matched: "Signed" }),
+      leadRow(FIRM_A, "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3", "P1", { status_tag_matched: "Pending" }),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "O1", { status_tag_matched: null }),
+    ];
+    const before = calls.length;
+    const html = await leadsMarkup();
+    const facet = (s: string) => html.match(new RegExp(`data-facet-count="${s}"[^>]*>(\\d+)<`))?.[1];
+    expect([facet("signed"), facet("pending"), facet("opportunity")]).toEqual(["1", "1", "1"]);
+    expect(calls.slice(before).filter((c) => c.text.includes("from leads l"))).toHaveLength(1);
+    expect(html).not.toContain("SECRET");
+  });
+
   it("shows an empty state when there are no leads", async () => {
     asClientA();
     leadsByFirm[FIRM_A] = [];
