@@ -149,6 +149,8 @@ export default async function FirmDetailPage({
       />
 
       <FirmUsersCard
+        firmId={firm.id}
+        firmActive={firm.isActive}
         users={users.map((u) => ({
           id: u.id,
           email: u.email,
