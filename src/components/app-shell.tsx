@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { Sidebar } from "@/components/sidebar";
 
 // Routes that render full-bleed without the sidebar chrome (e.g. /login).
-const FULL_BLEED_ROUTES = ["/login"];
+const FULL_BLEED_ROUTES = ["/login", "/portal"];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

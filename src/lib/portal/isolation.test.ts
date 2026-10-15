@@ -87,6 +87,10 @@ describe("portal code cannot reach the shared database or admin queries", () => 
     expect(portalFiles.length).toBeGreaterThanOrEqual(6);
   });
 
+  it.each(PORTAL_DIRS)("scans files in %s", (dir) => {
+    expect(portalFiles.filter((f) => f.startsWith(dir + sep)).length).toBeGreaterThan(0);
+  });
+
   it("no portal file imports a forbidden module, directly or transitively", () => {
     expect(findForbiddenImports(portalFiles)).toEqual([]);
   });

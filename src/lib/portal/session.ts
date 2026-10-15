@@ -15,6 +15,8 @@ export type PortalSession = {
   ok: true;
   userId: string;
   firmId: SessionFirmId;
+  /** For the portal header only. */
+  firmName: string;
   email: string | null;
 };
 
@@ -71,7 +73,8 @@ export async function requirePortalSession(
       u.firm_id::text       as firm_id,
       u.auth_user_id::text  as auth_user_id,
       u.is_active           as member_active,
-      f.is_active           as firm_active
+      f.is_active           as firm_active,
+      f.name                as firm_name
     from lead_firm_users u
     join lead_firms f on f.id = u.firm_id
     where u.auth_user_id = ${userId}::uuid
@@ -79,7 +82,7 @@ export async function requirePortalSession(
   assertRows(
     "session: membership",
     rows,
-    { firm_id: "string", auth_user_id: "string", member_active: "boolean", firm_active: "boolean" },
+    { firm_id: "string", auth_user_id: "string", member_active: "boolean", firm_active: "boolean", firm_name: "string" },
     { auth_user_id: userId },
   );
   // lead_firm_users.auth_user_id is UNIQUE, so more than one row means the
@@ -95,6 +98,7 @@ export async function requirePortalSession(
     ok: true,
     userId,
     firmId: m.firm_id as SessionFirmId,
+    firmName: m.firm_name as string,
     email: user.email ?? null,
   };
 }

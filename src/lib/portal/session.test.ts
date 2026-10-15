@@ -29,6 +29,7 @@ const member = (over: Record<string, unknown> = {}) => ({
   auth_user_id: USER,
   member_active: true,
   firm_active: true,
+  firm_name: "Smith Law",
   ...over,
 });
 
@@ -45,6 +46,7 @@ describe("requirePortalSession", () => {
       ok: true,
       userId: USER,
       firmId: FIRM,
+      firmName: "Smith Law",
       email: "c@firm.com",
     });
   });
