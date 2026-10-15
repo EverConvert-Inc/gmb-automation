@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { Scale } from "lucide-react";
 import { PortalLoginForm } from "../../_components/login-form";
 import { portalSession } from "../../_lib/session";
 
@@ -13,13 +14,18 @@ export default async function PortalLoginPage() {
   if (session.ok) redirect("/portal");
 
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-6">
-        <div className="space-y-1">
-          <h1 className="text-xl font-semibold">Client portal</h1>
-          <p className="text-sm text-muted-foreground">Sign in to see your firm&apos;s leads.</p>
+    <div className="flex min-h-full items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+            <Scale aria-hidden className="h-6 w-6" />
+          </span>
+          <h1 className="mt-4 font-display text-2xl font-bold tracking-tight">Client portal</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in to see your firm&apos;s leads.</p>
         </div>
-        <PortalLoginForm />
+        <div className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
+          <PortalLoginForm />
+        </div>
       </div>
     </div>
   );

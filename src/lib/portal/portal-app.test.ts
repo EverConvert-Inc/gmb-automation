@@ -330,6 +330,65 @@ describe("the leads page", () => {
     expect(html).not.toContain("Oct 11");
   });
 
+  it("the summary counts the month's leads by label, from the same list (no extra query)", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "S1", { effective_status: "signed", status_tag_matched: "Signed" }),
+      leadRow(FIRM_A, "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3", "P1", { status_tag_matched: "Pending" }),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "P2", { status_tag_matched: "Pending" }),
+      leadRow(FIRM_A, "a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5", "O1", { status_tag_matched: null }),
+    ];
+    const before = calls.length;
+    const html = await leadsMarkup();
+    const summary = html.slice(html.indexOf("<dl"), html.indexOf("</dl>"));
+    const count = (label: string) =>
+      summary.slice(summary.indexOf(label)).match(/<dd[^>]*>(\d+)<\/dd>/)?.[1];
+    expect([count("Signed"), count("Pending"), count("Opportunity")]).toEqual(["1", "2", "1"]);
+    expect(html).toContain("4 leads");
+    // One membership lookup per render (layout and page share it in a real
+    // request via cache()) and one list query — nothing else.
+    const queries = calls.slice(before).map((c) => (c.text.includes("from leads l") ? "list" : "membership"));
+    expect(queries.filter((q) => q === "list")).toHaveLength(1);
+  });
+
+  it("on a phone, each lead is a card with the same fields — label only, no date in the badge, no hidden field", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "Card Person", {
+        effective_status: "signed",
+        status_tag_matched: "Signed",
+        signed_at: new Date("2026-10-11T15:00:00Z"),
+      }),
+    ];
+    const html = await leadsMarkup();
+    const cards = html.slice(html.indexOf('<ul class="space-y-3 md:hidden"'));
+    expect(cards).toContain("Card Person");
+    expect(cards).toContain("(555) 123-4567");
+    expect(cards).toContain("Oct 10, 2026");
+    const badge = cards.match(/class="portal-status [^"]*">((?:<span[^>]*><\/span>)?[^<]*)<\/span>/)?.[1] ?? "";
+    expect(badge.replace(/<[^>]*>/g, "")).toBe("Signed");
+    expect(html).not.toContain("Oct 11");
+    expect(html).not.toContain("SECRET");
+  });
+
+  it("the header: firm name on the left, a user menu with the email, theme toggle and sign-out, closed by default", async () => {
+    asClientA();
+    const html = await leadsMarkup();
+    const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+    expect(header).toContain("Alpha Law");
+    expect(header).toMatch(/aria-label="Open user menu"[^>]*aria-expanded="false"/);
+    expect(header).toContain(">A</button>"); // the avatar's initial
+    const panel = header.slice(header.indexOf("hidden=\"\""));
+    expect(header).toMatch(/<div[^>]*hidden=""/);
+    expect(panel).toContain("Signed in as");
+    expect(panel).toContain("a@firm-a.com");
+    expect(panel).toContain("Switch to dark theme");
+    expect(panel).toContain("Sign out");
+    // The email is only inside the menu, never under the firm name.
+    expect(header.indexOf("a@firm-a.com")).toBeGreaterThan(header.indexOf("Open user menu"));
+    expect(header.split("a@firm-a.com")).toHaveLength(3); // the title attribute and the text, both in the panel
+  });
+
   it("shows an empty state when there are no leads", async () => {
     asClientA();
     leadsByFirm[FIRM_A] = [];

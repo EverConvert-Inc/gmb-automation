@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
-import { Button } from "@/components/ui/button";
+import { CircleAlert, LoaderCircle } from "lucide-react";
+import { portalButton, portalInput } from "./ui";
 
 // One message for every failure — wrong password, unknown email, banned
 // account, Auth down — so the form never reveals which emails exist.
@@ -39,9 +40,9 @@ export function PortalLoginForm() {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <div>
-        <label className="mb-1 block text-sm font-medium" htmlFor="portal-email">
+    <form onSubmit={submit} className="space-y-5">
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-foreground" htmlFor="portal-email">
           Email
         </label>
         <input
@@ -51,11 +52,11 @@ export function PortalLoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
-          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          className={portalInput}
         />
       </div>
-      <div>
-        <label className="mb-1 block text-sm font-medium" htmlFor="portal-password">
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-foreground" htmlFor="portal-password">
           Password
         </label>
         <input
@@ -65,17 +66,20 @@ export function PortalLoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
-          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          aria-describedby={error ? "portal-login-error" : undefined}
+          className={portalInput}
         />
       </div>
       {error && (
-        <p role="alert" className="text-sm portal-error-text">
+        <p id="portal-login-error" role="alert" className="portal-error-text flex items-start gap-2 text-sm">
+          <CircleAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
           {error}
         </p>
       )}
-      <Button type="submit" disabled={busy} className="w-full">
+      <button type="submit" disabled={busy} className={portalButton("primary", "md", "w-full")}>
+        {busy && <LoaderCircle aria-hidden className="h-4 w-4 animate-spin" />}
         {busy ? "Signing in…" : "Sign in"}
-      </Button>
+      </button>
     </form>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   PORTAL_ROOT_ID,
   currentPortalTheme,
@@ -21,8 +22,11 @@ function portalStorage(): Storage | null {
   }
 }
 
-/** The portal's light/dark switch. Independent of the internal app's toggle. */
-export function PortalThemeToggle() {
+/**
+ * The portal's light/dark switch, as a row in the user menu. Independent of
+ * the internal app's toggle (see _lib/theme.ts).
+ */
+export function PortalThemeToggle({ className }: { className?: string }) {
   // Unknown until mounted: the server cannot know the saved choice.
   const [theme, setTheme] = useState<PortalTheme | null>(null);
   useEffect(() => setTheme(currentPortalTheme(portalRoot())), []);
@@ -33,10 +37,10 @@ export function PortalThemeToggle() {
       type="button"
       onClick={() => setTheme(togglePortalTheme(portalRoot(), portalStorage()))}
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      title={isDark ? "Light mode" : "Dark mode"}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
+      className={cn(className)}
     >
-      {theme === null ? null : isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {isDark ? <Sun aria-hidden className="h-4 w-4" /> : <Moon aria-hidden className="h-4 w-4" />}
+      <span>{isDark ? "Light mode" : "Dark mode"}</span>
     </button>
   );
 }
