@@ -45,14 +45,14 @@ export default async function AdminLeadsPage({
   const monthKey = isMonthKey(month) ? month : currentMonthKeyEastern();
   const firmFilter = firm ?? "";
 
-  const [firms, rows, queueCount] = await Promise.all([
-    listFirmOptions(),
-    listAdminLeads({
-      monthKey,
-      firmId: firmFilter === "unassigned" ? null : firmFilter || undefined,
-    }),
-    countAdminQueue(),
-  ]);
+  // SEQUENTIAL, same reason as /admin/firms: concurrent queries on a pool of
+  // five are what let a response reach the wrong query's promise.
+  const firms = await listFirmOptions();
+  const rows = await listAdminLeads({
+    monthKey,
+    firmId: firmFilter === "unassigned" ? null : firmFilter || undefined,
+  });
+  const queueCount = await countAdminQueue();
 
   return (
     <div className="space-y-6">

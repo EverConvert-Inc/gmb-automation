@@ -18,6 +18,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { NewFirmForm } from "@/components/leads/new-firm-form";
+import { assertRowShape } from "@/lib/leads/row-guard";
 
 import { checkAdmin } from "@/lib/leads/admin-auth";
 import { NotAuthorized } from "@/components/leads/not-authorized";
@@ -26,14 +27,32 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Firms" };
 
-async function countsBy(
-  table: typeof leadFirmTags | typeof leadFirmCallrailCompanies | typeof leadFirmUsers,
-) {
-  const rows = await db
-    .select({ firmId: table.firmId, n: sql<number>`count(*)::int` })
-    .from(table)
-    .groupBy(table.firmId);
-  return new Map(rows.map((r) => [r.firmId, r.n]));
+/**
+ * ONE query for every per-firm count, as correlated subqueries, instead of a
+ * fan-out of four.
+ *
+ * This page used to issue six queries concurrently against a pool capped at
+ * five (db/client.ts), which guarantees that at least two share a connection
+ * and get pipelined. Under that load a response was reaching the wrong
+ * query's promise, and because Drizzle maps rows POSITIONALLY —
+ * client.unsafe(...).values() then mapResultRow — a crossed result does not
+ * error, it renders as believable nonsense: a count of 1 landing in the
+ * `name` slot showed a firm called "1" with no slug, marked inactive.
+ *
+ * Correlated subqueries are the right shape here regardless: the counts are
+ * per firm, there is one row per firm, and Postgres plans them as one pass.
+ */
+function perFirmCounts() {
+  return {
+    id: leadFirms.id,
+    name: leadFirms.name,
+    slug: leadFirms.slug,
+    isActive: leadFirms.isActive,
+    tagCount: sql<number>`(select count(*)::int from ${leadFirmTags} where ${leadFirmTags.firmId} = ${leadFirms.id})`,
+    companyCount: sql<number>`(select count(*)::int from ${leadFirmCallrailCompanies} where ${leadFirmCallrailCompanies.firmId} = ${leadFirms.id})`,
+    userCount: sql<number>`(select count(*)::int from ${leadFirmUsers} where ${leadFirmUsers.firmId} = ${leadFirms.id})`,
+    leadCount: sql<number>`(select count(*)::int from ${leads} where ${leads.firmId} = ${leadFirms.id})`,
+  };
 }
 
 export default async function AdminFirmsPage() {
@@ -42,27 +61,25 @@ export default async function AdminFirmsPage() {
   const auth = await checkAdmin();
   if (!auth.ok) return <NotAuthorized />;
 
-  const [firms, tagCounts, companyCounts, userCounts, leadRows, unassignedRow] =
-    await Promise.all([
-      db.query.leadFirms.findMany({ orderBy: asc(leadFirms.name) }),
-      countsBy(leadFirmTags),
-      countsBy(leadFirmCallrailCompanies),
-      countsBy(leadFirmUsers),
-      db
-        .select({ firmId: leads.firmId, n: sql<number>`count(*)::int` })
-        .from(leads)
-        .groupBy(leads.firmId),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(leads)
-        .where(isNull(leads.firmId)),
-    ]);
+  // SEQUENTIAL, not Promise.all. Two round-trips over this much data cost
+  // nothing, and zero concurrent queries means nothing can be pipelined onto
+  // a shared connection in the first place.
+  const firms = await db
+    .select(perFirmCounts())
+    .from(leadFirms)
+    .orderBy(asc(leadFirms.name));
+  assertRowShape("admin/firms: per-firm counts", firms, {
+    id: "string",
+    name: "string",
+    slug: "string",
+    isActive: "boolean",
+    tagCount: "number",
+  });
 
-  const leadCounts = new Map(
-    leadRows
-      .filter((r) => r.firmId !== null)
-      .map((r) => [r.firmId as string, r.n]),
-  );
+  const unassignedRow = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(isNull(leads.firmId));
   const unassigned = unassignedRow[0]?.n ?? 0;
 
   return (
@@ -112,8 +129,8 @@ export default async function AdminFirmsPage() {
                 </thead>
                 <tbody className="divide-y">
                   {firms.map((f) => {
-                    const tags = tagCounts.get(f.id) ?? 0;
-                    const companies = companyCounts.get(f.id) ?? 0;
+                    const tags = f.tagCount;
+                    const companies = f.companyCount;
                     return (
                       <tr key={f.id}>
                         <td className="py-2 pr-4">
@@ -145,10 +162,10 @@ export default async function AdminFirmsPage() {
                           {companies}
                         </td>
                         <td className="py-2 pr-4 text-right tabular-nums">
-                          {userCounts.get(f.id) ?? 0}
+                          {f.userCount}
                         </td>
                         <td className="py-2 text-right tabular-nums">
-                          {leadCounts.get(f.id) ?? 0}
+                          {f.leadCount}
                         </td>
                       </tr>
                     );

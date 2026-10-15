@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { easternWallClockToDate } from "@/lib/date-utils";
 import type { ExistingLeadRow } from "./reconcile";
+import { assertRowShape } from "./row-guard";
 import {
   leadKey,
   type JobKind,
@@ -263,6 +264,14 @@ export const drizzleLeadStore: LeadStore = {
     // Inactive firms are excluded on purpose: deactivating a firm must stop
     // new leads being routed to it, and the alternative (routing then
     // hiding) leaves its data growing behind a flag.
+    assertRowShape("loadRoutingRules: tags", tagRows, {
+      firmId: "string",
+      tagName: "string",
+    });
+    assertRowShape("loadRoutingRules: companies", companyRows, {
+      firmId: "string",
+      callrailCompanyId: "string",
+    });
     return { tagRules: tagRows, companyRules: companyRows };
   },
 
@@ -282,6 +291,13 @@ export const drizzleLeadStore: LeadStore = {
     for (let i = 0; i < callrailIds.length; i += WRITE_CHUNK) {
       const chunk = callrailIds.slice(i, i + WRITE_CHUNK);
       const rows = await buildExistingLeadRowsQuery(db, chunk);
+      assertRowShape("findExistingLeadRows", rows, {
+        id: "string",
+        callrailId: "string",
+        personSuffix: "string",
+        hasOverrides: "boolean",
+        hasNotes: "boolean",
+      });
       for (const r of rows) {
         out.push({
           id: r.id,
@@ -299,6 +315,11 @@ export const drizzleLeadStore: LeadStore = {
   async findFirmPhoneIndex(firmIds) {
     if (firmIds.length === 0) return [];
     const rows = await buildFirmPhoneIndexQuery(db, firmIds);
+    assertRowShape("findFirmPhoneIndex", rows, {
+      leadId: "string",
+      callrailId: "string",
+      phone: "string?",
+    });
     return rows
       .filter((r): r is typeof r & { firmId: string } => r.firmId !== null)
       .map((r) => ({

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { asc, eq, sql } from "drizzle-orm";
@@ -17,8 +18,41 @@ import { FirmDangerZoneCard } from "@/components/leads/firm-danger-zone-card";
 
 import { checkAdmin } from "@/lib/leads/admin-auth";
 import { NotAuthorized } from "@/components/leads/not-authorized";
+import { assertRow, assertRowShape } from "@/lib/leads/row-guard";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Shared between generateMetadata and the page body. React's request-scoped
+ * cache() means the lookup runs ONCE per request instead of twice — and, more
+ * to the point, the two no longer race each other onto the same connection
+ * pool. generateMetadata is a separate unit of work from the page render, so
+ * without this they are concurrent queries by construction.
+ *
+ * The lead count rides along as a correlated subquery rather than a fifth
+ * round-trip.
+ */
+const getFirm = cache(async (id: string) => {
+  const rows = await db
+    .select({
+      id: leadFirms.id,
+      name: leadFirms.name,
+      slug: leadFirms.slug,
+      isActive: leadFirms.isActive,
+      leadCount: sql<number>`(select count(*)::int from ${leads} where ${leads.firmId} = ${leadFirms.id})`,
+    })
+    .from(leadFirms)
+    .where(eq(leadFirms.id, id));
+  const row = rows[0] ?? null;
+  assertRow("admin/firms/[id]: firm", row, {
+    id: "string",
+    name: "string",
+    slug: "string",
+    isActive: "boolean",
+    leadCount: "number",
+  });
+  return row;
+});
 
 export async function generateMetadata({
   params,
@@ -26,8 +60,8 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const row = await db.query.leadFirms.findFirst({ where: eq(leadFirms.id, id) });
-  return { title: row?.name ?? "Firm" };
+  const firm = await getFirm(id);
+  return { title: firm?.name ?? "Firm" };
 }
 
 export default async function FirmDetailPage({
@@ -41,29 +75,42 @@ export default async function FirmDetailPage({
   if (!auth.ok) return <NotAuthorized />;
 
   const { id } = await params;
-
-  const firm = await db.query.leadFirms.findFirst({ where: eq(leadFirms.id, id) });
+  const firm = await getFirm(id);
   if (!firm) notFound();
 
-  const [tags, companies, users, leadCountRow] = await Promise.all([
-    db.query.leadFirmTags.findMany({
-      where: eq(leadFirmTags.firmId, id),
-      orderBy: asc(leadFirmTags.tagNameLower),
-    }),
-    db.query.leadFirmCallrailCompanies.findMany({
-      where: eq(leadFirmCallrailCompanies.firmId, id),
-      orderBy: asc(leadFirmCallrailCompanies.callrailCompanyId),
-    }),
-    db.query.leadFirmUsers.findMany({
-      where: eq(leadFirmUsers.firmId, id),
-      orderBy: asc(leadFirmUsers.email),
-    }),
-    db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(leads)
-      .where(eq(leads.firmId, id)),
-  ]);
-  const leadCount = leadCountRow[0]?.n ?? 0;
+  // SEQUENTIAL. Each of these is a handful of rows; running them together
+  // bought nothing and put four queries on a pool of five, which is what
+  // let one response reach another query's promise.
+  const tags = await db.query.leadFirmTags.findMany({
+    where: eq(leadFirmTags.firmId, id),
+    orderBy: asc(leadFirmTags.tagNameLower),
+  });
+  assertRowShape("admin/firms/[id]: tags", tags, {
+    id: "string",
+    tagName: "string",
+    tagNameLower: "string",
+  });
+
+  const companies = await db.query.leadFirmCallrailCompanies.findMany({
+    where: eq(leadFirmCallrailCompanies.firmId, id),
+    orderBy: asc(leadFirmCallrailCompanies.callrailCompanyId),
+  });
+  assertRowShape("admin/firms/[id]: companies", companies, {
+    id: "string",
+    callrailCompanyId: "string",
+  });
+
+  const users = await db.query.leadFirmUsers.findMany({
+    where: eq(leadFirmUsers.firmId, id),
+    orderBy: asc(leadFirmUsers.email),
+  });
+  assertRowShape("admin/firms/[id]: users", users, {
+    id: "string",
+    email: "string",
+    isActive: "boolean",
+  });
+
+  const leadCount = firm.leadCount;
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">

@@ -11,6 +11,20 @@ import { leadFirms, leadNotes, leads } from "@/lib/db/schema";
 import { easternDayRangeToInstants } from "./store";
 import { monthRangeEastern } from "./admin-dates";
 import { queueReason, type QueueReason } from "./reconcile";
+import { assertRowShape } from "./row-guard";
+
+// Checked on the first row only — crosstalk is per RESPONSE, so every row in
+// a crossed result is wrong the same way and walking 500 buys nothing.
+// Deliberately picks fields whose TYPES differ from the other queries on the
+// same page, since a guard distinguishes shapes, not contents.
+const LEAD_ROW_SHAPE = {
+  id: "string",
+  callrailId: "string",
+  occurredAt: "date",
+  status: "string",
+  needsReview: "boolean",
+  parseFailed: "boolean",
+} as const;
 
 // A page of leads is capped rather than paginated for now: the admin surface
 // is for triage, and an unbounded cross-firm read of rows carrying names and
@@ -107,6 +121,12 @@ async function latestNotesFor(leadIds: string[]): Promise<Map<string, AdminNote>
     .from(leadNotes)
     .where(inArray(leadNotes.leadId, leadIds))
     .orderBy(leadNotes.leadId, desc(leadNotes.createdAt));
+  assertRowShape("latestNotesFor", rows, {
+    leadId: "string",
+    body: "string",
+    authorKind: "string",
+    createdAt: "date",
+  });
   return new Map(
     rows.map((r) => [
       r.leadId,
@@ -122,7 +142,9 @@ async function latestNotesFor(leadIds: string[]): Promise<Map<string, AdminNote>
 
 async function attachNotes(
   rows: Omit<AdminLeadRow, "latestNote">[],
+  label: string,
 ): Promise<AdminLeadRow[]> {
+  assertRowShape(label, rows, LEAD_ROW_SHAPE);
   const notes = await latestNotesFor(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, latestNote: notes.get(r.id) ?? null }));
 }
@@ -160,7 +182,7 @@ export async function listAdminLeads(options: {
     .orderBy(desc(leads.occurredAt))
     .limit(ADMIN_LEAD_LIMIT);
 
-  return attachNotes(rows);
+  return attachNotes(rows, "listAdminLeads");
 }
 
 export type AdminQueueRow = AdminLeadRow & { reason: QueueReason };
@@ -181,7 +203,7 @@ export async function listAdminQueue(): Promise<AdminQueueRow[]> {
     .orderBy(desc(leads.occurredAt))
     .limit(ADMIN_LEAD_LIMIT);
 
-  const withNotes = await attachNotes(rows);
+  const withNotes = await attachNotes(rows, "listAdminQueue");
   return withNotes.map((r) => ({
     ...r,
     reason: queueReason({
@@ -195,10 +217,16 @@ export async function listAdminQueue(): Promise<AdminQueueRow[]> {
 export async function listFirmOptions(): Promise<
   { id: string; name: string; isActive: boolean }[]
 > {
-  return db
+  const rows = await db
     .select({ id: leadFirms.id, name: leadFirms.name, isActive: leadFirms.isActive })
     .from(leadFirms)
     .orderBy(leadFirms.name);
+  assertRowShape("listFirmOptions", rows, {
+    id: "string",
+    name: "string",
+    isActive: "boolean",
+  });
+  return rows;
 }
 
 export async function countAdminQueue(): Promise<number> {
