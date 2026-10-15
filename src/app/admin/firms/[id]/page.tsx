@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { cache } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { asc, eq, sql } from "drizzle-orm";
@@ -23,16 +22,11 @@ import { assertRow, assertRowShape } from "@/lib/leads/row-guard";
 export const dynamic = "force-dynamic";
 
 /**
- * Shared between generateMetadata and the page body. React's request-scoped
- * cache() means the lookup runs ONCE per request instead of twice — and, more
- * to the point, the two no longer race each other onto the same connection
- * pool. generateMetadata is a separate unit of work from the page render, so
- * without this they are concurrent queries by construction.
- *
- * The lead count rides along as a correlated subquery rather than a fifth
- * round-trip.
+ * The firm plus its lead count, as one query — the count rides along as a
+ * correlated subquery rather than a separate round-trip. Only ever called
+ * after the staff check.
  */
-const getFirm = cache(async (id: string) => {
+async function getFirm(id: string) {
   const rows = await db
     .select({
       id: leadFirms.id,
@@ -52,17 +46,13 @@ const getFirm = cache(async (id: string) => {
     leadCount: "number",
   });
   return row;
-});
-
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}): Promise<Metadata> {
-  const { id } = await params;
-  const firm = await getFirm(id);
-  return { title: firm?.name ?? "Firm" };
 }
+
+// A fixed title, deliberately. generateMetadata runs as its own unit of work,
+// separately from the page body, so a lookup here ran BEFORE the staff check
+// below and put a firm's name in the tab title for any signed-in session. Nothing
+// is read until checkAdmin() has passed.
+export const metadata: Metadata = { title: "Firm" };
 
 export default async function FirmDetailPage({
   params,
