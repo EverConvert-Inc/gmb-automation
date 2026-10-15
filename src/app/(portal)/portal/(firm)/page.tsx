@@ -112,23 +112,12 @@ function countByStatus(leads: readonly PortalLead[]): Record<PortalStatusLabel, 
   return counts;
 }
 
-function telHref(phone: string | null): string | null {
-  if (!phone) return null;
-  const digits = phone.replace(/[^\d+]/g, "");
-  return digits.replace(/\D/g, "").length >= 7 ? `tel:${digits}` : null;
-}
-
-function PhoneLink({ phone }: { phone: string | null }) {
-  const href = telHref(phone);
-  const text = formatPortalPhone(phone);
-  if (!href) return <span className="text-muted-foreground">{text}</span>;
+/** Plain text, deliberately not a tel: link. */
+function PhoneText({ phone }: { phone: string | null }) {
   return (
-    <a
-      href={href}
-      className={cn("rounded tabular-nums text-foreground underline-offset-4 hover:underline", portalFocus)}
-    >
-      {text}
-    </a>
+    <span className={cn("tabular-nums", phone ? "text-foreground" : "text-muted-foreground")}>
+      {formatPortalPhone(phone)}
+    </span>
   );
 }
 
@@ -140,7 +129,7 @@ function LeadRow({ lead }: { lead: PortalLead }) {
         {lead.name ?? <span className="font-normal text-muted-foreground">—</span>}
       </td>
       <td className="whitespace-nowrap px-5 py-4">
-        <PhoneLink phone={lead.phone} />
+        <PhoneText phone={lead.phone} />
       </td>
       <td className="whitespace-nowrap px-5 py-4">
         <StatusBadge status={lead.status} />
@@ -164,7 +153,7 @@ function LeadCard({ lead }: { lead: PortalLead }) {
       </div>
       <p className="mt-3 flex items-center gap-2 text-sm">
         <Phone aria-hidden className="h-4 w-4 text-muted-foreground" />
-        <PhoneLink phone={lead.phone} />
+        <PhoneText phone={lead.phone} />
       </p>
       <div className="mt-4 border-t pt-4">
         <LeadNote leadId={lead.id} latestNote={lead.latestNote} maxLength={NOTE_MAX_LENGTH} />

@@ -389,6 +389,22 @@ describe("the leads page", () => {
     expect(header.split("a@firm-a.com")).toHaveLength(3); // the title attribute and the text, both in the panel
   });
 
+  it("the phone number is plain text (no tel: link), and each lead has a one-line note field", async () => {
+    asClientA();
+    const html = await leadsMarkup();
+    expect(html).toContain("(555) 123-4567");
+    expect(html).not.toContain("tel:");
+    expect(html).not.toMatch(/<a[^>]*>\(555\)/);
+    const fields = html.match(/<textarea[^>]*>/g) ?? [];
+    expect(fields).toHaveLength(2); // the table row and the phone card for the one lead
+    for (const f of fields) {
+      expect(f).toContain('rows="1"');
+      expect(f).toContain('placeholder="Add a note…"');
+      expect(f).toContain('maxLength="2000"');
+    }
+    expect(html).not.toContain(">Add note<");
+  });
+
   it("shows an empty state when there are no leads", async () => {
     asClientA();
     leadsByFirm[FIRM_A] = [];
