@@ -13,7 +13,7 @@ export type LatestNote = { body: string; author: "client" | "staff"; date: strin
 const MAX_FIELD_HEIGHT_PX = 200;
 
 /**
- * The latest note on a lead, and an always-visible note field under it. The
+ * The latest note on a lead (if any), and an always-visible note field. The
  * field is one line tall and grows as you type; Save appears once there is
  * text. Only the lead id and the note text are sent; the firm and the author
  * come from the session on the server.
@@ -86,15 +86,13 @@ export function LeadNote({
 
   return (
     <div className="space-y-2.5">
-      {note ? (
+      {note && (
         <div className="space-y-1">
           <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed text-foreground">{note.body}</p>
           <p className="text-xs text-muted-foreground">
             {note.author === "client" ? "Your firm" : "EverConvert"} · {formatPortalDate(note.date)}
           </p>
         </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">No notes yet</p>
       )}
 
       <form
@@ -126,7 +124,7 @@ export function LeadNote({
           }}
           maxLength={maxLength}
           rows={1}
-          placeholder="Add a note…"
+          placeholder={note ? "Add another note" : "Add note"}
           disabled={busy}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${fieldId}-error` : undefined}

@@ -399,10 +399,11 @@ describe("the leads page", () => {
     expect(fields).toHaveLength(2); // the table row and the phone card for the one lead
     for (const f of fields) {
       expect(f).toContain('rows="1"');
-      expect(f).toContain('placeholder="Add a note…"');
+      expect(f).toContain('placeholder="Add note"'); // no note yet
       expect(f).toContain('maxLength="2000"');
     }
     expect(html).not.toContain(">Add note<");
+    expect(html).not.toContain("No notes yet");
   });
 
   it("the status filter's counts match the month summary and use no extra query", async () => {
