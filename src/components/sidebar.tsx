@@ -7,12 +7,12 @@ import {
   Activity,
   AlertTriangle,
   Gauge,
-  Inbox,
   Map,
   Megaphone,
   PhoneCall,
   Search,
   Settings,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
@@ -25,7 +25,9 @@ const items = [
   { href: "/rankings", label: "Rankings", icon: Search },
   { href: "/ppc", label: "PPC", icon: Megaphone },
   { href: "/lsa", label: "LSA", icon: PhoneCall },
-  { href: "/admin/leads", label: "Leads", icon: Inbox },
+  // The lead tracker's admin area: firms, every firm's leads, the queue.
+  // Active on any /admin page.
+  { href: "/admin", label: "Admin", icon: ShieldCheck },
   { href: "/call-quality", label: "Call Quality", icon: Gauge },
   { href: "/scans", label: "Scans", icon: Activity },
   { href: "/takedowns", label: "Takedowns", icon: AlertTriangle },
