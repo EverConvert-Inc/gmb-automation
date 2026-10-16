@@ -14,7 +14,12 @@ import "server-only";
 //    portal's lock would let a slow log write delay another user's page on the
 //    same instance; a second connection keeps the "never pipeline onto a busy
 //    connection" property without that coupling.
-//  - Parameters are scalars only; metadata travels as one JSON text value.
+//  - Parameters are scalars only; metadata travels as one JSON text value,
+//    cast ::text::jsonb. NOT a bare ::jsonb: with prepare:false postgres.js
+//    asks the server for each parameter's type first, is told "jsonb", and
+//    then JSON-encodes the value AGAIN — the text arrives as a JSON string,
+//    jsonb_typeof is 'string', and the metadata CHECK rejects every row
+//    (SQLSTATE 23514). Casting through text keeps the parameter typed text.
 
 import { after } from "next/server";
 import postgres from "postgres";
@@ -42,6 +47,8 @@ type Sql = postgres.Sql;
 
 let client: Sql | null = null;
 let testSql: Sql | null = null;
+let createClient = (url: string): Sql =>
+  postgres(url, { ...EVENTS_CONNECTION_OPTIONS, connection: { ...EVENTS_CONNECTION_OPTIONS.connection } });
 let schedule: (task: () => Promise<void>) => void = (task) => after(task);
 let pending = 0;
 
@@ -50,20 +57,46 @@ function getSql(): Sql {
   if (!client) {
     const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
     if (!url) throw new Error("DATABASE_URL (or POSTGRES_URL) is not set");
-    client = postgres(url, { ...EVENTS_CONNECTION_OPTIONS, connection: { ...EVENTS_CONNECTION_OPTIONS.connection } });
+    client = createClient(url);
   }
   return client;
 }
 
-async function resetClient(): Promise<void> {
+/** How long a dropped connection gets to close before it is abandoned. */
+export const EVENT_CLIENT_CLEANUP_MS = 1_000;
+
+/**
+ * Drops the connection. Synchronous as far as the caller is concerned: the
+ * next write gets a fresh client at once, and the old one's end() runs in
+ * the background, bounded, and is never awaited — a cleanup that hangs must
+ * not hold the lock (the earlier version awaited it inside the lock, so one
+ * stuck end() blocked every later write on the instance, silently).
+ */
+function resetClient(): void {
   const old = client;
   client = null;
-  if (old) await old.end({ timeout: 0 }).catch(() => {});
+  if (!old) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  void Promise.race([
+    Promise.resolve()
+      .then(() => old.end({ timeout: 0 }))
+      .catch(() => {}),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, EVENT_CLIENT_CLEANUP_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /** Test seams only. */
 export function __setEventsSqlForTests(sql: unknown): void {
   testSql = sql as Sql | null;
+}
+/** Test seam only: how the real (non-override) client is created. Pass null to restore. */
+export function __setEventsClientFactoryForTests(factory: ((url: string) => unknown) | null): void {
+  createClient = factory
+    ? (url) => factory(url) as Sql
+    : (url) => postgres(url, { ...EVENTS_CONNECTION_OPTIONS, connection: { ...EVENTS_CONNECTION_OPTIONS.connection } });
+  client = null;
 }
 export function __setEventSchedulerForTests(fn: ((task: () => Promise<void>) => void) | null): void {
   schedule = fn ?? ((task) => after(task));
@@ -105,8 +138,12 @@ class EventWriteTimeout extends Error {
   }
 }
 
-/** One INSERT … SELECT: written only under the rate limits, and once per dedupe window where one applies. */
-function insertEvent(sql: Sql, firmId: string, userId: string, event: PortalEventInput) {
+/**
+ * One INSERT … SELECT: written only under the rate limits, and once per
+ * dedupe window where one applies. Exported for tests and the temporary
+ * diagnostic route only; portal code calls logPortalEvent(s).
+ */
+export function insertEvent(sql: Sql, firmId: string, userId: string, event: PortalEventInput) {
   const leadId = event.type === "note_saved" ? event.leadId : null;
   const meta = JSON.stringify(event.meta);
 
@@ -115,18 +152,18 @@ function insertEvent(sql: Sql, firmId: string, userId: string, event: PortalEven
       ? sql`and not exists (
           select 1 from portal_events e
           where e.firm_id = ${firmId}::uuid and e.auth_user_id = ${userId}::uuid
-            and e.event_type = 'page_view' and e.metadata = ${meta}::jsonb
+            and e.event_type = 'page_view' and e.metadata = ${meta}::text::jsonb
             and e.created_at > now() - make_interval(mins => ${PAGE_VIEW_DEDUPE_MINUTES}::int))`
       : event.type === "sign_in"
         ? sql`and not exists (
           select 1 from portal_events e
           where e.firm_id = ${firmId}::uuid and e.auth_user_id = ${userId}::uuid
-            and e.event_type = 'sign_in' and e.metadata = ${meta}::jsonb)`
+            and e.event_type = 'sign_in' and e.metadata = ${meta}::text::jsonb)`
         : sql``;
 
   return sql`
     insert into portal_events (firm_id, auth_user_id, event_type, lead_id, metadata)
-    select ${firmId}::uuid, ${userId}::uuid, ${event.type}::text, ${leadId}::uuid, ${meta}::jsonb
+    select ${firmId}::uuid, ${userId}::uuid, ${event.type}::text, ${leadId}::uuid, ${meta}::text::jsonb
     where (
         select count(*) from portal_events e
         where e.firm_id = ${firmId}::uuid and e.auth_user_id = ${userId}::uuid
@@ -156,8 +193,9 @@ async function writeOne(firmId: string, userId: string, event: PortalEventInput,
       if (err instanceof EventWriteTimeout) {
         pendingWrite.catch(() => {});
         // The stuck write may still hold the one connection; never queue the
-        // next one behind it.
-        await resetClient();
+        // next one behind it. Not awaited: the lock is released by
+        // exclusive()'s finally as soon as this callback returns.
+        resetClient();
       }
       throw err;
     } finally {

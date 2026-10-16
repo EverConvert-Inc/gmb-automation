@@ -9,17 +9,15 @@
 // and never touches a leads table. Its response carries no credentials and no
 // lead data.
 //
-// insertEvent() and the writer's connection are private to
-// src/lib/portal/events.ts, which this route must not change, so the INSERT
-// below is a VERBATIM copy of insertEvent's SQL for a page_view (dedupe
-// included), run on its own short-lived connection with the writer's exported
-// connection options.
+// The test INSERT is the writer's own insertEvent() for a page_view (dedupe
+// included), run on its own short-lived connection with the writer's
+// exported connection options.
 
 import { NextResponse, after } from "next/server";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { requireAdminRoute } from "@/lib/leads/admin-auth";
-import { EVENTS_CONNECTION_OPTIONS, __pendingEventWritesForTests } from "@/lib/portal/events";
+import { EVENTS_CONNECTION_OPTIONS, __pendingEventWritesForTests, insertEvent } from "@/lib/portal/events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,10 +25,6 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 const PLACEHOLDER_ID = "00000000-0000-0000-0000-000000000000";
 const TEST_TIMEOUT_MS = 5_000;
-// Copied from events.ts so the SQL below is identical.
-const EVENT_RATE_PER_MINUTE = 60;
-const EVENT_RATE_PER_DAY = 2_000;
-const PAGE_VIEW_DEDUPE_MINUTES = 30;
 
 class Rollback extends Error {}
 
@@ -58,32 +52,11 @@ async function testWrite(url: string): Promise<TestWrite> {
   const attempt = (async (): Promise<TestWrite> => {
     try {
       await sql.begin(async (tx) => {
-        const firmId = PLACEHOLDER_ID;
-        const userId = PLACEHOLDER_ID;
-        const meta = JSON.stringify({ page: "leads", range: "current" });
-        const leadId = null;
-        // ---- verbatim from events.ts insertEvent(), page_view branch ----
-        const dedupe = tx`and not exists (
-            select 1 from portal_events e
-            where e.firm_id = ${firmId}::uuid and e.auth_user_id = ${userId}::uuid
-              and e.event_type = 'page_view' and e.metadata = ${meta}::jsonb
-              and e.created_at > now() - make_interval(mins => ${PAGE_VIEW_DEDUPE_MINUTES}::int))`;
-        const result = await tx`
-      insert into portal_events (firm_id, auth_user_id, event_type, lead_id, metadata)
-      select ${firmId}::uuid, ${userId}::uuid, ${"page_view"}::text, ${leadId}::uuid, ${meta}::jsonb
-      where (
-          select count(*) from portal_events e
-          where e.firm_id = ${firmId}::uuid and e.auth_user_id = ${userId}::uuid
-            and e.created_at > now() - interval '1 minute'
-        ) < ${EVENT_RATE_PER_MINUTE}::int
-        and (
-          select count(*) from portal_events e
-          where e.firm_id = ${firmId}::uuid and e.auth_user_id = ${userId}::uuid
-            and e.created_at > now() - interval '1 day'
-        ) < ${EVENT_RATE_PER_DAY}::int
-        ${dedupe}
-    `;
-        // -----------------------------------------------------------------
+        // The writer's own SQL (insertEvent), for a page_view.
+        const result = await insertEvent(tx as unknown as postgres.Sql, PLACEHOLDER_ID, PLACEHOLDER_ID, {
+          type: "page_view",
+          meta: { page: "leads", range: "current" },
+        });
         rowsInserted = result.count;
         throw new Rollback(); // never commit
       });

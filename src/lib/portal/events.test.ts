@@ -13,7 +13,9 @@ import {
   __pendingEventWritesForTests,
   __resetEventsForTests,
   __setEventSchedulerForTests,
+  __setEventsClientFactoryForTests,
   __setEventsSqlForTests,
+  insertEvent,
   logPortalEvent,
   logPortalEvents,
 } from "./events";
@@ -55,7 +57,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
   __setEventsSqlForTests(null);
   __setEventSchedulerForTests(null);
+  __setEventsClientFactoryForTests(null);
   __setPortalSqlForTests(null);
+  vi.unstubAllEnvs();
 });
 
 const view = { type: "page_view", meta: { page: "leads", range: "current" } } as const;
@@ -195,6 +199,103 @@ describe("the INSERT", () => {
     logPortalEvents(session, [view, { type: "sign_in", meta: { signed_in_at: "2026-10-15T14:03:22Z" } }]);
     await runTasks();
     expect(calls[0].text).toMatch(/not exists[\s\S]*event_type = 'page_view'[\s\S]*make_interval/);
-    expect(calls[1].text).toMatch(/not exists[\s\S]*event_type = 'sign_in' and e\.metadata = \$\d+::jsonb\)/);
+    expect(calls[1].text).toMatch(/not exists[\s\S]*event_type = 'sign_in' and e\.metadata = \$\d+::text::jsonb\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression tests for the two production bugs (metadata double-encoded by
+// the driver; a hanging connection cleanup holding the lock).
+// ---------------------------------------------------------------------------
+
+const ALL_EVENTS = [
+  { type: "sign_in", meta: { signed_in_at: "2026-10-15T14:03:22.123456Z" } },
+  { type: "page_view", meta: { page: "leads", range: "custom" } },
+  { type: "note_saved", leadId: LEAD, meta: {} },
+  { type: "date_range_changed", meta: { kind: "preset_current" } },
+  { type: "date_range_changed", meta: { kind: "custom", span_days: 6 } },
+  { type: "status_filter_used", meta: { statuses: ["signed", "pending"] } },
+  { type: "search_used", meta: { kind: "phone" } },
+] as const;
+
+/** The real insertEvent, compiled to its final SQL text and parameter list. */
+function compile(event: (typeof ALL_EVENTS)[number]) {
+  const fake = makeFakeSql(() => []);
+  void insertEvent(fake.sql as never, FIRM, USER, event as never).then(() => {});
+  return fake.calls[0];
+}
+
+describe("the real INSERT, compiled", () => {
+  it.each(ALL_EVENTS.map((e) => [e.type, e] as const))(
+    "%s: every metadata parameter is cast ::text::jsonb, never a bare ::jsonb",
+    (_, event) => {
+      const { text, params } = compile(event);
+      const meta = JSON.stringify(event.meta);
+      const metaPositions = params.map((p, i) => (p === meta ? i + 1 : 0)).filter(Boolean);
+      expect(metaPositions.length).toBeGreaterThanOrEqual(1);
+      for (const n of metaPositions) {
+        // Bare ::jsonb makes postgres.js JSON-encode the text again (SQLSTATE 23514 on every row).
+        expect(text).toMatch(new RegExp(`\\$${n}::text::jsonb`));
+        expect(text).not.toMatch(new RegExp(`\\$${n}::jsonb`));
+      }
+      // No parameter anywhere is bound straight to jsonb.
+      expect(text).not.toMatch(/\$\d+::jsonb/);
+      expect(JSON.parse(params[metaPositions[0] - 1] as string)).toEqual(event.meta);
+    },
+  );
+
+  it.each(ALL_EVENTS.map((e) => [e.type, e] as const))(
+    "%s: no parameter reaches the driver as a plain object or array",
+    (_, event) => {
+      const { params } = compile(event);
+      for (const p of params) {
+        expect(Array.isArray(p), `array param ${JSON.stringify(p)}`).toBe(false);
+        expect(p !== null && typeof p === "object", `object param ${JSON.stringify(p)}`).toBe(false);
+        expect(p === null || typeof p === "string" || typeof p === "number").toBe(true);
+      }
+    },
+  );
+});
+
+describe("a hanging connection cleanup never holds the lock", () => {
+  it("after a timed-out write, the next write proceeds even though the old connection's end() never resolves", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("DATABASE_URL", "postgres://placeholder/db");
+    __setEventsSqlForTests(null);
+
+    const stuck = makeFakeSql(() => new Promise(() => {})); // queries never answer
+    const ends: string[] = [];
+    Object.assign(stuck.sql, { end: () => (ends.push("stuck"), new Promise(() => {})) }); // nor does end()
+    const healthy = makeFakeSql(() => []);
+    Object.assign(healthy.sql, { end: async () => void ends.push("healthy") });
+    const made = [stuck.sql, healthy.sql];
+    __setEventsClientFactoryForTests(() => made.shift());
+
+    logPortalEvent(session, view);
+    logPortalEvent(session, { type: "search_used", meta: { kind: "name" } });
+    const first = tasks[0]();
+    const second = tasks[1]();
+    tasks = [];
+
+    await vi.advanceTimersByTimeAsync(EVENT_WRITE_TIMEOUT_MS);
+    await expect(first).resolves.toBeUndefined();
+    expect(logged).toEqual(["[portal events] page_view not logged: EventWriteTimeout"]);
+    expect(ends).toEqual(["stuck"]); // cleanup started…
+
+    // …and, without it ever finishing, the second write ran on a fresh client.
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(second).resolves.toBeUndefined();
+    expect(healthy.calls).toHaveLength(1);
+    expect(healthy.calls[0].params).toContain("search_used");
+    expect(__pendingEventWritesForTests()).toBe(0);
+  });
+
+  it("the old version's failure mode: had the cleanup been awaited inside the lock, the second write would never start", async () => {
+    // Guards the fix itself: the timeout path must not await resetClient().
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "src", "lib", "portal", "events.ts"), "utf8");
+    expect(src).not.toMatch(/await\s+resetClient\(/);
+    expect(src).toMatch(/function resetClient\(\): void/);
   });
 });
