@@ -1342,3 +1342,110 @@ describe("needs_review means hidden from clients", () => {
     expect(dup.needsReview).toBe(false);          // and NOT hidden from the firm
   });
 });
+
+// ---------------------------------------------------------------------------
+// Scope: which companies a run fetches
+// ---------------------------------------------------------------------------
+
+describe("syncLeadsForMonth — scope", () => {
+  const FIRM_X = "firm-x";
+  const FIRM_Y = "firm-y";
+
+  function recordingDeps(store: LeadStore, calls: (company: string) => unknown[] = () => []) {
+    const fetched: string[] = [];
+    let listed = 0;
+    const deps = makeDeps(store, {
+      listCompanyIds: async () => {
+        listed += 1;
+        return ["COM1", "COM2", "UNSERVED1", "UNSERVED2"];
+      },
+      fetchCalls: async (companyId) => {
+        fetched.push(`calls:${companyId}`);
+        return calls(companyId) as never;
+      },
+      fetchForms: async (companyId) => {
+        fetched.push(`forms:${companyId}`);
+        return [];
+      },
+    });
+    return { deps, fetched, listed: () => listed };
+  }
+
+  it("mapped: fetches only the companies mapped to a firm, and never lists the account", async () => {
+    const fake = makeFakeStore({
+      companyRules: [
+        { firmId: FIRM_Y, callrailCompanyId: "COM2" },
+        { firmId: FIRM_X, callrailCompanyId: "COM1" },
+      ],
+    });
+    const r = recordingDeps(fake.store);
+    const result = await syncLeadsForMonth(r.deps, { scope: "mapped", triggeredBy: "scheduled" });
+    expect(result.scope).toBe("mapped");
+    expect(result.companies).toBe(2);
+    expect(r.listed()).toBe(0);
+    expect([...new Set(r.fetched)].sort()).toEqual(["calls:COM1", "calls:COM2", "forms:COM1", "forms:COM2"]);
+    expect(r.fetched.some((f) => f.includes("UNSERVED"))).toBe(false);
+  });
+
+  it("mapped: a company named twice is fetched once", async () => {
+    const fake = makeFakeStore({
+      companyRules: [
+        { firmId: FIRM_X, callrailCompanyId: "COM1" },
+        { firmId: FIRM_X, callrailCompanyId: " COM1 " },
+      ],
+    });
+    const r = recordingDeps(fake.store);
+    const result = await syncLeadsForMonth(r.deps, { scope: "mapped" });
+    expect(result.companies).toBe(1);
+    expect(r.fetched.filter((f) => f === "calls:COM1")).toHaveLength(1);
+  });
+
+  it("mapped: no mapped companies means nothing fetched and nothing written", async () => {
+    const fake = makeFakeStore();
+    const r = recordingDeps(fake.store);
+    const result = await syncLeadsForMonth(r.deps, { scope: "mapped" });
+    expect(result.companies).toBe(0);
+    expect(r.fetched).toEqual([]);
+    expect(fake.rows.size).toBe(0);
+  });
+
+  it("mapped: a firm-tagged lead on a mapped company still routes by its tag, not the company", async () => {
+    const fake = makeFakeStore({
+      tagRules: [{ firmId: FIRM_X, tagName: "Smith Law" }],
+      companyRules: [{ firmId: FIRM_Y, callrailCompanyId: "COM1" }],
+    });
+    const r = recordingDeps(fake.store, (company) =>
+      company === "COM1" ? [CALL({ tags: ["Signed", "Smith Law"] })] : [],
+    );
+    await syncLeadsForMonth(r.deps, { scope: "mapped", triggeredBy: "scheduled" });
+    const stored = [...fake.rows.values()];
+    expect(stored).toHaveLength(1);
+    expect(stored[0].firmId).toBe(FIRM_X); // the tag's firm…
+    expect(stored.some((row) => row.firmId === FIRM_Y)).toBe(false); // …and not the company's
+  });
+
+  it("mapped: an untagged lead on a mapped company routes to the company's firm", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: FIRM_Y, callrailCompanyId: "COM1" }] });
+    const r = recordingDeps(fake.store, (company) => (company === "COM1" ? [CALL({ tags: ["Signed"] })] : []));
+    await syncLeadsForMonth(r.deps, { scope: "mapped" });
+    expect([...fake.rows.values()].map((row) => row.firmId)).toEqual([FIRM_Y]);
+  });
+
+  it("all (the default for a manual run): lists and fetches every company", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: FIRM_X, callrailCompanyId: "COM1" }] });
+    const r = recordingDeps(fake.store);
+    const result = await syncLeadsForMonth(r.deps, {});
+    expect(result.scope).toBe("all");
+    expect(result.companies).toBe(4);
+    expect(r.listed()).toBe(1);
+    expect(r.fetched.filter((f) => f.startsWith("calls:"))).toHaveLength(4);
+  });
+
+  it("explicit companyIds still win over scope", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: FIRM_X, callrailCompanyId: "COM1" }] });
+    const r = recordingDeps(fake.store);
+    const result = await syncLeadsForMonth(r.deps, { scope: "mapped", companyIds: ["UNSERVED1"] });
+    expect(result.scope).toBe("explicit");
+    expect([...new Set(r.fetched)]).toEqual(["calls:UNSERVED1", "forms:UNSERVED1"]);
+  });
+});

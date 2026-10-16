@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSyncDeps } from "@/lib/leads/deps";
-import { syncLeadsForMonth } from "@/lib/leads/sync";
+import { syncLeadsForMonth, type SyncScope } from "@/lib/leads/sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -36,9 +36,21 @@ export async function GET(req: Request) {
     ? companyParam.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
+  // scope=mapped fetches only companies mapped to an active firm (the daily
+  // cron); without it a run covers the whole account, as before.
+  const scopeParam = url.searchParams.get("scope");
+  if (scopeParam !== null && scopeParam !== "mapped" && scopeParam !== "all") {
+    return NextResponse.json({ error: "scope must be mapped or all" }, { status: 400 });
+  }
+  if (scopeParam !== null && companyIds) {
+    return NextResponse.json({ error: "use either scope or companyIds, not both" }, { status: 400 });
+  }
+  const scope: SyncScope = scopeParam === "mapped" ? "mapped" : "all";
+
   const result = await syncLeadsForMonth(createSyncDeps(), {
     triggeredBy: dryRun ? "dry-run" : "scheduled",
     dryRun,
+    scope,
     companyIds,
   });
 

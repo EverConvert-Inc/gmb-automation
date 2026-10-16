@@ -407,9 +407,23 @@ export type SyncDeps = {
   ) => Promise<TagFilterProbe>;
 };
 
+/**
+ * Which CallRail companies a run fetches.
+ * - "all": every non-disabled company in the account (the default, and what a
+ *   manual run does).
+ * - "mapped": only companies in lead_firm_callrail_companies for an active
+ *   firm — what the daily cron uses. Routing is unchanged for what is fetched
+ *   (a firm tag still wins over the company), but a lead on a company mapped
+ *   to no firm is never fetched, so it can reach neither a tag-matched firm
+ *   nor the admin queue.
+ */
+export type SyncScope = "all" | "mapped";
+
 export type SyncOptions = {
   triggeredBy?: string;
   dryRun?: boolean;
+  /** Defaults to "all". Ignored when companyIds is given. */
+  scope?: SyncScope;
   /** Overrides company discovery. Narrows what is fetched and stored. */
   companyIds?: string[];
   transport?: TransportOptions;
@@ -443,6 +457,8 @@ export type SourceResult = {
 
 export type SyncResult = {
   dryRun: boolean;
+  /** "explicit" when the run was given companyIds. */
+  scope: SyncScope | "explicit";
   window: SyncWindow;
   companies: number;
   /** The tags every fetch is filtered to, echoed so a run is self-describing. */
@@ -479,6 +495,19 @@ function emptySourceResult(): SourceResult {
   };
 }
 
+/**
+ * The companies the routing rules name, once each, in a stable order. These
+ * come from loadRoutingRules, which already excludes inactive firms.
+ */
+export function mappedCompanyIds(companyRules: readonly { callrailCompanyId: string }[]): string[] {
+  const ids = new Set<string>();
+  for (const r of companyRules) {
+    const id = r.callrailCompanyId?.trim();
+    if (id) ids.add(id);
+  }
+  return [...ids].sort();
+}
+
 export async function syncLeadsForMonth(
   deps: SyncDeps,
   options: SyncOptions = {},
@@ -489,10 +518,15 @@ export async function syncLeadsForMonth(
   const sampleSize = options.sampleSize ?? 10;
   const window = resolveSyncWindow();
 
-  const companyIds =
-    options.companyIds ?? (await deps.listCompanyIds(transport));
   const { tagRules, companyRules } = await deps.store.loadRoutingRules();
   const index = buildRoutingIndex(tagRules, companyRules);
+
+  const scope: SyncResult["scope"] = options.companyIds ? "explicit" : (options.scope ?? "all");
+  const companyIds =
+    options.companyIds ??
+    (scope === "mapped"
+      ? mappedCompanyIds(companyRules)
+      : await deps.listCompanyIds(transport));
 
   const sample: MaskedSample[] = [];
 
@@ -549,6 +583,7 @@ export async function syncLeadsForMonth(
 
   return {
     dryRun,
+    scope,
     window,
     companies: companyIds.length,
     tagFilter: LEAD_STATUS_TAGS,
