@@ -338,6 +338,17 @@ export type NoteStructureSample = {
 /** Keeps a dry-run response readable, and bounds what leaves the function. */
 export const NOTE_STRUCTURE_SAMPLE_CAP = 20;
 
+/**
+ * Time a run may spend FETCHING before it stops starting new companies and
+ * writes what it has. The route's maxDuration is 300s; this leaves room for
+ * the company in flight, planning, the writes and finishJob.
+ */
+export const FETCH_BUDGET_MS = 220_000;
+
+/** A job still 'running' this long after it started cannot still be alive (maxDuration is 300s). */
+export const STALE_JOB_MINUTES = 15;
+export const STALE_JOB_MESSAGE = "No finish recorded (likely stopped at the 300s time limit)";
+
 export type MaskedSample = {
   source: LeadSource;
   callrailId: string;
@@ -424,6 +435,8 @@ export type SyncOptions = {
   dryRun?: boolean;
   /** Defaults to "all". Ignored when companyIds is given. */
   scope?: SyncScope;
+  /** Defaults to FETCH_BUDGET_MS. Shared by the calls and forms passes. */
+  fetchBudgetMs?: number;
   /** Overrides company discovery. Narrows what is fetched and stored. */
   companyIds?: string[];
   transport?: TransportOptions;
@@ -452,6 +465,11 @@ export type SourceResult = {
   parseFailureReasons: Record<string, number>;
   /** Dry run only — empty on a real run. Capped, and carries no PII. */
   noteStructures: NoteStructureSample[];
+  /**
+   * Set when the fetch budget ran out before every company was fetched. What
+   * was fetched is still written; the job row is finished as failed.
+   */
+  stoppedEarly: { phase: "current" | "previous"; afterCompanies: number; of: number } | null;
   error: string | null;
 };
 
@@ -459,6 +477,8 @@ export type SyncResult = {
   dryRun: boolean;
   /** "explicit" when the run was given companyIds. */
   scope: SyncScope | "explicit";
+  /** Jobs left 'running' by earlier runs and marked failed at the start of this one. Null on a dry run or if the cleanup itself failed. */
+  staleJobsFailed: number | null;
   window: SyncWindow;
   companies: number;
   /** The tags every fetch is filtered to, echoed so a run is self-describing. */
@@ -491,8 +511,17 @@ function emptySourceResult(): SourceResult {
     fieldsSeen: [],
     parseFailureReasons: {},
     noteStructures: [],
+    stoppedEarly: null,
     error: null,
   };
+}
+
+/** The job row's message for a run that ran out of fetch budget. */
+export function stoppedEarlyMessage(s: NonNullable<SourceResult["stoppedEarly"]>, budgetMs: number): string {
+  const budget = `fetch budget ${Math.round(budgetMs / 1000)}s`;
+  return s.phase === "current"
+    ? `stopped after ${s.afterCompanies} of ${s.of} companies (${budget})`
+    : `stopped after ${s.of} of ${s.of} companies; previous-month recheck stopped after ${s.afterCompanies} of ${s.of} (${budget})`;
 }
 
 /**
@@ -517,6 +546,23 @@ export async function syncLeadsForMonth(
   const transport = options.transport ?? {};
   const sampleSize = options.sampleSize ?? 10;
   const window = resolveSyncWindow();
+  const startedMs = deps.now().getTime();
+  const fetchBudgetMs = options.fetchBudgetMs ?? FETCH_BUDGET_MS;
+  const deadlineMs = startedMs + fetchBudgetMs;
+
+  // Earlier runs killed at the time limit never finished their job rows.
+  // Never fatal: a failed cleanup must not stop today's sync.
+  let staleJobsFailed: number | null = null;
+  if (!dryRun) {
+    try {
+      staleJobsFailed = await deps.store.failStaleJobs({
+        startedBefore: new Date(startedMs - STALE_JOB_MINUTES * 60_000),
+        message: STALE_JOB_MESSAGE,
+      });
+    } catch {
+      staleJobsFailed = null;
+    }
+  }
 
   const { tagRules, companyRules } = await deps.store.loadRoutingRules();
   const index = buildRoutingIndex(tagRules, companyRules);
@@ -547,6 +593,8 @@ export async function syncLeadsForMonth(
     sampleSize,
     fetchPage: (companyId, from, to) => deps.fetchCalls(companyId, from, to, transport),
     normalize: normalizeCall,
+    deadlineMs,
+    fetchBudgetMs,
   });
 
   const forms = await runSourcePass<TrackerFormRecord>({
@@ -563,6 +611,8 @@ export async function syncLeadsForMonth(
     sampleSize,
     fetchPage: (companyId, from, to) => deps.fetchForms(companyId, from, to, transport),
     normalize: normalizeForm,
+    deadlineMs,
+    fetchBudgetMs,
   });
 
   // One company is enough to settle the semantics question, and three extra
@@ -584,6 +634,7 @@ export async function syncLeadsForMonth(
   return {
     dryRun,
     scope,
+    staleJobsFailed,
     window,
     companies: companyIds.length,
     tagFilter: LEAD_STATUS_TAGS,
@@ -608,6 +659,9 @@ type SourcePassInput<R> = {
   sampleSize: number;
   fetchPage: (companyId: string, from: string, to: string) => Promise<R[]>;
   normalize: (record: R, companyId: string) => TrackerLead | null;
+  /** No new company fetch starts at or after this instant (ms). */
+  deadlineMs: number;
+  fetchBudgetMs: number;
 };
 
 async function runSourcePass<R extends { id: string }>(
@@ -628,8 +682,17 @@ async function runSourcePass<R extends { id: string }>(
 
   try {
     const collected: TrackerLead[] = [];
+    const total = input.companyIds.length;
+    const outOfTime = () => deps.now().getTime() >= input.deadlineMs;
 
-    for (const companyId of input.companyIds) {
+    for (const [i, companyId] of input.companyIds.entries()) {
+      // Checked BEFORE each company: once the budget is spent, stop starting
+      // new fetches and write what was collected. Companies not reached are
+      // untouched — reconciliation only ever sees the ids fetched this run.
+      if (outOfTime()) {
+        result.stoppedEarly = { phase: "current", afterCompanies: i, of: total };
+        break;
+      }
       const records = await input.fetchPage(
         companyId,
         window.currentFrom,
@@ -657,8 +720,12 @@ async function runSourcePass<R extends { id: string }>(
       window.previousTo,
       input.source,
     );
-    if (pendingIds.size > 0) {
-      for (const companyId of input.companyIds) {
+    if (pendingIds.size > 0 && result.stoppedEarly === null) {
+      for (const [i, companyId] of input.companyIds.entries()) {
+        if (outOfTime()) {
+          result.stoppedEarly = { phase: "previous", afterCompanies: i, of: total };
+          break;
+        }
         const records = await input.fetchPage(
           companyId,
           window.previousFrom,
@@ -714,10 +781,12 @@ async function runSourcePass<R extends { id: string }>(
     if (!dryRun) {
       const applied = await deps.store.applyReconciliation(reconciliation);
       result.written = applied.written;
+      // A run that ran out of budget still wrote what it fetched, but it did
+      // not cover every company — so it is recorded as failed, with why.
       await deps.store.finishJob({
         jobId: result.jobId as string,
-        status: "completed",
-        errorMessage: null,
+        status: result.stoppedEarly ? "failed" : "completed",
+        errorMessage: result.stoppedEarly ? stoppedEarlyMessage(result.stoppedEarly, input.fetchBudgetMs) : null,
         leadsIngested: applied.written,
       });
     }

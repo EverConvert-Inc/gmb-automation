@@ -255,6 +255,22 @@ export function buildFinishJobUpdate(
     .where(eq(leadSyncJobs.id, input.jobId));
 }
 
+/** lead_sync_jobs rows left 'running' by a run that never finished. */
+export function buildFailStaleJobsUpdate(
+  database: LeadDb,
+  input: { startedBefore: Date; message: string; completedAt: Date },
+) {
+  return database
+    .update(leadSyncJobs)
+    .set({
+      status: "failed",
+      completedAt: input.completedAt,
+      errorMessage: input.message.slice(0, 2000),
+    })
+    .where(and(eq(leadSyncJobs.status, "running"), lt(leadSyncJobs.startedAt, input.startedBefore)))
+    .returning({ id: leadSyncJobs.id });
+}
+
 export const drizzleLeadStore: LeadStore = {
   async loadRoutingRules() {
     const [tagRows, companyRows] = await Promise.all([
@@ -416,6 +432,11 @@ export const drizzleLeadStore: LeadStore = {
       leadsIngested,
       completedAt: new Date(),
     });
+  },
+
+  async failStaleJobs({ startedBefore, message }) {
+    const rows = await buildFailStaleJobsUpdate(db, { startedBefore, message, completedAt: new Date() });
+    return rows.length;
   },
 };
 

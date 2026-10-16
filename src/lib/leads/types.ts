@@ -117,4 +117,12 @@ export type LeadStore = {
     errorMessage: string | null;
     leadsIngested: number;
   }): Promise<void>;
+
+  /**
+   * Marks every job still 'running' that started before `startedBefore` as
+   * 'failed' with `message`. A run killed at the function's time limit never
+   * reaches its own finishJob, so without this its row says "running" forever.
+   * Returns how many rows it changed.
+   */
+  failStaleJobs(input: { startedBefore: Date; message: string }): Promise<number>;
 };

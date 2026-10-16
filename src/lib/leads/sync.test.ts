@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  FETCH_BUDGET_MS,
+  STALE_JOB_MESSAGE,
+  STALE_JOB_MINUTES,
   maskName,
   maskPhone,
   normalizeCall,
@@ -42,6 +45,8 @@ function makeFakeStore(
     companyRules?: { firmId: string; callrailCompanyId: string }[];
     pending?: Partial<Record<LeadSource, string[]>>;
     seed?: StoredRow[];
+    /** Job rows already in lead_sync_jobs before this run. */
+    seedJobs?: { kind: string; status: string; startedAt: Date }[];
   } = {},
 ) {
   const rows = new Map<string, StoredRow>();
@@ -55,7 +60,15 @@ function makeFakeStore(
     triggeredBy: string;
     errorMessage: string | null;
     leadsIngested: number;
-  }[] = [];
+    startedAt?: Date;
+  }[] = (opts.seedJobs ?? []).map((j) => ({
+    kind: j.kind,
+    status: j.status,
+    triggeredBy: "scheduled",
+    errorMessage: null,
+    leadsIngested: 0,
+    startedAt: j.startedAt,
+  }));
   const counts = { pendingLookups: 0, applies: 0 };
   let nextId = 1;
 
@@ -155,6 +168,17 @@ function makeFakeStore(
         deleted: plan.deleteRowIds.length,
         flagged: plan.flagStaleRowIds.length,
       };
+    },
+    async failStaleJobs({ startedBefore, message }) {
+      let n = 0;
+      for (const j of jobs) {
+        if (j.status === "running" && j.startedAt && j.startedAt < startedBefore) {
+          j.status = "failed";
+          j.errorMessage = message;
+          n += 1;
+        }
+      }
+      return n;
     },
     async startJob(i) {
       jobs.push({
@@ -1447,5 +1471,140 @@ describe("syncLeadsForMonth — scope", () => {
     const result = await syncLeadsForMonth(r.deps, { scope: "mapped", companyIds: ["UNSERVED1"] });
     expect(result.scope).toBe("explicit");
     expect([...new Set(r.fetched)]).toEqual(["calls:UNSERVED1", "forms:UNSERVED1"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Run safety: the fetch budget and the stale-job cleanup
+// ---------------------------------------------------------------------------
+
+describe("syncLeadsForMonth — fetch budget", () => {
+  /** A clock that each company fetch advances by `perCompanyMs`. */
+  function timedDeps(store: LeadStore, perCompanyMs: number, companies: string[], records: (c: string) => unknown[] = () => []) {
+    let t = Date.UTC(2026, 9, 14, 8, 30);
+    const fetchedCalls: string[] = [];
+    const fetchedForms: string[] = [];
+    const deps = makeDeps(store, {
+      now: () => new Date(t),
+      listCompanyIds: async () => companies,
+      fetchCalls: async (companyId) => {
+        fetchedCalls.push(companyId);
+        t += perCompanyMs;
+        return records(companyId) as never;
+      },
+      fetchForms: async (companyId) => {
+        fetchedForms.push(companyId);
+        t += perCompanyMs;
+        return [];
+      },
+    });
+    return { deps, fetchedCalls, fetchedForms };
+  }
+
+  const COMPANIES = Array.from({ length: 10 }, (_, i) => `COM${i + 1}`);
+
+  it("defaults to 220s", () => {
+    expect(FETCH_BUDGET_MS).toBe(220_000);
+  });
+
+  it("stops starting new companies once the budget is spent, writes what it fetched, and finishes the job row as failed", async () => {
+    const fake = makeFakeStore({ companyRules: COMPANIES.map((c) => ({ firmId: "firm-a", callrailCompanyId: c })) });
+    // 30s per company: COM1..COM8 start before 220s (0,30,…,210s); COM9 would start at 240s.
+    const t = timedDeps(fake.store, 30_000, COMPANIES, (c) =>
+      c === "COM1" ? [CALL({ id: "c-early", tags: ["Signed"] })] : [],
+    );
+    const r = await syncLeadsForMonth(t.deps, { scope: "mapped", triggeredBy: "scheduled" });
+
+    // Mapped companies are fetched in sorted order; the first 8 of that order fit.
+    expect(t.fetchedCalls).toEqual([...COMPANIES].sort().slice(0, 8));
+    expect(r.calls.stoppedEarly).toEqual({ phase: "current", afterCompanies: 8, of: 10 });
+    expect(r.calls.written).toBe(1); // COM1's lead is still written
+    expect([...fake.rows.values()].map((row) => row.callrailId)).toEqual(["c-early"]);
+
+    const callsJob = fake.jobs.find((j) => j.kind === "callrail_calls")!;
+    expect(callsJob.status).toBe("failed");
+    expect(callsJob.errorMessage).toBe("stopped after 8 of 10 companies (fetch budget 220s)");
+
+    // The budget is shared: forms start after it is spent, so they fetch nothing — and still finish their row.
+    expect(t.fetchedForms).toEqual([]);
+    const formsJob = fake.jobs.find((j) => j.kind === "callrail_forms")!;
+    expect(formsJob.status).toBe("failed");
+    expect(formsJob.errorMessage).toBe("stopped after 0 of 10 companies (fetch budget 220s)");
+    expect(fake.jobs.some((j) => j.status === "running")).toBe(false);
+  });
+
+  it("a run that fits finishes completed, with no stop recorded", async () => {
+    const fake = makeFakeStore();
+    const t = timedDeps(fake.store, 1_000, COMPANIES);
+    const r = await syncLeadsForMonth(t.deps, {});
+    expect(r.calls.stoppedEarly).toBeNull();
+    expect(r.forms.stoppedEarly).toBeNull();
+    expect(fake.jobs.map((j) => j.status)).toEqual(["completed", "completed"]);
+  });
+
+  it("the previous-month recheck also respects the budget, and says so", async () => {
+    const fake = makeFakeStore({ pending: { call: ["c-old"] } });
+    const t = timedDeps(fake.store, 20_000, COMPANIES.slice(0, 6));
+    // Current month: 6 × 20s = 120s. Recheck: starts at 120,140,160,180,200 → 5 fit; the 6th would start at 220s.
+    const r = await syncLeadsForMonth(t.deps, { fetchBudgetMs: 220_000 });
+    expect(r.calls.stoppedEarly).toEqual({ phase: "previous", afterCompanies: 5, of: 6 });
+    expect(fake.jobs.find((j) => j.kind === "callrail_calls")!.errorMessage).toBe(
+      "stopped after 6 of 6 companies; previous-month recheck stopped after 5 of 6 (fetch budget 220s)",
+    );
+  });
+
+  it("a dry run stops the same way but writes no job rows", async () => {
+    const fake = makeFakeStore();
+    const t = timedDeps(fake.store, 30_000, COMPANIES);
+    const r = await syncLeadsForMonth(t.deps, { dryRun: true });
+    expect(r.calls.stoppedEarly).toEqual({ phase: "current", afterCompanies: 8, of: 10 });
+    expect(fake.jobs).toEqual([]);
+  });
+});
+
+describe("syncLeadsForMonth — stale job cleanup", () => {
+  const RUN_AT = new Date("2026-10-14T08:30:00Z");
+  const minutesAgo = (m: number) => new Date(RUN_AT.getTime() - m * 60_000);
+
+  it(`marks jobs still 'running' after ${STALE_JOB_MINUTES} minutes as failed, before the run starts its own`, async () => {
+    const fake = makeFakeStore({
+      seedJobs: [
+        { kind: "callrail_calls", status: "running", startedAt: minutesAgo(24 * 60) }, // yesterday's, killed
+        { kind: "callrail_forms", status: "running", startedAt: minutesAgo(STALE_JOB_MINUTES + 1) },
+        { kind: "callrail_calls", status: "running", startedAt: minutesAgo(5) }, // a run that may still be alive
+        { kind: "callrail_calls", status: "completed", startedAt: minutesAgo(60) },
+      ],
+    });
+    const r = await syncLeadsForMonth(makeDeps(fake.store, { now: () => RUN_AT }), { triggeredBy: "scheduled" });
+    expect(r.staleJobsFailed).toBe(2);
+    expect(fake.jobs.slice(0, 4).map((j) => [j.status, j.errorMessage])).toEqual([
+      ["failed", STALE_JOB_MESSAGE],
+      ["failed", STALE_JOB_MESSAGE],
+      ["running", null],
+      ["completed", null],
+    ]);
+    expect(STALE_JOB_MESSAGE).toBe("No finish recorded (likely stopped at the 300s time limit)");
+  });
+
+  it("uses only 'failed' — never a new status value", async () => {
+    const fake = makeFakeStore({ seedJobs: [{ kind: "callrail_calls", status: "running", startedAt: minutesAgo(60) }] });
+    await syncLeadsForMonth(makeDeps(fake.store, { now: () => RUN_AT }), {});
+    expect(new Set(fake.jobs.map((j) => j.status))).toEqual(new Set(["failed", "completed"]));
+  });
+
+  it("a dry run does not touch job rows", async () => {
+    const fake = makeFakeStore({ seedJobs: [{ kind: "callrail_calls", status: "running", startedAt: minutesAgo(60) }] });
+    const r = await syncLeadsForMonth(makeDeps(fake.store, { now: () => RUN_AT }), { dryRun: true });
+    expect(r.staleJobsFailed).toBeNull();
+    expect(fake.jobs[0].status).toBe("running");
+  });
+
+  it("a failing cleanup never stops the sync", async () => {
+    const fake = makeFakeStore();
+    const store = { ...fake.store, failStaleJobs: async () => { throw new Error("db down"); } };
+    const r = await syncLeadsForMonth(makeDeps(store, { now: () => RUN_AT, fetchCalls: async () => [CALL() as never] }), {});
+    expect(r.staleJobsFailed).toBeNull();
+    expect(r.calls.error).toBeNull();
+    expect(r.calls.written).toBeGreaterThan(0);
   });
 });

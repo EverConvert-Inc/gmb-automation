@@ -8,6 +8,7 @@ import {
   buildDeleteRows,
   buildExistingLeadRowsQuery,
   buildFlagStaleUpdate,
+  buildFailStaleJobsUpdate,
   buildFinishJobUpdate,
   buildLeadUpsert,
   buildPendingCallrailIdsQuery,
@@ -161,6 +162,15 @@ const QUERIES: Array<[string, () => { sql: string; params: unknown[] }]> = [
         completedAt: NOW,
       }).toSQL(),
   ],
+  [
+    "fail stale jobs",
+    () =>
+      buildFailStaleJobsUpdate(db, {
+        startedBefore: NOW,
+        message: "No finish recorded (likely stopped at the 300s time limit)",
+        completedAt: NOW,
+      }).toSQL(),
+  ],
   ["upsert — unassigned", () => buildLeadUpsert(db, [ROW], true, NOW).toSQL()],
   ["upsert — assigned", () => buildLeadUpsert(db, [ASSIGNED], false, NOW).toSQL()],
   [
@@ -281,5 +291,14 @@ describe("the reconciliation write path", () => {
   it("flagging stale rows never touches firm_id", () => {
     const { sql: text } = buildFlagStaleUpdate(db, ["row-1"], NOW).toSQL();
     expect(text).not.toContain('"firm_id" =');
+  });
+});
+
+describe("buildFailStaleJobsUpdate", () => {
+  it("only ever sets status 'failed', and only on rows still 'running' that started before the cutoff", () => {
+    const q = buildFailStaleJobsUpdate(db, { startedBefore: NOW, message: "m", completedAt: NOW }).toSQL();
+    expect(q.sql).toMatch(/^update "lead_sync_jobs" set "status" = \$1, "completed_at" = \$2, "error_message" = \$3 where \("lead_sync_jobs"\."status" = \$4 and "lead_sync_jobs"\."started_at" < \$5\) returning "id"$/);
+    expect(q.params[0]).toBe("failed");
+    expect(q.params[3]).toBe("running");
   });
 });
