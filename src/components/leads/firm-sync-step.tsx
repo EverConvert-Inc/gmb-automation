@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { fuGreenText, fuPrimary } from "./firm-ui";
+import { FirmButton } from "./firm-button";
+import { fuGreenText } from "./firm-ui";
 
 /** The existing staff sync route, narrowed to this firm's companies. */
 export function firmSyncUrl(companyIds: readonly string[]): string {
@@ -58,9 +58,9 @@ export function FirmSyncStep({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" className={fuPrimary} onClick={sync} disabled={busy || companyIds.length === 0}>
+        <FirmButton variant="primary" onClick={sync} disabled={busy || companyIds.length === 0}>
           {busy ? "Syncing… (can take a minute)" : "Sync now"}
-        </Button>
+        </FirmButton>
         {companyIds.length === 0 && <span className="text-sm text-muted-foreground">Map a CallRail company first.</span>}
         {result && !busy && (
           <span role="status" className="text-sm text-muted-foreground" data-sync-summary>

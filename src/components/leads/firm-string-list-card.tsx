@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FormError, Input, Label } from "@/components/ui/form";
-import { CallRailCompanyPicker } from "./callrail-company-picker";
+import { CallRailCompanyField } from "./callrail-company-picker";
 
 export type FirmListItem = { id: string; value: string };
 
@@ -32,7 +32,7 @@ export function FirmStringListCard({
   emptyHint: string;
   bodyKey: "tagName" | "callrailCompanyId";
   initial: FirmListItem[];
-  /** Companies only: also offer the CallRail company picker. The paste box stays. */
+  /** Companies only: one field that searches CallRail by name or takes a pasted id, instead of the plain box. */
   picker?: boolean;
 }) {
   const router = useRouter();
@@ -108,8 +108,13 @@ export function FirmStringListCard({
       ) : (
         <ul className="divide-y rounded-lg border">
           {items.map((item) => (
-            <li key={item.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-              <span className="truncate font-mono text-xs sm:text-sm">{item.value}</span>
+            <li
+              key={item.id}
+              className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+            >
+              <span className="truncate font-mono text-xs sm:text-sm">
+                {item.value}
+              </span>
               <Button
                 type="button"
                 variant="ghost"
@@ -125,23 +130,32 @@ export function FirmStringListCard({
         </ul>
       )}
 
-      {picker && kind === "companies" && <CallRailCompanyPicker firmId={firmId} onPick={addValue} />}
-
-      <form onSubmit={add} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <div className="flex-1">
-          <Label htmlFor={`firm-${kind}-add`}>{addLabel}</Label>
-          <Input
-            id={`firm-${kind}-add`}
-            required
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={placeholder}
-          />
-        </div>
-        <Button type="submit" variant="outline" disabled={busy || !draft.trim()}>
-          {busy ? "Adding…" : "Add"}
-        </Button>
-      </form>
+      {picker && kind === "companies" ? (
+        <CallRailCompanyField firmId={firmId} onPick={addValue} />
+      ) : (
+        <form
+          onSubmit={add}
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        >
+          <div className="flex-1">
+            <Label htmlFor={`firm-${kind}-add`}>{addLabel}</Label>
+            <Input
+              id={`firm-${kind}-add`}
+              required
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={placeholder}
+            />
+          </div>
+          <Button
+            type="submit"
+            variant="outline"
+            disabled={busy || !draft.trim()}
+          >
+            {busy ? "Adding…" : "Add"}
+          </Button>
+        </form>
+      )}
       <FormError>{error}</FormError>
     </div>
   );
@@ -157,5 +171,8 @@ async function readList(
   };
   return kind === "tags"
     ? (body.tags ?? []).map((t) => ({ id: t.id, value: t.tagName }))
-    : (body.companies ?? []).map((c) => ({ id: c.id, value: c.callrailCompanyId }));
+    : (body.companies ?? []).map((c) => ({
+        id: c.id,
+        value: c.callrailCompanyId,
+      }));
 }

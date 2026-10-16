@@ -28,7 +28,14 @@ import { FirmStep } from "@/components/leads/firm-step";
 import { FirmStatusStrip, statusTiles } from "@/components/leads/firm-status-strip";
 import { FirmSyncStep, firmSyncUrl, summarise } from "@/components/leads/firm-sync-step";
 import { FirmHeader, deactivateConfirmText } from "@/components/leads/firm-header";
-import { availability, filterCompanies, type PickerCompany } from "@/components/leads/callrail-company-picker";
+import {
+  availability,
+  filterCompanies,
+  looksLikeCompanyId,
+  pickerOptions,
+  type PickerCompany,
+} from "@/components/leads/callrail-company-picker";
+import { FirmButton, firmButtonClasses } from "@/components/leads/firm-button";
 
 // A connectionless Drizzle instance: toSQL() compiles the real builders without a socket.
 const compileDb = drizzle({} as never, { schema }) as never;
@@ -172,10 +179,7 @@ describe("the Active switch and the details form", () => {
     expect(html).toContain("Smith Law");
   });
 
-  it("asks before deactivating (never before activating) and sends only isActive", () => {
-    const src = read("src", "components", "leads", "firm-header.tsx");
-    expect(src).toContain("if (!next && !confirm(deactivateConfirmText(firm.name))) return;");
-    expect(src).toContain("JSON.stringify({ isActive: next })");
+  it("deactivation asks first; the confirm text names the firm", () => {
     expect(deactivateConfirmText("Smith Law")).toMatch(/^Deactivate Smith Law\? Its clients lose portal access/);
   });
 
@@ -223,12 +227,106 @@ describe("company picker", () => {
     expect(filterCompanies(list, "  ")).toHaveLength(4);
   });
 
-  it("loads only when opened, and the paste box stays", () => {
-    const picker = read("src", "components", "leads", "callrail-company-picker.tsx");
-    expect(picker).toMatch(/function toggle\(\) \{[\s\S]*if \(next && !companies && !loading\) void load\(\);/);
-    expect(picker.match(/fetch\(/g)).toHaveLength(1);
+  it("is one field: no separate paste box or 'Choose from CallRail' button for companies", () => {
     const list = read("src", "components", "leads", "firm-string-list-card.tsx");
-    expect(list).toContain("<CallRailCompanyPicker firmId={firmId} onPick={addValue} />");
-    expect(list).toContain("if (await addValue(draft)) setDraft(\"\");");
+    expect(list).toMatch(/picker && kind === "companies" \? \(\s*<CallRailCompanyField firmId=\{firmId\} onPick=\{addValue\} \/>\s*\) : \(\s*<form/);
+    const field = read("src", "components", "leads", "callrail-company-picker.tsx");
+    expect(field).not.toContain("Choose from CallRail");
+    expect(field).not.toContain("paste a company id");
+  });
+
+  it("loads on first focus (never on page load), and keeps focus when a row is pressed", () => {
+    const field = read("src", "components", "leads", "callrail-company-picker.tsx");
+    expect(field).toMatch(/function openList\(\) \{[\s\S]*if \(!list && !loading && !loadError\) void load\(\);/);
+    expect(field).toMatch(/onFocus=\{openList\}/);
+    expect(field).not.toMatch(/useEffect\(\(\) => \{?\s*(void )?load\(/);
+    expect(field).toMatch(/role="option"[\s\S]*onMouseDown=\{\(e\) => e\.preventDefault\(\)\}/);
+    expect(field.match(/fetch\(/g)).toHaveLength(1);
+  });
+
+  it("after a pick: confirmed, cleared and closed", () => {
+    const field = read("src", "components", "leads", "callrail-company-picker.tsx");
+    expect(field).toMatch(/setConfirmed\(\{ id, name \}\);\s*setQuery\(""\);\s*setOpen\(false\);/);
+  });
+});
+
+describe("the combined company field", () => {
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  const ID_A = "COM0123456789abcdef0123456789abcdef";
+  const list: PickerCompany[] = [
+    { id: ID_A, name: "Smith Law PPC", disabled: false, mappedTo: null },
+    { id: "COMbbbbbbbbbbbb", name: "Jones Injury", disabled: false, mappedTo: { firmId: OTHER, firmName: "Jones" } },
+  ];
+  const view = (o: ReturnType<typeof pickerOptions>[number]) =>
+    o.kind === "pasted" ? ["pasted", o.id, o.pickable] : ["company", o.company.id, o.pickable, o.note];
+
+  it("typing searches by name", () => {
+    expect(pickerOptions(list, "smith", FIRM).map(view)).toEqual([["company", ID_A, true, null]]);
+  });
+
+  it("an exact pasted id that is in the list shows as that company", () => {
+    expect(pickerOptions(list, ID_A, FIRM).map(view)).toEqual([["company", ID_A, true, null]]);
+  });
+
+  it("a company taken by another firm shows as taken and cannot be picked — even pasted", () => {
+    expect(pickerOptions(list, "COMbbbbbbbbbbbb", FIRM).map(view)).toEqual([["company", "COMbbbbbbbbbbbb", false, "Taken by Jones"]]);
+  });
+
+  it("an id not in the list can still be used", () => {
+    expect(pickerOptions(list, "COMcccccccccccc", FIRM).map(view)).toEqual([["pasted", "COMcccccccccccc", true]]);
+  });
+
+  it("if CallRail failed (no list), a pasted id still works — never blocked", () => {
+    expect(pickerOptions(null, "  COM0123456789abcdef  ", FIRM).map(view)).toEqual([["pasted", "COM0123456789abcdef", true]]);
+    expect(pickerOptions(null, "smith", FIRM)).toEqual([]);
+  });
+
+  it("recognises a CallRail company id", () => {
+    expect(looksLikeCompanyId("COM8a3f12ab")).toBe(true);
+    expect(looksLikeCompanyId("com8a3f12ab")).toBe(true);
+    expect(looksLikeCompanyId("Smith")).toBe(false);
+    expect(looksLikeCompanyId("COM1")).toBe(false);
+  });
+});
+
+describe("one shared button", () => {
+  it("danger carries exactly the requested classes", () => {
+    const c = firmButtonClasses("danger");
+    for (const k of "rounded-xl bg-gradient-to-t from-red-600 to-red-500 px-4 py-2 text-sm font-medium text-white".split(" ")) {
+      expect(c.split(" ")).toContain(k);
+    }
+  });
+
+  it("primary carries the requested classes as the dark look, with a light-mode pair", () => {
+    const c = firmButtonClasses("primary").split(" ");
+    for (const k of ["py-2", "px-4", "rounded-xl", "text-sm", "font-medium", "border"]) expect(c).toContain(k);
+    for (const k of ["dark:bg-emerald-950", "dark:text-emerald-500", "dark:border-emerald-900"]) expect(c).toContain(k);
+    for (const k of ["bg-emerald-50", "text-emerald-800", "border-emerald-200"]) expect(c).toContain(k);
+  });
+
+  it("both have hover, keyboard focus and disabled states", () => {
+    for (const v of ["danger", "primary"] as const) {
+      const c = firmButtonClasses(v);
+      expect(c).toMatch(/hover:/);
+      expect(c).toContain("focus-visible:ring-2");
+      expect(c).toContain("disabled:opacity-50");
+      expect(c).toContain("disabled:cursor-not-allowed");
+    }
+  });
+
+  it("Create login, Sync now and Delete firm all use it; nothing copies the classes", () => {
+    expect(read("src", "components", "leads", "firm-users-card.tsx")).toContain('<FirmButton type="submit" variant="primary"');
+    expect(read("src", "components", "leads", "firm-sync-step.tsx")).toContain('<FirmButton variant="primary"');
+    expect(read("src", "components", "leads", "firm-danger-zone-card.tsx")).toContain('<FirmButton variant="danger"');
+    for (const f of ["firm-users-card.tsx", "firm-sync-step.tsx", "firm-danger-zone-card.tsx", "firm-header.tsx", "callrail-company-picker.tsx"]) {
+      expect(read("src", "components", "leads", f), f).not.toMatch(/from-red-600|bg-emerald-950/);
+    }
+  });
+
+  it("Delete firm stays disabled until the name is typed", async () => {
+    const { FirmDangerZoneCard } = await import("@/components/leads/firm-danger-zone-card");
+    const html = renderToStaticMarkup(createElement(FirmDangerZoneCard, { firmId: FIRM, firmName: "Smith Law", leadCount: 0 }));
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Delete firm<\/button>/);
+    expect(renderToStaticMarkup(createElement(FirmButton, { variant: "danger", disabled: true }, "x"))).toContain('type="button"');
   });
 });

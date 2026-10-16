@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { FirmButton } from "./firm-button";
 import { FormError, Input, Label } from "@/components/ui/form";
 
 /**
@@ -62,14 +62,9 @@ export function FirmDangerZoneCard({
           autoComplete="off"
         />
       </div>
-      <Button
-        type="button"
-        variant="destructive"
-        onClick={destroy}
-        disabled={busy || leadCount > 0 || confirm !== firmName}
-      >
+      <FirmButton variant="danger" onClick={destroy} disabled={busy || leadCount > 0 || confirm !== firmName}>
         {busy ? "Deleting…" : "Delete firm"}
-      </Button>
+      </FirmButton>
       <FormError>{error}</FormError>
     </div>
   );

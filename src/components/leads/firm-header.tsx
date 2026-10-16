@@ -1,15 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { FormError } from "@/components/ui/form";
+import { toggleFirmActive } from "./firm-active";
 
-export function deactivateConfirmText(firmName: string): string {
-  return `Deactivate ${firmName}? Its clients lose portal access and new leads stop routing to it. Leads it already holds are kept.`;
-}
+export { deactivateConfirmText } from "./firm-active";
 
-/** Firm name, slug, and the Active switch (saves on change; asks before deactivating). */
+/** Firm name, slug, and the Active switch. */
 export function FirmHeader({
   firm,
 }: {
@@ -20,29 +18,32 @@ export function FirmHeader({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, startRefresh] = useTransition();
+  const busyRef = useRef(false);
 
-  async function toggle() {
-    const next = !active;
-    if (!next && !confirm(deactivateConfirmText(firm.name))) return;
+  // Follow the server after any refresh (another step saving, another tab),
+  // but never while a request of our own is in flight.
+  useEffect(() => {
+    if (!busyRef.current) setActive(firm.isActive);
+  }, [firm.isActive]);
+
+  async function onToggle() {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
-    try {
-      const res = await fetch(`/api/admin/firms/${firm.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: next }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      setActive(next);
-      startRefresh(() => router.refresh());
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    const result = await toggleFirmActive({
+      firmId: firm.id,
+      firmName: firm.name,
+      current: active,
+      confirmFn: (m) => window.confirm(m),
+      fetchFn: (url, init) => fetch(url, init),
+      onOptimistic: setActive,
+    });
+    setActive(result.active);
+    if (result.status === "failed") setError(result.error);
+    busyRef.current = false;
+    setBusy(false);
+    if (result.status === "saved") startRefresh(() => router.refresh());
   }
 
   return (
@@ -56,29 +57,34 @@ export function FirmHeader({
           type="button"
           role="switch"
           aria-checked={active}
+          aria-busy={busy}
           aria-label="Firm active"
           disabled={busy}
-          onClick={toggle}
-          className="inline-flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fu-text)] disabled:opacity-60"
+          onClick={onToggle}
+          className="inline-flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3 text-sm font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-wait disabled:opacity-70"
         >
           <span
             aria-hidden
             className={cn(
-              "relative h-5 w-9 rounded-full transition-colors",
-              active ? "bg-[var(--fu-solid)]" : "bg-muted-foreground/30",
+              "relative inline-block h-5 w-9 shrink-0 rounded-full transition-colors",
+              active ? "bg-emerald-600 dark:bg-emerald-500" : "bg-muted-foreground/30",
             )}
           >
             <span
               className={cn(
-                "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
-                active ? "translate-x-4" : "translate-x-0.5",
+                "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
+                active ? "translate-x-4" : "translate-x-0",
               )}
             />
           </span>
-          {active ? "Active" : "Inactive"}
+          {busy ? "Saving…" : active ? "Active" : "Inactive"}
         </button>
       </div>
-      <FormError>{error}</FormError>
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

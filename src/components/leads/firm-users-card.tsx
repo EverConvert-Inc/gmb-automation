@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormError, Input, Label } from "@/components/ui/form";
-import { fuPrimary } from "./firm-ui";
+import { FirmButton } from "./firm-button";
 
 export type FirmUser = {
   id: string;
@@ -231,9 +231,9 @@ export function FirmUsersCard({
                 placeholder="name@lawfirm.com"
               />
             </div>
-            <Button type="submit" className={fuPrimary} disabled={busy || !draft.trim()}>
+            <FirmButton type="submit" variant="primary" disabled={busy || !draft.trim()}>
               {busy ? "Creating…" : "Create login"}
-            </Button>
+            </FirmButton>
           </form>
         ) : (
           <p className="text-sm text-muted-foreground">

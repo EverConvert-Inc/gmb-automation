@@ -143,7 +143,7 @@ export default async function FirmDetailPage({
           firmId={firm.id}
           kind="companies"
           bodyKey="callrailCompanyId"
-          addLabel="Or paste a company id"
+          addLabel="CallRail company id"
           placeholder="COM…"
           emptyHint="No company mapped yet."
           initial={companies.map((c) => ({ id: c.id, value: c.callrailCompanyId }))}
