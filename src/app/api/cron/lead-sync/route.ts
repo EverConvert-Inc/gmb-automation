@@ -5,14 +5,22 @@ import { syncLeadsForMonth, type SyncScope } from "@/lib/leads/sync";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-// NOT registered in vercel.json yet, and must not be until a dry run has
-// confirmed every CallRail field name on preview — CallRail 400s an entire
-// request on one unknown field, so the first scheduled run would otherwise
-// fail silently into a job row nobody reads.
+// Scheduled in vercel.json as "/api/cron/lead-sync?scope=mapped" at 30 8 * * *
+// (08:30 UTC = 04:30 Eastern in summer, 03:30 in winter — after Eastern
+// midnight either way, and clear of the CallRail crons at 11:10/11:20 UTC).
 //
-// Until then this follows the repo's diagnostic-route convention: reachable
-// only with the CRON_SECRET bearer, exempt from the session gate via the
-// /api/cron prefix (see supabase/middleware.ts), safe to curl by hand.
+// The daily run fetches only the CallRail companies mapped to an active firm
+// (scope=mapped); a firm tag still beats the company for every lead it
+// fetches. It starts by failing job rows left "running" by a killed run,
+// stops starting new company fetches after a 220s budget (writing what it
+// has and finishing the job as failed with "stopped after N of M
+// companies"), and reaches its new-lead window back to the last completed
+// run so the final hours of a month are not missed. See src/lib/leads/sync.ts.
+//
+// Requires the CRON_SECRET bearer, which Vercel's cron sends; exempt from the
+// session gate via the /api/cron prefix (see supabase/middleware.ts). A manual
+// call without scope covers the whole account (scope=all); ?dryRun=1 writes
+// nothing; ?companyIds=A,B narrows a manual run.
 function checkCronAuth(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
   if (!expected) return false;

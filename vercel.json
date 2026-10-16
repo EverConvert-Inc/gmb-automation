@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/lsa-lead-rating",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/lead-sync?scope=mapped",
+      "schedule": "30 8 * * *"
     }
   ]
 }
