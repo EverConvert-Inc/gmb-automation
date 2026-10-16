@@ -5,12 +5,12 @@
 @layer base {
   :root {
     /* Surface */
-    /* Surfaces match the client portal's light theme
-       (src/app/(portal)/portal-theme.css): a soft neutral page so white
-       cards and the white sidebar stand off it. */
-    --background: 220 20% 97%;         /* page bg: ~#f6f7f9 */
+    /* A white page (and white sidebar); the soft neutral grey lives on the
+       surfaces instead — cards, panels and popovers — with inputs staying
+       white on them. Greys and text match the client portal's palette. */
+    --background: 0 0% 100%;           /* page bg: white */
     --foreground: 222 39% 11%;         /* body text */
-    --card: 0 0% 100%;                 /* white surfaces */
+    --card: 220 20% 97%;               /* surfaces: ~#f6f7f9 */
     --card-foreground: 222 39% 11%;
     --muted: 220 14% 95%;
     --muted-foreground: 220 9% 40%;
