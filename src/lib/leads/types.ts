@@ -125,4 +125,11 @@ export type LeadStore = {
    * Returns how many rows it changed.
    */
   failStaleJobs(input: { startedBefore: Date; message: string }): Promise<number>;
+
+  /**
+   * The to_date (an Eastern calendar date) of the most recent COMPLETED job
+   * of this kind, or null if there is none. A run that stopped early or
+   * failed does not count, so the next run reaches back past it.
+   */
+  lastCompletedJobToDate(kind: JobKind): Promise<string | null>;
 };

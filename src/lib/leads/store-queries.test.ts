@@ -9,6 +9,7 @@ import {
   buildExistingLeadRowsQuery,
   buildFlagStaleUpdate,
   buildFailStaleJobsUpdate,
+  buildLastCompletedJobQuery,
   buildFinishJobUpdate,
   buildLeadUpsert,
   buildPendingCallrailIdsQuery,
@@ -300,5 +301,15 @@ describe("buildFailStaleJobsUpdate", () => {
     expect(q.sql).toMatch(/^update "lead_sync_jobs" set "status" = \$1, "completed_at" = \$2, "error_message" = \$3 where \("lead_sync_jobs"\."status" = \$4 and "lead_sync_jobs"\."started_at" < \$5\) returning "id"$/);
     expect(q.params[0]).toBe("failed");
     expect(q.params[3]).toBe("running");
+  });
+});
+
+describe("buildLastCompletedJobQuery", () => {
+  it("reads only COMPLETED jobs of one kind, newest first, one row", () => {
+    const q = buildLastCompletedJobQuery(db, "callrail_calls").toSQL();
+    expect(q.sql).toBe(
+      'select "to_date" from "lead_sync_jobs" where ("lead_sync_jobs"."kind" = $1 and "lead_sync_jobs"."status" = $2) order by "lead_sync_jobs"."completed_at" desc limit $3',
+    );
+    expect(q.params).toEqual(["callrail_calls", "completed", 1]);
   });
 });

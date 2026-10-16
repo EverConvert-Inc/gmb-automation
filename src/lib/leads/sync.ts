@@ -470,6 +470,8 @@ export type SourceResult = {
    * was fetched is still written; the job row is finished as failed.
    */
   stoppedEarly: { phase: "current" | "previous"; afterCompanies: number; of: number } | null;
+  /** The first day of the new-lead window this pass fetched (see newLeadWindowStart). */
+  fetchedFrom: string | null;
   error: string | null;
 };
 
@@ -512,8 +514,29 @@ function emptySourceResult(): SourceResult {
     parseFailureReasons: {},
     noteStructures: [],
     stoppedEarly: null,
+    fetchedFrom: null,
     error: null,
   };
+}
+
+/**
+ * Where a run's NEW-lead window starts: the earlier of the 1st of the month
+ * and the date of the last completed run, but never before the 1st of the
+ * previous month.
+ *
+ * Why: the window used to be the 1st of this month to today, and the
+ * previous-month pass only rechecks leads already stored. So on the 1st, a
+ * lead that arrived on the last day of the old month AFTER that day's run
+ * was never fetched at all. Starting at the last completed run's date
+ * re-reads that day (and any day a run was skipped or stopped early).
+ * Re-reading is safe: writes are upserts on the same keys.
+ */
+export function newLeadWindowStart(
+  window: Pick<SyncWindow, "currentFrom" | "previousFrom">,
+  lastCompletedToDate: string | null,
+): string {
+  if (!lastCompletedToDate || lastCompletedToDate >= window.currentFrom) return window.currentFrom;
+  return lastCompletedToDate < window.previousFrom ? window.previousFrom : lastCompletedToDate;
 }
 
 /** The job row's message for a run that ran out of fetch budget. */
@@ -671,11 +694,22 @@ async function runSourcePass<R extends { id: string }>(
   const result = emptySourceResult();
   const fieldsSeen = new Set<string>();
 
+  // Read-only, so a dry run uses the same window as a real one. If the lookup
+  // fails the run falls back to the plain month-to-date window.
+  let lastCompleted: string | null = null;
+  try {
+    lastCompleted = await deps.store.lastCompletedJobToDate(input.kind);
+  } catch {
+    lastCompleted = null;
+  }
+  const fetchFrom = newLeadWindowStart(window, lastCompleted);
+  result.fetchedFrom = fetchFrom;
+
   if (!dryRun) {
     result.jobId = await deps.store.startJob({
       kind: input.kind,
       triggeredBy: input.triggeredBy,
-      fromDate: window.currentFrom,
+      fromDate: fetchFrom,
       toDate: window.currentTo,
     });
   }
@@ -693,11 +727,7 @@ async function runSourcePass<R extends { id: string }>(
         result.stoppedEarly = { phase: "current", afterCompanies: i, of: total };
         break;
       }
-      const records = await input.fetchPage(
-        companyId,
-        window.currentFrom,
-        window.currentTo,
-      );
+      const records = await input.fetchPage(companyId, fetchFrom, window.currentTo);
       result.fetched += records.length;
       for (const r of records) {
         for (const k of Object.keys(r ?? {})) fieldsSeen.add(k);
@@ -731,8 +761,13 @@ async function runSourcePass<R extends { id: string }>(
           window.previousFrom,
           window.previousTo,
         );
+        // The new-lead window can now reach into the previous month, so a
+        // lead may already be collected; adding it twice would put the same
+        // row in one upsert batch twice.
+        const alreadyCollected = new Set(collected.map((l) => l.callrailId));
         for (const r of records) {
           if (!pendingIds.has(String(r?.id))) continue;
+          if (alreadyCollected.has(String(r?.id))) continue;
           const lead = input.normalize(r, companyId);
           if (!lead) continue;
           collected.push(lead);

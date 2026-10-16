@@ -2,7 +2,7 @@
 // database. sync.ts takes a LeadStore and never imports the db client, so
 // the orchestration can be exercised end to end against a fake.
 
-import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import {
@@ -255,6 +255,16 @@ export function buildFinishJobUpdate(
     .where(eq(leadSyncJobs.id, input.jobId));
 }
 
+/** The newest completed job of one kind: where the next run's new-lead window may begin. */
+export function buildLastCompletedJobQuery(database: LeadDb, kind: JobKind) {
+  return database
+    .select({ toDate: leadSyncJobs.toDate })
+    .from(leadSyncJobs)
+    .where(and(eq(leadSyncJobs.kind, kind), eq(leadSyncJobs.status, "completed")))
+    .orderBy(desc(leadSyncJobs.completedAt))
+    .limit(1);
+}
+
 /** lead_sync_jobs rows left 'running' by a run that never finished. */
 export function buildFailStaleJobsUpdate(
   database: LeadDb,
@@ -432,6 +442,13 @@ export const drizzleLeadStore: LeadStore = {
       leadsIngested,
       completedAt: new Date(),
     });
+  },
+
+  async lastCompletedJobToDate(kind) {
+    const rows = await buildLastCompletedJobQuery(db, kind);
+    const toDate = rows[0]?.toDate ?? null;
+    // date columns come back as "YYYY-MM-DD" strings; anything else is ignored.
+    return typeof toDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(toDate) ? toDate : null;
   },
 
   async failStaleJobs({ startedBefore, message }) {

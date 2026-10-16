@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { presetRange } from "@/lib/portal/range";
+import { inRange, monthAnchor } from "@/lib/portal/visibility";
+import { toIsoDateEastern } from "@/lib/date-utils";
 import {
   FETCH_BUDGET_MS,
+  newLeadWindowStart,
   STALE_JOB_MESSAGE,
   STALE_JOB_MINUTES,
   maskName,
@@ -47,6 +51,8 @@ function makeFakeStore(
     seed?: StoredRow[];
     /** Job rows already in lead_sync_jobs before this run. */
     seedJobs?: { kind: string; status: string; startedAt: Date }[];
+    /** to_date of the last COMPLETED job, per kind. */
+    lastCompleted?: Partial<Record<string, string>>;
   } = {},
 ) {
   const rows = new Map<string, StoredRow>();
@@ -168,6 +174,9 @@ function makeFakeStore(
         deleted: plan.deleteRowIds.length,
         flagged: plan.flagStaleRowIds.length,
       };
+    },
+    async lastCompletedJobToDate(kind) {
+      return opts.lastCompleted?.[kind] ?? null;
     },
     async failStaleJobs({ startedBefore, message }) {
       let n = 0;
@@ -1606,5 +1615,120 @@ describe("syncLeadsForMonth — stale job cleanup", () => {
     expect(r.staleJobsFailed).toBeNull();
     expect(r.calls.error).toBeNull();
     expect(r.calls.written).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Month-end: the new-lead window reaches back to the last completed run
+// ---------------------------------------------------------------------------
+
+describe("newLeadWindowStart", () => {
+  const NOV = { currentFrom: "2026-11-01", previousFrom: "2026-10-01" };
+  it.each([
+    ["no completed run yet", null, "2026-11-01"],
+    ["last run earlier this month", "2026-11-01", "2026-11-01"],
+    ["last run on the old month's final day", "2026-10-31", "2026-10-31"],
+    ["runs skipped or stopped early since the 28th", "2026-10-28", "2026-10-28"],
+    ["a long outage: bounded to the previous month's start", "2026-08-20", "2026-10-01"],
+    ["exactly the previous month's start", "2026-10-01", "2026-10-01"],
+  ])("%s → %s", (_, last, expected) => {
+    expect(newLeadWindowStart(NOV, last)).toBe(expected);
+  });
+
+  it("mid-month, a run last night changes nothing: the window is still the 1st", () => {
+    expect(newLeadWindowStart({ currentFrom: "2026-10-01", previousFrom: "2026-09-01" }, "2026-10-13")).toBe("2026-10-01");
+  });
+});
+
+describe("syncLeadsForMonth — month-end", () => {
+  // Nov 1, 04:30 Eastern: the first run of November.
+  const FIRST_OF_NOVEMBER = new Date("2026-11-01T08:30:00Z");
+  // Called Oct 31 at 22:30 Eastern — after Oct 31's 04:30 run.
+  const LATE_OCTOBER_CALL = CALL({
+    id: "c-oct31-late",
+    start_time: "2026-10-31T22:30:00.000-04:00",
+    tags: ["Opportunity"],
+    note: "Jane Doe, 555-123-4567",
+  });
+
+  function monthEndDeps(store: LeadStore) {
+    const windows: string[] = [];
+    const deps = makeDeps(store, {
+      now: () => FIRST_OF_NOVEMBER,
+      fetchCalls: async (_company, from, to) => {
+        windows.push(`${from}..${to}`);
+        // CallRail filters by the call's date: Oct 31 is only returned if the window includes it.
+        return (from <= "2026-10-31" && to >= "2026-10-31" ? [LATE_OCTOBER_CALL] : []) as never;
+      },
+    });
+    return { deps, windows };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FIRST_OF_NOVEMBER);
+  });
+
+  it("a lead from the last hours of October is ingested on November 1st and lands under last month", async () => {
+    const fake = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+      lastCompleted: { callrail_calls: "2026-10-31", callrail_forms: "2026-10-31" },
+    });
+    const m = monthEndDeps(fake.store);
+    const r = await syncLeadsForMonth(m.deps, { scope: "mapped", triggeredBy: "scheduled" });
+
+    expect(r.calls.fetchedFrom).toBe("2026-10-31");
+    expect(m.windows[0]).toBe("2026-10-31..2026-11-01");
+    const [row] = [...fake.rows.values()];
+    expect(row.callrailId).toBe("c-oct31-late");
+    expect(row.firmId).toBe("firm-a");
+    expect(toIsoDateEastern(row.occurredAt)).toBe("2026-10-31");
+
+    // The portal's month rule: a non-signed lead belongs to the month of its call.
+    const anchor = monthAnchor({ effectiveStatus: row.statusParsed, signedAt: row.signedAt, occurredAt: row.occurredAt });
+    expect(inRange(anchor, presetRange("previous"))).toBe(true); // October 2026
+    expect(inRange(anchor, presetRange("current"))).toBe(false);
+  });
+
+  it("before the fix (no reach-back), the same lead was never fetched", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const m = monthEndDeps(fake.store);
+    await syncLeadsForMonth(m.deps, { scope: "mapped" });
+    expect(m.windows[0]).toBe("2026-11-01..2026-11-01");
+    expect(fake.rows.size).toBe(0);
+  });
+
+  it("a lead seen by both the reach-back and the previous-month recheck is written once", async () => {
+    const fake = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+      lastCompleted: { callrail_calls: "2026-10-31" },
+      pending: { call: ["c-oct31-late"] },
+    });
+    const m = monthEndDeps(fake.store);
+    const r = await syncLeadsForMonth(m.deps, { scope: "mapped" });
+    expect(m.windows).toContain("2026-10-01..2026-10-31"); // the recheck ran
+    expect(r.calls.recheckedFromPreviousMonth).toBe(0); // …and skipped the lead already collected
+    expect(r.calls.planned).toBe(1);
+    expect(fake.rows.size).toBe(1);
+  });
+
+  it("if the last-run lookup fails, the run falls back to the 1st and still runs", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const store = { ...fake.store, lastCompletedJobToDate: async () => { throw new Error("db down"); } };
+    const m = monthEndDeps(store);
+    const r = await syncLeadsForMonth(m.deps, { scope: "mapped" });
+    expect(r.calls.fetchedFrom).toBe("2026-11-01");
+    expect(r.calls.error).toBeNull();
+  });
+
+  it("a dry run uses the same reach-back window", async () => {
+    const fake = makeFakeStore({
+      companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }],
+      lastCompleted: { callrail_calls: "2026-10-31" },
+    });
+    const m = monthEndDeps(fake.store);
+    const r = await syncLeadsForMonth(m.deps, { scope: "mapped", dryRun: true });
+    expect(r.calls.fetchedFrom).toBe("2026-10-31");
+    expect(fake.rows.size).toBe(0);
   });
 });
