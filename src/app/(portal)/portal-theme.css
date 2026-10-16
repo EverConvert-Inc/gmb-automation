@@ -154,9 +154,11 @@
 
 /* Loading spinner (_components/loader.tsx). The second arrow is white on
    the dark theme and near-black on the light one, where white would vanish. */
-/* The accent arrow is the portal's deep green. */
-.portal-theme { --portal-loader-accent: var(--portal-green-text); --portal-loader-second: #1f2937; }
-.portal-theme.dark { --portal-loader-accent: var(--portal-green-text); --portal-loader-second: #ffffff; }
+/* The accent arrow is the one deliberate exception to the green tokens: the
+   original bright EverConvert green, in both themes. It is a graphic, not
+   text, and moves, so it reads clearly at this brightness. */
+.portal-theme { --portal-loader-accent: #6fb744; --portal-loader-second: #1f2937; }
+.portal-theme.dark { --portal-loader-accent: #6fb744; --portal-loader-second: #ffffff; }
 
 @keyframes portal-loader-spin {
   to { transform: rotate(360deg); }

@@ -82,8 +82,8 @@ describe("styling", () => {
   it("the second arrow is white on dark, and not white on light (where it would vanish)", () => {
     expect(css).toMatch(/\.portal-theme\.dark\s*\{[^}]*--portal-loader-second:\s*#ffffff/);
     expect(css).toMatch(/\.portal-theme\s*\{[^}]*--portal-loader-second:\s*#1f2937/);
-    // The accent is the portal's deep green token, in both modes.
-    expect(css.match(/--portal-loader-accent:\s*var\(--portal-green-text\)/g)).toHaveLength(2);
+    // The accent is the original bright EverConvert green, in both modes.
+    expect(css.match(/--portal-loader-accent:\s*#6fb744/g)).toHaveLength(2);
     expect(css).not.toMatch(/--portal-loader-accent:\s*#2563eb/i); // no longer blue
   });
 
