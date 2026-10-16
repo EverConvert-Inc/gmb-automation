@@ -87,7 +87,7 @@ const contrast = (a: string, b: string) => {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 };
 const WHITE = "#ffffff";
-const DARK_CARD = "#1a1d23"; // the internal app's dark --card (222 16% 12%)
+const DARK_CARD = "#0f0f0f"; // the internal app's dark --card (0 0% 6%), as on the portal
 
 describe("the green tokens", () => {
   it("are the primary button's own emerald values", () => {
