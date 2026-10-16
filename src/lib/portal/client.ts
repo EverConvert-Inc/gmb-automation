@@ -30,17 +30,32 @@ type Sql = postgres.Sql;
 let client: Sql | null = null;
 let testOverride: Sql | null = null;
 
+/**
+ * Connection options, exported so a test can pin them.
+ *
+ * idle_timeout 180s: a month switch more than idle_timeout after the last
+ * portal query had to reconnect (TCP, TLS, startup) before it could run.
+ *
+ * fetch_types false: by default postgres.js runs a pg_type lookup on EVERY
+ * new connection, before the first real query, only to learn how to send and
+ * parse arrays. The portal never sends an array parameter (the hidden-tag
+ * list is written into the SQL text for exactly this reason) and selects no
+ * array column, so that round trip bought nothing. A test enforces both.
+ */
+export const PORTAL_CONNECTION_OPTIONS = {
+  max: 1,
+  prepare: false,
+  idle_timeout: 180,
+  connect_timeout: 10,
+  fetch_types: false,
+  // Identifies portal queries in pg_stat_activity.
+  connection: { application_name: "gmb-portal" },
+} as const;
+
 function createClient(): Sql {
   const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
   if (!url) throw new Error("DATABASE_URL (or POSTGRES_URL) is not set");
-  return postgres(url, {
-    max: 1,
-    prepare: false,
-    idle_timeout: 20,
-    connect_timeout: 10,
-    // Identifies portal queries in pg_stat_activity.
-    connection: { application_name: "gmb-portal" },
-  });
+  return postgres(url, { ...PORTAL_CONNECTION_OPTIONS, connection: { ...PORTAL_CONNECTION_OPTIONS.connection } });
 }
 
 function getSql(): Sql {
