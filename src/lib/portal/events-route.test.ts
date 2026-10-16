@@ -9,7 +9,7 @@ vi.mock("@/lib/supabase/server", () => ({
 import { __setPortalSqlForTests } from "./client";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { __resetEventRateLimitForTests, ROUTE_EVENTS_PER_MINUTE } from "./event-rate-limit";
-import { __setEventSchedulerForTests, __setEventsSqlForTests } from "./events";
+import { __resetEventsForTests, __setEventSchedulerForTests, __setEventsSqlForTests } from "./events";
 import { POST } from "@/app/api/portal/events/route";
 
 const FIRM = "11111111-1111-4111-8111-111111111111";
@@ -26,6 +26,7 @@ function signedIn(id: string, appMetadata: unknown) {
 }
 
 beforeEach(() => {
+  __resetEventsForTests();
   getUser.mockReset();
   membership = { member_active: true, firm_active: true };
   __setPortalSqlForTests(
@@ -94,7 +95,7 @@ describe("a valid batch", () => {
       events: [
         search,
         { type: "status_filter_used", meta: { statuses: ["signed"] } },
-        { type: "date_range_changed", meta: { kind: "preset_previous", span_days: 30 } },
+        { type: "date_range_changed", meta: { kind: "preset_previous" } },
       ],
     });
     expect(res.status).toBe(202);
@@ -121,6 +122,8 @@ describe("rejected bodies", () => {
     ["a search term", { events: [{ type: "search_used", meta: { kind: "name", term: "john" } }] }],
     ["typed dates", { events: [{ type: "date_range_changed", meta: { kind: "custom", span_days: 3, from: "2026-08-01" } }] }],
     ["span_days out of range", { events: [{ type: "date_range_changed", meta: { kind: "custom", span_days: 400 } }] }],
+    ["span_days on a preset", { events: [{ type: "date_range_changed", meta: { kind: "preset_current", span_days: 31 } }] }],
+    ["a custom range without its length", { events: [{ type: "date_range_changed", meta: { kind: "custom" } }] }],
     ["duplicate statuses", { events: [{ type: "status_filter_used", meta: { statuses: ["signed", "signed"] } }] }],
     ["no events", { events: [] }],
     ["more than 10 events", { events: Array.from({ length: 11 }, () => search) }],

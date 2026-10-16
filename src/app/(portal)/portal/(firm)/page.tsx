@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CircleAlert, Inbox } from "lucide-react";
 import { NOTE_MAX_LENGTH, listVisibleLeads, type PortalLead } from "@/lib/portal/db";
+import { logPortalEvents } from "@/lib/portal/events";
 import { allowedPortalWindow, presetOf, rangeFromSearchParams } from "@/lib/portal/range";
 import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
@@ -30,9 +31,18 @@ export default async function PortalLeadsPage({
   // Anything outside the window is refused here AND in listVisibleLeads; a
   // refused URL shows the default range, never the dates it asked for.
   const { range, invalid } = rangeFromSearchParams(await searchParams);
+  const preset = presetOf(range);
+
+  // Activity log: scheduled for after the response, never awaited, and never
+  // able to fail this page. A refused URL range is logged as "refused" with
+  // no dates; the sign-in is logged once per Auth sign-in time.
+  logPortalEvents(session, [
+    ...(session.lastSignInAt ? [{ type: "sign_in", meta: { signed_in_at: session.lastSignInAt } }] : []),
+    { type: "page_view", meta: { page: "leads", range: invalid ? "refused" : (preset ?? "custom") } },
+  ]);
+
   const leads = await listVisibleLeads(session.firmId, range);
 
-  const preset = presetOf(range);
   const allowed = allowedPortalWindow();
   const label = formatPortalRange(range, preset);
   const counts = countByStatus(leads);

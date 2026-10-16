@@ -6,6 +6,7 @@ import { DayPicker, type DateRange } from "react-day-picker";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { closesOnFocusOut } from "../_lib/popover";
+import { trackDateRange } from "../_lib/track";
 import { formatPortalRange } from "./format";
 import { PortalSpinner } from "./loader";
 import { portalButton, portalFocus, portalSelected } from "./ui";
@@ -87,7 +88,9 @@ export function DateRangePicker({
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [open]);
 
-  function go(href: string) {
+  function go(href: string, target: Preset | { from: string; to: string }) {
+    // Only the kind of range and its length are logged, never the dates.
+    trackDateRange(target);
     setOpen(false);
     triggerRef.current?.focus();
     startNavigation(() => router.push(href));
@@ -155,7 +158,7 @@ export function DateRangePicker({
                 key={p}
                 type="button"
                 aria-pressed={preset === p}
-                onClick={() => go(portalRangeHref(p))}
+                onClick={() => go(portalRangeHref(p), p)}
                 className={cn(
                   "flex-1 rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors sm:flex-none",
                   portalFocus,
@@ -247,7 +250,9 @@ export function DateRangePicker({
             <button
               type="button"
               disabled={!canApply}
-              onClick={() => draftFrom && draftTo && go(portalRangeHref({ from: draftFrom, to: draftTo }))}
+              onClick={() =>
+                draftFrom && draftTo && go(portalRangeHref({ from: draftFrom, to: draftTo }), { from: draftFrom, to: draftTo })
+              }
               className={portalButton("primary", "sm")}
             >
               Apply

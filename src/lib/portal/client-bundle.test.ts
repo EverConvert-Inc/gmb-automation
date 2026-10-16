@@ -25,7 +25,14 @@ describe.skipIf(!existsSync(STATIC))("built client chunks", () => {
   it("never mention the service-role key's name or the provisioning functions", () => {
     const hits = chunks.filter((f) => {
       const src = readFileSync(f, "utf8");
-      return src.includes(NAME) || src.includes("generateTemporaryPassword") || src.includes("serviceRoleAuth");
+      return (
+        src.includes(NAME) ||
+        src.includes("generateTemporaryPassword") ||
+        src.includes("serviceRoleAuth") ||
+        // The activity-log writer (server-only) never ships to a browser.
+        src.includes("gmb-portal-events") ||
+        src.includes("insert into portal_events")
+      );
     });
     expect(hits).toEqual([]);
   });

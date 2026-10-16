@@ -6,6 +6,7 @@ import type { PortalLead } from "@/lib/portal/db";
 import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
 import { FILTER_STATUSES, filterLeads, isFiltered, statusFacets } from "../_lib/filter";
+import { trackSearch, trackStatusFilter } from "../_lib/track";
 import { FacetedFilter } from "./faceted-filter";
 import { formatPortalDate, formatPortalPhone } from "./format";
 import { LeadNote } from "./lead-note";
@@ -41,7 +42,13 @@ export function LeadsView({
   const counts = useMemo(() => statusFacets(leads, query), [leads, query]);
   const filtered = isFiltered(filter);
 
+  function changeStatuses(next: Set<PortalStatusLabel>) {
+    setStatuses(next);
+    trackStatusFilter(next); // the ticked labels only
+  }
+
   function reset() {
+    if (statuses.size > 0) trackStatusFilter([]);
     setStatuses(new Set());
     setQuery("");
   }
@@ -54,7 +61,10 @@ export function LeadsView({
           <input
             type="search"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              trackSearch(e.target.value); // logs name-or-phone, never the text
+            }}
             placeholder="Search name or phone"
             aria-label="Search leads by name or phone"
             autoComplete="off"
@@ -67,7 +77,7 @@ export function LeadsView({
             options={STATUS_OPTIONS}
             selected={statuses}
             counts={counts}
-            onChange={setStatuses}
+            onChange={changeStatuses}
           />
           {filtered && (
             <button type="button" onClick={reset} className={portalButton("ghost", "sm", "h-9")}>

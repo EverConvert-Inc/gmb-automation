@@ -11,6 +11,7 @@ import {
   EVENT_WRITE_TIMEOUT_MS,
   MAX_PENDING_EVENT_WRITES,
   __pendingEventWritesForTests,
+  __resetEventsForTests,
   __setEventSchedulerForTests,
   __setEventsSqlForTests,
   logPortalEvent,
@@ -23,7 +24,7 @@ const FIRM = "11111111-1111-4111-8111-111111111111";
 const OTHER_FIRM = "22222222-2222-4222-8222-222222222222";
 const USER = "33333333-3333-4333-8333-333333333333";
 const LEAD = "44444444-4444-4444-8444-444444444444";
-const session: PortalSession = { ok: true, userId: USER, firmId: FIRM as SessionFirmId, firmName: "Firm", email: "c@firm.com" };
+const session: PortalSession = { ok: true, userId: USER, firmId: FIRM as SessionFirmId, firmName: "Firm", email: "c@firm.com", lastSignInAt: null };
 
 let calls: FakeCall[] = [];
 let tasks: (() => Promise<void>)[] = [];
@@ -41,6 +42,7 @@ async function runTasks() {
 }
 
 beforeEach(() => {
+  __resetEventsForTests();
   useSql();
   tasks = [];
   __setEventSchedulerForTests((task) => void tasks.push(task));

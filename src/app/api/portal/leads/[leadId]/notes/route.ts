@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { toIsoDateEastern } from "@/lib/date-utils";
 import { NOTE_MAX_LENGTH, addClientNote } from "@/lib/portal/db";
+import { logPortalEvent } from "@/lib/portal/events";
 import { requirePortalSession } from "@/lib/portal/session";
 
 export const runtime = "nodejs";
@@ -61,6 +62,8 @@ export async function POST(
         ? json({ error: "Lead not found." }, 404)
         : json({ error: `A note must be between 1 and ${NOTE_MAX_LENGTH} characters.` }, 400);
     }
+    // After the response, never awaited; the lead id is the inserted row's.
+    logPortalEvent(session, { type: "note_saved", leadId: result.note.leadId, meta: {} });
     return json(
       {
         note: {

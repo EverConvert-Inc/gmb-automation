@@ -18,6 +18,8 @@ export type PortalSession = {
   /** For the portal header only. */
   firmName: string;
   email: string | null;
+  /** Supabase's last_sign_in_at, as Auth sent it. Used only to log one sign-in event per sign-in. */
+  lastSignInAt: string | null;
 };
 
 export type PortalRefusalReason =
@@ -45,7 +47,12 @@ const refuse = (reason: PortalRefusalReason): PortalRefusal => ({ ok: false, rea
 export async function requirePortalSession(
   authTimeoutMs: number = PORTAL_AUTH_TIMEOUT_MS,
 ): Promise<PortalSession | PortalRefusal> {
-  type AuthUser = { id: string; email?: string | null; app_metadata?: Record<string, unknown> };
+  type AuthUser = {
+    id: string;
+    email?: string | null;
+    app_metadata?: Record<string, unknown>;
+    last_sign_in_at?: string | null;
+  };
   let user = null as AuthUser | null;
   try {
     const { data, error } = await withTimeout(
@@ -100,5 +107,6 @@ export async function requirePortalSession(
     firmId: m.firm_id as SessionFirmId,
     firmName: m.firm_name as string,
     email: user.email ?? null,
+    lastSignInAt: typeof user.last_sign_in_at === "string" ? user.last_sign_in_at : null,
   };
 }

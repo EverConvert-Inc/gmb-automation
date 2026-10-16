@@ -48,7 +48,15 @@ describe("requirePortalSession", () => {
       firmId: FIRM,
       firmName: "Smith Law",
       email: "c@firm.com",
+      lastSignInAt: null,
     });
+  });
+
+  it("carries Auth's last_sign_in_at when present, and nothing else from the user", async () => {
+    signedIn({ role: "client" }, { last_sign_in_at: "2026-10-15T14:03:22.123456Z", phone: "555" });
+    const s = await requirePortalSession();
+    expect(s).toMatchObject({ ok: true, lastSignInAt: "2026-10-15T14:03:22.123456Z" });
+    expect(JSON.stringify(s)).not.toContain("555");
   });
 
   it("finds the firm by the authenticated user id, bound as a parameter", async () => {

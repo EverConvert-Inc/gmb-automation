@@ -71,6 +71,16 @@ export function __setEventSchedulerForTests(fn: ((task: () => Promise<void>) => 
 export function __pendingEventWritesForTests(): number {
   return pending;
 }
+/** Test seam only: a fresh lock and backlog; writes scheduled before this are skipped. */
+export function __resetEventsForTests(): void {
+  generation += 1;
+  tail = Promise.resolve();
+  pending = 0;
+}
+
+// Bumped only by the test reset, so a write left over from an earlier test
+// never runs against the next test's database.
+let generation = 0;
 
 // The events connection's own lock — deliberately NOT client.ts's.
 let tail: Promise<void> = Promise.resolve();
@@ -131,8 +141,9 @@ function insertEvent(sql: Sql, firmId: string, userId: string, event: PortalEven
   `;
 }
 
-async function writeOne(firmId: string, userId: string, event: PortalEventInput): Promise<void> {
+async function writeOne(firmId: string, userId: string, event: PortalEventInput, gen: number): Promise<void> {
   await exclusive(async () => {
+    if (gen !== generation) return;
     const sql = getSql();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const pendingWrite = Promise.resolve(insertEvent(sql, firmId, userId, event));
@@ -182,11 +193,12 @@ export function logPortalEvents(session: PortalSession, events: readonly unknown
       return;
     }
     pending += 1;
+    const gen = generation;
     const task = async () => {
       try {
         for (const event of valid) {
           try {
-            await writeOne(firmId, userId, event);
+            await writeOne(firmId, userId, event, gen);
           } catch (err) {
             report(event.type, err);
           }

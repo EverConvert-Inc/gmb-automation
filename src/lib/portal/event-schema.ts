@@ -28,12 +28,12 @@ const STATUS = z.enum(["signed", "pending", "opportunity"]);
 const dateRangeChanged = z
   .object({
     type: z.literal("date_range_changed"),
-    meta: z
-      .object({
-        kind: z.enum(["preset_current", "preset_previous", "custom"]),
-        span_days: z.number().int().min(1).max(62),
-      })
-      .strict(),
+    // A preset is just its name; a custom range is just its length in days.
+    // Never the dates.
+    meta: z.union([
+      z.object({ kind: z.enum(["preset_current", "preset_previous"]) }).strict(),
+      z.object({ kind: z.literal("custom"), span_days: z.number().int().min(1).max(62) }).strict(),
+    ]),
   })
   .strict();
 

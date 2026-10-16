@@ -209,7 +209,7 @@ export async function listVisibleLeads(
 }
 
 export type AddNoteResult =
-  | { ok: true; note: { id: string; createdAt: Date } }
+  | { ok: true; note: { id: string; leadId: string; createdAt: Date } }
   | { ok: false; reason: "not_found" | "invalid_body" };
 
 /**
@@ -254,5 +254,9 @@ export async function addClientNote(
   if (rows[0].lead_id !== leadId) {
     throw new PortalRowError(label, 0, "lead_id", "does not match the requested lead");
   }
-  return { ok: true, note: { id: rows[0].id as string, createdAt: rows[0].created_at as Date } };
+  // leadId is the inserted row's, already checked equal to the requested one.
+  return {
+    ok: true,
+    note: { id: rows[0].id as string, leadId: rows[0].lead_id as string, createdAt: rows[0].created_at as Date },
+  };
 }

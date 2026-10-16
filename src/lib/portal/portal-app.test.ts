@@ -14,6 +14,7 @@ const h = vi.hoisted(() => {
   return { RedirectSignal, getUser: vi.fn() };
 });
 
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({
   getSupabaseServerClient: async () => ({ auth: { getUser: h.getUser } }),
 }));
@@ -29,6 +30,7 @@ vi.mock("next/link", () => ({
 }));
 
 import { __setPortalSqlForTests } from "./client";
+import { __resetEventsForTests, __setEventSchedulerForTests, __setEventsSqlForTests } from "./events";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { NOTE_MAX_LENGTH } from "./db";
 import FirmLayout from "@/app/(portal)/portal/(firm)/layout";
@@ -158,6 +160,7 @@ const asClientA = () => signedIn(USER_A, { role: "client" }, "a@firm-a.com");
 const asClientB = () => signedIn(USER_B, { role: "client" }, "b@firm-b.com");
 
 beforeEach(() => {
+  __resetEventsForTests();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-15T15:00:00Z"));
   h.getUser.mockReset();
@@ -171,6 +174,12 @@ beforeEach(() => {
   };
   listOverride = null;
   notes = [];
+  // Activity-log writes: captured, run only when a test asks.
+  eventTasks = [];
+  __setEventSchedulerForTests((task) => void eventTasks.push(task));
+  const events = makeFakeSql(() => []);
+  eventCalls = events.calls;
+  __setEventsSqlForTests(events.sql);
   const fake = makeFakeSql(respond);
   calls = fake.calls;
   __setPortalSqlForTests(fake.sql);
@@ -179,7 +188,18 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   __setPortalSqlForTests(null);
+  __setEventSchedulerForTests(null);
+  __setEventsSqlForTests(null);
 });
+
+let eventTasks: (() => Promise<void>)[] = [];
+let eventCalls: FakeCall[] = [];
+async function runEventTasks() {
+  for (const t of eventTasks.splice(0)) await t();
+}
+/** [event_type, metadata] of every event write attempted. */
+const eventsWritten = () =>
+  eventCalls.map((c) => [c.params[2], JSON.parse(c.params[4] as string)] as [string, Record<string, unknown>]);
 
 const render = (el: ReactElement) => renderToStaticMarkup(el);
 
@@ -590,6 +610,87 @@ describe("the leads page", () => {
     expect(html).toMatch(/aria-label="[^"]*October 16[^"]*"[^>]*disabled=""|disabled=""[^>]*aria-label="[^"]*October 16/);
   });
 
+  // -------------------------------------------------------------------------
+  // Activity log hooks
+  // -------------------------------------------------------------------------
+  const signedInAt = "2026-10-15T14:03:22.123456Z";
+  const asClientAFresh = () =>
+    h.getUser.mockResolvedValue({
+      data: { user: { id: USER_A, email: "a@firm-a.com", app_metadata: { role: "client" }, last_sign_in_at: signedInAt } },
+      error: null,
+    });
+
+  it("the leads page logs a sign-in and a page view for the session's firm and user, after the response", async () => {
+    asClientAFresh();
+    await leadsMarkup();
+    expect(eventCalls).toHaveLength(0); // nothing written during the render
+    expect(eventTasks).toHaveLength(1);
+    await runEventTasks();
+    expect(eventsWritten()).toEqual([
+      ["sign_in", { signed_in_at: signedInAt }],
+      ["page_view", { page: "leads", range: "current" }],
+    ]);
+    for (const c of eventCalls) {
+      expect(c.params.slice(0, 2)).toEqual([FIRM_A, USER_A]);
+      expect(c.params).not.toContain(FIRM_B);
+    }
+  });
+
+  it("no sign-in event when Auth gives no sign-in time", async () => {
+    asClientA();
+    await leadsMarkup();
+    await runEventTasks();
+    expect(eventsWritten().map(([t]) => t)).toEqual(["page_view"]);
+  });
+
+  it.each([
+    [{ month: "previous" }, "previous"],
+    [{ from: "2026-09-28", to: "2026-10-03" }, "custom"],
+  ])("a page view records the range kind only: %j → %s", async (sp, range) => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [];
+    await leadsMarkup(sp);
+    await runEventTasks();
+    expect(eventsWritten()).toEqual([["page_view", { page: "leads", range }]]);
+    expect(JSON.stringify(eventCalls)).not.toMatch(/2026-09-28|2026-10-03/);
+  });
+
+  it("a refused URL range logs \"refused\" without the dates", async () => {
+    asClientA();
+    await leadsMarkup({ from: "2026-08-01", to: "2026-08-31" });
+    await runEventTasks();
+    expect(eventsWritten()).toEqual([["page_view", { page: "leads", range: "refused" }]]);
+    expect(JSON.stringify(eventCalls)).not.toMatch(/2026-08/);
+  });
+
+  it("a refused session logs nothing", async () => {
+    h.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    await redirectOf(() => LeadsPage(searchParams()));
+    expect(eventTasks).toHaveLength(0);
+  });
+
+  // Logging can never slow or break the page: the write is fire-and-forget.
+  it.each([
+    ["hangs forever", () => makeFakeSql(() => new Promise(() => {})).sql, "run"],
+    ["throws", () => makeFakeSql(() => { throw new Error("db down"); }).sql, "run"],
+    ["after() itself throws", () => makeFakeSql(() => []).sql, "throw"],
+  ] as const)("the leads page renders normally when the event writer %s", async (_, sql, scheduler) => {
+    asClientAFresh();
+    __setEventsSqlForTests(sql());
+    __setEventSchedulerForTests(
+      scheduler === "throw"
+        ? () => {
+            throw new Error("`after` was called outside a request scope");
+          }
+        : (task) => void task(), // started at once and NOT awaited, like after()
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const started = Date.now();
+    const html = await leadsMarkup();
+    expect(html).toContain("Alice Alpha");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("shows an empty state when there are no leads", async () => {
     asClientA();
     leadsByFirm[FIRM_A] = [];
@@ -743,6 +844,41 @@ describe("POST /api/portal/leads/[leadId]/notes", () => {
     const res = await note({ body: "hello" }, { leadId: "../../admin" });
     expect(res.status).toBe(404);
     expect(inserts()).toEqual([]);
+  });
+
+  it("a saved note logs note_saved with the inserted row's lead id, after the response", async () => {
+    asClientA();
+    const res = await note({ body: "Private note text" });
+    expect(res.status).toBe(201);
+    expect(eventCalls).toHaveLength(0);
+    await runEventTasks();
+    expect(eventsWritten()).toEqual([["note_saved", {}]]);
+    expect(eventCalls[0].params).toEqual(expect.arrayContaining([FIRM_A, USER_A, LEAD_A]));
+    expect(JSON.stringify(eventCalls)).not.toContain("Private note text");
+  });
+
+  it.each([
+    ["a lead of another firm", { body: "x" }, { leadId: LEAD_B }],
+    ["an empty note", { body: "   " }, {}],
+    ["extra keys", { body: "x", firmId: FIRM_B }, {}],
+  ])("no note_saved for %s", async (_, body, opts) => {
+    asClientA();
+    const res = await note(body, opts);
+    expect(res.status).not.toBe(201);
+    expect(eventTasks).toHaveLength(0);
+  });
+
+  it.each([
+    ["hangs forever", () => makeFakeSql(() => new Promise(() => {})).sql],
+    ["throws", () => makeFakeSql(() => { throw new Error("db down"); }).sql],
+  ] as const)("the notes route still answers 201 at once when the event writer %s", async (_, sql) => {
+    asClientA();
+    __setEventsSqlForTests(sql());
+    __setEventSchedulerForTests((task) => void task());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await note({ body: "Still saved" });
+    expect(res.status).toBe(201);
+    expect(notes.map((n) => n.body)).toEqual(["Still saved"]);
   });
 
   it("a database failure → 500 with a generic message, the note text not logged", async () => {
