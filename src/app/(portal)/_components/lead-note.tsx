@@ -160,7 +160,7 @@ export function LeadNote({
           className={cn(
             "-mx-2 block w-[calc(100%+1rem)] resize-none overflow-hidden rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed text-foreground transition-colors",
             "placeholder:text-muted-foreground/80 hover:border-border hover:bg-card",
-            "focus-visible:border-ring focus-visible:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+            "focus-visible:border-[var(--portal-green-focus)] focus-visible:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-green-ring)]",
             "[overflow-wrap:anywhere]",
             (dirty || error) && "border-border bg-card",
             error && "border-destructive",
@@ -178,7 +178,7 @@ export function LeadNote({
           <div className="flex items-center gap-2">
             {canSave && (
               <button type="submit" disabled={busy} className={portalButton("primary", "sm")}>
-                {busy && <PortalSpinner size={16} decorative accent="hsl(var(--primary-foreground))" second="#ffffff" />}
+                {busy && <PortalSpinner size={16} decorative accent="#ffffff" second="rgb(255 255 255 / 0.5)" />}
                 {busy ? "Saving…" : "Save"}
               </button>
             )}
@@ -196,7 +196,7 @@ export function LeadNote({
               <Check
                 aria-hidden
                 className={cn(
-                  "h-3.5 w-3.5 text-[hsl(var(--portal-accent))] transition-opacity duration-700",
+                  "h-3.5 w-3.5 text-[var(--portal-green-text)] transition-opacity duration-700",
                   justSaved ? "opacity-100" : "opacity-0",
                 )}
               />

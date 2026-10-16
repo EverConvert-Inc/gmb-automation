@@ -183,7 +183,9 @@ export function FacetedFilter<V extends string>({
                   aria-hidden
                   className={cn(
                     "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                    isSelected ? "border-primary bg-primary text-primary-foreground" : "border-input",
+                    isSelected
+                      ? "border-[var(--portal-green-ring)] bg-[var(--portal-green-tint)] text-[var(--portal-green-text)]"
+                      : "border-input",
                   )}
                 >
                   {isSelected && <Check className="h-3 w-3" />}

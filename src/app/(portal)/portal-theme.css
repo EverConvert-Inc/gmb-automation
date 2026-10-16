@@ -22,14 +22,25 @@
   --accent-foreground: 222 39% 11%;
   --secondary: 220 14% 95%;
   --secondary-foreground: 222 39% 11%;
-  /* EverConvert green; dark text on it. */
-  --primary: 98 46% 49%;
-  --primary-foreground: 0 0% 8%;
+  /* Primary = the muted deep green (--portal-green-solid), white text on it. */
+  --primary: 142 72% 29%;
+  --primary-foreground: 0 0% 100%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --ring: 98 46% 42%;
-  /* The green used as TEXT on light surfaces: darker, for contrast. */
-  --portal-accent: 98 55% 28%;
+  /* Focus rings = --portal-green-focus. */
+  --ring: 142 72% 29%;
+
+  /* THE portal green family, derived from the Signed badge's greens. Every
+     green in the portal uses one of these; nothing else. Contrast (WCAG):
+     text on white 7.1, on soft 6.5, on tint 5.8; white on solid 5.0, on
+     hover 7.1; focus ring on white 5.0. */
+  --portal-green-soft: #ebf7ef;       /* soft tint: backgrounds */
+  --portal-green-tint: #d4efdd;       /* stronger tint: selected states */
+  --portal-green-ring: #8fcca4;       /* thin ring around selected states */
+  --portal-green-text: #166534;       /* deep green: text and icons */
+  --portal-green-solid: #15803d;      /* muted deep green: primary buttons */
+  --portal-green-solid-hover: #166534;
+  --portal-green-focus: #15803d;      /* keyboard focus ring */
 }
 
 .portal-theme.dark {
@@ -45,12 +56,22 @@
   --accent-foreground: 210 20% 96%;
   --secondary: 222 14% 17%;
   --secondary-foreground: 210 20% 96%;
-  --primary: 98 46% 53%;
-  --primary-foreground: 0 0% 8%;
+  --primary: 145 64% 29%;
+  --primary-foreground: 0 0% 100%;
   --destructive: 0 70% 55%;
   --destructive-foreground: 0 0% 100%;
-  --ring: 98 46% 53%;
-  --portal-accent: 98 50% 62%;
+  --ring: 144 59% 61%;
+
+  /* The same family, dark variants. Contrast: text on page 10.2, on card
+     9.3, on soft 8.6, on tint 7.1; white on solid 5.4, on hover 6.9;
+     focus ring on page 10.2. */
+  --portal-green-soft: #15271d;
+  --portal-green-tint: #1b3727;
+  --portal-green-ring: #2f6e47;
+  --portal-green-text: #5fd68f;
+  --portal-green-solid: #1b7a43;
+  --portal-green-solid-hover: #17673a;
+  --portal-green-focus: #5fd68f;
 }
 
 /* Status badges: Signed green, Pending amber, Opportunity blue. A compact
@@ -82,9 +103,12 @@
   height: 0.5rem;
   border-radius: 9999px;
 }
-.portal-theme .portal-summary-dot-signed { background-color: #12b76a; }
-.portal-theme .portal-summary-dot-pending { background-color: #f79009; }
-.portal-theme .portal-summary-dot-opportunity { background-color: #2e90fa; }
+.portal-theme .portal-summary-dot-signed { background-color: #15803d; }
+.portal-theme .portal-summary-dot-pending { background-color: #ca8a04; }
+.portal-theme .portal-summary-dot-opportunity { background-color: #2563eb; }
+.portal-theme.dark .portal-summary-dot-signed { background-color: #4ade80; }
+.portal-theme.dark .portal-summary-dot-pending { background-color: #facc15; }
+.portal-theme.dark .portal-summary-dot-opportunity { background-color: #60a5fa; }
 
 /* Error text, readable on white and on the dark surface. */
 .portal-theme .portal-error-text { color: #b42318; }
@@ -103,17 +127,25 @@
   color: hsl(var(--foreground));
 }
 
-/* Date picker: the selected range's end days, and today. */
+/* Date picker. The range is a soft tint; its first and last days are the
+   stronger tint with a thin ring and deep green text. No solid fill. */
+.portal-theme .portal-range-start,
+.portal-theme .portal-range-middle,
+.portal-theme .portal-range-end {
+  background-color: var(--portal-green-soft);
+}
 .portal-theme .portal-range-start > button,
 .portal-theme .portal-range-end > button,
 .portal-theme .portal-day-selected:not(.portal-range-middle) > button {
-  background-color: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  background-color: var(--portal-green-tint);
+  color: var(--portal-green-text);
+  box-shadow: inset 0 0 0 1px var(--portal-green-ring);
   font-weight: 600;
 }
 .portal-theme .portal-range-middle > button {
   border-radius: 0;
   background-color: transparent;
+  color: var(--portal-green-text);
 }
 .portal-theme .portal-day-today:not(.portal-day-selected) > button {
   box-shadow: inset 0 0 0 1px hsl(var(--border));
@@ -122,9 +154,9 @@
 
 /* Loading spinner (_components/loader.tsx). The second arrow is white on
    the dark theme and near-black on the light one, where white would vanish. */
-/* The accent arrow is the EverConvert green (the theme's primary). */
-.portal-theme { --portal-loader-accent: hsl(var(--primary)); --portal-loader-second: #1f2937; }
-.portal-theme.dark { --portal-loader-accent: hsl(var(--primary)); --portal-loader-second: #ffffff; }
+/* The accent arrow is the portal's deep green. */
+.portal-theme { --portal-loader-accent: var(--portal-green-text); --portal-loader-second: #1f2937; }
+.portal-theme.dark { --portal-loader-accent: var(--portal-green-text); --portal-loader-second: #ffffff; }
 
 @keyframes portal-loader-spin {
   to { transform: rotate(360deg); }

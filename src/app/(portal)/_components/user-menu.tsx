@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { closesOnFocusOut } from "../_lib/popover";
 import { PortalSignOutButton } from "./sign-out-button";
 import { PortalThemeToggle } from "./theme-toggle";
-import { portalFocus } from "./ui";
+import { portalFocus, portalSelected } from "./ui";
 
 const ROW =
   "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:opacity-50";
@@ -61,7 +61,8 @@ export function PortalUserMenu({ email }: { email: string | null }) {
         aria-controls={panelId}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-shadow hover:ring-4 hover:ring-primary/20",
+          "flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold transition-colors hover:bg-[var(--portal-green-tint)]",
+          portalSelected,
           portalFocus,
         )}
       >

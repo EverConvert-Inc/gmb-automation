@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { closesOnFocusOut } from "../_lib/popover";
 import { formatPortalRange } from "./format";
 import { PortalSpinner } from "./loader";
-import { portalButton, portalFocus } from "./ui";
+import { portalButton, portalFocus, portalSelected } from "./ui";
 
 type Preset = "current" | "previous";
 
@@ -159,7 +159,7 @@ export function DateRangePicker({
                 className={cn(
                   "flex-1 rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors sm:flex-none",
                   portalFocus,
-                  preset === p ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted",
+                  preset === p ? portalSelected : "text-foreground hover:bg-muted",
                 )}
               >
                 {label}
@@ -210,8 +210,7 @@ export function DateRangePicker({
                 week: "mt-1 flex",
                 day: cn(
                   "relative h-9 w-9 p-0 text-center text-sm",
-                  "[&.portal-range-middle]:bg-primary/15 [&.portal-range-start]:rounded-l-md [&.portal-range-end]:rounded-r-md",
-                  "[&.portal-range-start]:bg-primary/15 [&.portal-range-end]:bg-primary/15",
+                  "[&.portal-range-start]:rounded-l-md [&.portal-range-end]:rounded-r-md",
                 ),
                 day_button: cn(
                   "inline-flex h-9 w-9 items-center justify-center rounded-md text-sm text-foreground transition-colors hover:bg-muted disabled:pointer-events-none",
