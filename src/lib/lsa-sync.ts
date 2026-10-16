@@ -380,6 +380,20 @@ async function applySignedDateCorrections(
     // after 20:00 ET to the following day.
     const signedDate = toIsoDateEastern(event.signedAt);
     if (signedDate === c.date) {
+      // A row flagged moved under the old UTC reading (tagged 20:00-24:00 ET)
+      // would otherwise be added back by applyRedirectedInContributions,
+      // counting the call twice on its own date.
+      if (event.isRollupReal) {
+        await db
+          .update(callSignedEvents)
+          .set({ isRollupReal: null })
+          .where(
+            and(
+              eq(callSignedEvents.callrailCallId, c.callId),
+              eq(callSignedEvents.lsaClientId, lsaClientId),
+            ),
+          );
+      }
       console.log(
         `[lsa-sync][signed-correction] call ${c.callId}: signed_at date (${signedDate}) matches its own date — no-op, no visible change`,
       );
