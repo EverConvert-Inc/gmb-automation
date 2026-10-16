@@ -127,9 +127,11 @@ export type LeadStore = {
   failStaleJobs(input: { startedBefore: Date; message: string }): Promise<number>;
 
   /**
-   * The to_date (an Eastern calendar date) of the most recent COMPLETED job
-   * of this kind, or null if there is none. A run that stopped early or
-   * failed does not count, so the next run reaches back past it.
+   * The to_date (an Eastern calendar date) of the most recent COMPLETED,
+   * SCHEDULED job of this kind, or null if there is none. A run that stopped
+   * early or failed does not count, so the next run reaches back past it; nor
+   * does a manual run (a per-firm "Sync now", a hand-run with companyIds),
+   * which may have covered only some companies.
    */
   lastCompletedJobToDate(kind: JobKind): Promise<string | null>;
 };

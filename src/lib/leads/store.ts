@@ -255,12 +255,25 @@ export function buildFinishJobUpdate(
     .where(eq(leadSyncJobs.id, input.jobId));
 }
 
-/** The newest completed job of one kind: where the next run's new-lead window may begin. */
+/** Marks a run started by Vercel's cron (see the lead-sync route). Only these count for the reach-back. */
+export const SCHEDULED_TRIGGER = "scheduled";
+
+/**
+ * The newest completed SCHEDULED job of one kind: where the next run's
+ * new-lead window may begin. Manual runs are ignored — one covering a single
+ * firm's companies must not move the window for everyone else.
+ */
 export function buildLastCompletedJobQuery(database: LeadDb, kind: JobKind) {
   return database
     .select({ toDate: leadSyncJobs.toDate })
     .from(leadSyncJobs)
-    .where(and(eq(leadSyncJobs.kind, kind), eq(leadSyncJobs.status, "completed")))
+    .where(
+      and(
+        eq(leadSyncJobs.kind, kind),
+        eq(leadSyncJobs.status, "completed"),
+        eq(leadSyncJobs.triggeredBy, SCHEDULED_TRIGGER),
+      ),
+    )
     .orderBy(desc(leadSyncJobs.completedAt))
     .limit(1);
 }

@@ -55,8 +55,14 @@ export async function GET(req: Request) {
   }
   const scope: SyncScope = scopeParam === "mapped" ? "mapped" : "all";
 
+  // "scheduled" only when Vercel's cron made the call: Vercel sends
+  // x-vercel-cron-schedule on every cron invocation, and only a caller that
+  // already holds CRON_SECRET gets this far. A hand-run is "manual", so it
+  // never moves the next scheduled run's reach-back window (see
+  // lastCompletedJobToDate).
+  const fromVercelCron = req.headers.has("x-vercel-cron-schedule");
   const result = await syncLeadsForMonth(createSyncDeps(), {
-    triggeredBy: dryRun ? "dry-run" : "scheduled",
+    triggeredBy: dryRun ? "dry-run" : fromVercelCron ? "scheduled" : "manual",
     dryRun,
     scope,
     companyIds,

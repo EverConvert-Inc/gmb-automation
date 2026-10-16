@@ -67,6 +67,8 @@ function makeFakeStore(
     errorMessage: string | null;
     leadsIngested: number;
     startedAt?: Date;
+    toDate?: string;
+    finishedSeq?: number;
   }[] = (opts.seedJobs ?? []).map((j) => ({
     kind: j.kind,
     status: j.status,
@@ -77,6 +79,7 @@ function makeFakeStore(
   }));
   const counts = { pendingLookups: 0, applies: 0 };
   let nextId = 1;
+  let finishSeq = 0;
 
   const store: LeadStore = {
     async loadRoutingRules() {
@@ -176,7 +179,12 @@ function makeFakeStore(
       };
     },
     async lastCompletedJobToDate(kind) {
-      return opts.lastCompleted?.[kind] ?? null;
+      if (opts.lastCompleted) return opts.lastCompleted[kind] ?? null;
+      // Mirrors buildLastCompletedJobQuery: completed AND scheduled, newest finish first.
+      const done = jobs
+        .filter((j) => j.kind === kind && j.status === "completed" && j.triggeredBy === "scheduled")
+        .sort((a, b) => (b.finishedSeq ?? 0) - (a.finishedSeq ?? 0));
+      return done[0]?.toDate ?? null;
     },
     async failStaleJobs({ startedBefore, message }) {
       let n = 0;
@@ -196,6 +204,7 @@ function makeFakeStore(
         triggeredBy: i.triggeredBy,
         errorMessage: null,
         leadsIngested: 0,
+        toDate: i.toDate,
       });
       return `job-${jobs.length}`;
     },
@@ -206,6 +215,7 @@ function makeFakeStore(
         status: i.status,
         errorMessage: i.errorMessage,
         leadsIngested: i.leadsIngested,
+        finishedSeq: ++finishSeq,
       };
     },
   };
@@ -1730,5 +1740,87 @@ describe("syncLeadsForMonth — month-end", () => {
     const r = await syncLeadsForMonth(m.deps, { scope: "mapped", dryRun: true });
     expect(r.calls.fetchedFrom).toBe("2026-10-31");
     expect(fake.rows.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Only scheduled runs set the reach-back window
+// ---------------------------------------------------------------------------
+
+describe("syncLeadsForMonth — reach-back counts scheduled runs only", () => {
+  const LATE_OCTOBER_CALL = CALL({
+    id: "c-oct31-late",
+    start_time: "2026-10-31T22:30:00.000-04:00",
+    tags: ["Opportunity"],
+    note: "Jane Doe, 555-123-4567",
+  });
+
+  /** One store, three runs at three moments, recording each run's fetch window for COM1 and COM2. */
+  async function runAt(
+    fake: ReturnType<typeof makeFakeStore>,
+    at: string,
+    options: Parameters<typeof syncLeadsForMonth>[1],
+  ) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(at));
+    const windows: string[] = [];
+    const deps = makeDeps(fake.store, {
+      now: () => new Date(at),
+      listCompanyIds: async () => ["COM1", "COM2"],
+      fetchCalls: async (company, from, to) => {
+        windows.push(`${company} ${from}..${to}`);
+        return (company === "COM2" && from <= "2026-10-31" && to >= "2026-10-31" ? [LATE_OCTOBER_CALL] : []) as never;
+      },
+    });
+    const result = await syncLeadsForMonth(deps, options);
+    return { result, windows: windows.filter((w) => !w.includes("2026-10-01..2026-10-31")) };
+  }
+
+  const companyRules = [
+    { firmId: "firm-a", callrailCompanyId: "COM1" },
+    { firmId: "firm-b", callrailCompanyId: "COM2" },
+  ];
+
+  it("a manual per-firm sync between two scheduled runs does not make the next scheduled run skip a day", async () => {
+    const fake = makeFakeStore({ companyRules });
+
+    // 1. Scheduled run, Oct 31 04:30 ET.
+    await runAt(fake, "2026-10-31T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+    // 2. A per-firm "Sync now" for firm A only (COM1), Nov 1 00:30 ET — completes, as manual.
+    const manual = await runAt(fake, "2026-11-01T04:30:00Z", { companyIds: ["COM1"], triggeredBy: "manual" });
+    expect(manual.result.calls.error).toBeNull();
+    expect(fake.jobs.filter((j) => j.triggeredBy === "manual").every((j) => j.status === "completed")).toBe(true);
+    // 3. The next scheduled run, Nov 1 04:30 ET.
+    const next = await runAt(fake, "2026-11-01T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+
+    // It reaches back to the last SCHEDULED run (Oct 31), not the manual one (Nov 1)…
+    expect(next.result.calls.fetchedFrom).toBe("2026-10-31");
+    expect(next.windows).toEqual(["COM1 2026-10-31..2026-11-01", "COM2 2026-10-31..2026-11-01"]);
+    // …so firm B's late-October lead, on a company the manual run never touched, is caught.
+    expect([...fake.rows.values()].map((r) => [r.callrailId, r.firmId])).toEqual([["c-oct31-late", "firm-b"]]);
+  });
+
+  it("had the manual run counted, the same lead would have been missed (the bug this prevents)", async () => {
+    const fake = makeFakeStore({ companyRules, lastCompleted: { callrail_calls: "2026-11-01" } });
+    const next = await runAt(fake, "2026-11-01T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+    expect(next.result.calls.fetchedFrom).toBe("2026-11-01");
+    expect(fake.rows.size).toBe(0);
+  });
+
+  it("a failed scheduled run does not count either; the newest completed scheduled one does", async () => {
+    const fake = makeFakeStore({ companyRules });
+    await runAt(fake, "2026-10-30T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+    // Oct 31's scheduled run fails outright.
+    fake.jobs.push({ kind: "callrail_calls", status: "failed", triggeredBy: "scheduled", errorMessage: "x", leadsIngested: 0, toDate: "2026-10-31", finishedSeq: 99 });
+    const next = await runAt(fake, "2026-11-01T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+    expect(next.result.calls.fetchedFrom).toBe("2026-10-30");
+  });
+
+  it("dry runs never count (they write no job rows)", async () => {
+    const fake = makeFakeStore({ companyRules });
+    await runAt(fake, "2026-10-31T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+    await runAt(fake, "2026-11-01T04:30:00Z", { scope: "mapped", dryRun: true });
+    const next = await runAt(fake, "2026-11-01T08:30:00Z", { scope: "mapped", triggeredBy: "scheduled" });
+    expect(next.result.calls.fetchedFrom).toBe("2026-10-31");
   });
 });

@@ -12,8 +12,13 @@ vi.mock("@/lib/leads/sync", () => ({
 
 import { GET } from "@/app/api/cron/lead-sync/route";
 
-const call = (qs = "", auth = "Bearer test-secret") =>
-  GET(new Request(`https://x/api/cron/lead-sync${qs}`, { headers: auth ? { authorization: auth } : {} }));
+const call = (qs = "", auth = "Bearer test-secret", extra: Record<string, string> = {}) =>
+  GET(
+    new Request(`https://x/api/cron/lead-sync${qs}`, {
+      headers: { ...(auth ? { authorization: auth } : {}), ...extra },
+    }),
+  );
+const fromCron = { "x-vercel-cron-schedule": "30 8 * * *", "user-agent": "vercel-cron/1.0" };
 
 beforeEach(() => {
   h.options = [];
@@ -36,9 +41,29 @@ describe("lead-sync route", () => {
     expect((await call("?scope=mapped")).status).toBe(401);
   });
 
-  it("scope=mapped is passed through (the daily cron)", async () => {
-    expect((await call("?scope=mapped")).status).toBe(200);
+  it("the daily cron (Vercel's call) is a scheduled, mapped run", async () => {
+    expect((await call("?scope=mapped", "Bearer test-secret", fromCron)).status).toBe(200);
     expect(h.options).toEqual([{ triggeredBy: "scheduled", dryRun: false, scope: "mapped", companyIds: undefined }]);
+  });
+
+  it("the same URL run by hand is manual, so it never moves the scheduled run's reach-back", async () => {
+    await call("?scope=mapped");
+    expect(h.options[0]).toMatchObject({ triggeredBy: "manual", scope: "mapped" });
+  });
+
+  it("a hand-run narrowed with companyIds is manual", async () => {
+    await call("?companyIds=COM1");
+    expect(h.options[0]).toMatchObject({ triggeredBy: "manual", companyIds: ["COM1"] });
+  });
+
+  it("a dry run is a dry run even from the cron", async () => {
+    await call("?scope=mapped&dryRun=1", "Bearer test-secret", fromCron);
+    expect(h.options[0]).toMatchObject({ triggeredBy: "dry-run", dryRun: true });
+  });
+
+  it("the cron header alone does not get past CRON_SECRET", async () => {
+    expect((await call("?scope=mapped", "", fromCron)).status).toBe(401);
+    expect(h.options).toEqual([]);
   });
 
   it("a manual run with no scope covers the whole account, as before", async () => {

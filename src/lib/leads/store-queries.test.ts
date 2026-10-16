@@ -305,11 +305,11 @@ describe("buildFailStaleJobsUpdate", () => {
 });
 
 describe("buildLastCompletedJobQuery", () => {
-  it("reads only COMPLETED jobs of one kind, newest first, one row", () => {
+  it("reads only COMPLETED, SCHEDULED jobs of one kind, newest first, one row", () => {
     const q = buildLastCompletedJobQuery(db, "callrail_calls").toSQL();
     expect(q.sql).toBe(
-      'select "to_date" from "lead_sync_jobs" where ("lead_sync_jobs"."kind" = $1 and "lead_sync_jobs"."status" = $2) order by "lead_sync_jobs"."completed_at" desc limit $3',
+      'select "to_date" from "lead_sync_jobs" where ("lead_sync_jobs"."kind" = $1 and "lead_sync_jobs"."status" = $2 and "lead_sync_jobs"."triggered_by" = $3) order by "lead_sync_jobs"."completed_at" desc limit $4',
     );
-    expect(q.params).toEqual(["callrail_calls", "completed", 1]);
+    expect(q.params).toEqual(["callrail_calls", "completed", "scheduled", 1]);
   });
 });
