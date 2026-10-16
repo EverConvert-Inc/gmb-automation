@@ -4,14 +4,8 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { FormError, Input, Label } from "@/components/ui/form";
+import { fuPrimary } from "./firm-ui";
 
 export type FirmUser = {
   id: string;
@@ -149,16 +143,7 @@ export function FirmUsersCard({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Portal users</CardTitle>
-        <CardDescription>
-          Client logins for this firm. Each sees only this firm&apos;s leads. An
-          email that already belongs to any account — staff, or another
-          firm&apos;s client — is refused.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="space-y-4">
         {reveal && (
           <div
             role="status"
@@ -186,7 +171,7 @@ export function FirmUsersCard({
         {users.length === 0 ? (
           <p className="text-sm text-muted-foreground">No portal users yet.</p>
         ) : (
-          <ul className="divide-y rounded-md border">
+          <ul className="divide-y rounded-lg border">
             {users.map((u) => (
               <li
                 key={u.id}
@@ -231,7 +216,7 @@ export function FirmUsersCard({
           <form
             onSubmit={add}
             autoComplete="off"
-            className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-end"
+            className="flex flex-col gap-2 sm:flex-row sm:items-end"
           >
             <div className="flex-1">
               <Label htmlFor="firm-users-add">Add a client login</Label>
@@ -246,17 +231,16 @@ export function FirmUsersCard({
                 placeholder="name@lawfirm.com"
               />
             </div>
-            <Button type="submit" disabled={busy || !draft.trim()}>
+            <Button type="submit" className={fuPrimary} disabled={busy || !draft.trim()}>
               {busy ? "Creating…" : "Create login"}
             </Button>
           </form>
         ) : (
-          <p className="border-t pt-4 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             This firm is inactive, so it cannot get new users.
           </p>
         )}
         <FormError>{error}</FormError>
-      </CardContent>
-    </Card>
+    </div>
   );
 }

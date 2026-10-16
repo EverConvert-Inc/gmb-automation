@@ -10,10 +10,17 @@ import {
   leadFirms,
   leads,
 } from "@/lib/db/schema";
+import { ChevronRight } from "lucide-react";
 import { FirmDetailsCard } from "@/components/leads/firm-details-card";
 import { FirmStringListCard } from "@/components/leads/firm-string-list-card";
 import { FirmUsersCard } from "@/components/leads/firm-users-card";
 import { FirmDangerZoneCard } from "@/components/leads/firm-danger-zone-card";
+import { FirmHeader } from "@/components/leads/firm-header";
+import { FirmStatusStrip } from "@/components/leads/firm-status-strip";
+import { FirmStep } from "@/components/leads/firm-step";
+import { FirmSyncStep } from "@/components/leads/firm-sync-step";
+import { queueCount, visibleNowCount } from "./_lib/firm-status";
+import "./firm-page.css";
 
 import { checkAdmin } from "@/lib/leads/admin-auth";
 import { NotAuthorized } from "@/components/leads/not-authorized";
@@ -105,64 +112,91 @@ export default async function FirmDetailPage({
     isActive: "boolean",
   });
 
+  // Two more read-only counts for the status strip, after the others.
+  const visibleNow = await visibleNowCount(id);
+  const inQueue = await queueCount(id);
+
   const leadCount = firm.leadCount;
+  const activeLogins = users.filter((u) => u.isActive).length;
+  const companyIds = companies.map((c) => c.callrailCompanyId);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8">
-      <div>
-        <Link
-          href="/admin/firms"
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← All firms
-        </Link>
-        <h1 className="mt-2 text-2xl font-semibold">{firm.name}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {leadCount} lead{leadCount === 1 ? "" : "s"} currently routed here.
-        </p>
-      </div>
+    <div className="firm-ui mx-auto max-w-4xl space-y-6">
+      <Link href="/admin/firms" className="text-sm text-muted-foreground hover:underline">
+        ← All firms
+      </Link>
 
-      <FirmDetailsCard firm={firm} />
+      <FirmHeader firm={{ id: firm.id, name: firm.name, slug: firm.slug, isActive: firm.isActive }} />
 
-      <FirmStringListCard
-        firmId={firm.id}
-        kind="tags"
-        bodyKey="tagName"
-        title="Routing tags"
-        description="A lead carrying any of these CallRail tags routes to this firm. Matched whole, ignoring case — never partially, so “Smith” will not match “Smith Law”. A tag shared with another firm copies the lead to both."
-        addLabel="Add a routing tag"
-        placeholder="Smith Law"
-        emptyHint="No routing tags. This firm only receives leads through its CallRail company mappings below."
-        initial={tags.map((t) => ({ id: t.id, value: t.tagName }))}
+      <FirmStatusStrip
+        status={{
+          companiesMapped: companies.length,
+          activeLogins,
+          leadsSynced: leadCount,
+          visibleNow,
+          inQueue,
+        }}
       />
 
-      <FirmStringListCard
-        firmId={firm.id}
-        kind="companies"
-        bodyKey="callrailCompanyId"
-        title="CallRail companies"
-        description="The fallback when no routing tag matched. A CallRail company maps to at most one firm, enforced by the database — a company mapped twice would have no correct answer."
-        addLabel="Add a CallRail company id"
-        placeholder="COM…"
-        emptyHint="No company mappings. Leads from this firm's CallRail company will reach the admin queue unless a routing tag matches."
-        initial={companies.map((c) => ({ id: c.id, value: c.callrailCompanyId }))}
-      />
+      <FirmStep n={1} title="CallRail company" hint="Leads from this company route to this firm." done={companies.length > 0}>
+        <FirmStringListCard
+          firmId={firm.id}
+          kind="companies"
+          bodyKey="callrailCompanyId"
+          addLabel="Or paste a company id"
+          placeholder="COM…"
+          emptyHint="No company mapped yet."
+          initial={companies.map((c) => ({ id: c.id, value: c.callrailCompanyId }))}
+          picker
+        />
+      </FirmStep>
 
-      <FirmUsersCard
-        firmId={firm.id}
-        firmActive={firm.isActive}
-        users={users.map((u) => ({
-          id: u.id,
-          email: u.email,
-          isActive: u.isActive,
-        }))}
-      />
+      <FirmStep n={2} title="Client login" hint="People at the firm who can open the portal." done={activeLogins > 0}>
+        <FirmUsersCard
+          firmId={firm.id}
+          firmActive={firm.isActive}
+          users={users.map((u) => ({ id: u.id, email: u.email, isActive: u.isActive }))}
+        />
+      </FirmStep>
 
-      <FirmDangerZoneCard
-        firmId={firm.id}
-        firmName={firm.name}
-        leadCount={leadCount}
-      />
+      <FirmStep n={3} title="Sync and review" hint="Pull this firm's leads from CallRail now." done={leadCount > 0}>
+        <FirmSyncStep firmId={firm.id} companyIds={companyIds} queueCount={inQueue} />
+      </FirmStep>
+
+      <details className="group rounded-xl border bg-card shadow-sm" data-section="advanced">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-sm font-semibold sm:px-6 [&::-webkit-details-marker]:hidden">
+          <ChevronRight aria-hidden className="h-4 w-4 transition-transform group-open:rotate-90" />
+          Advanced
+          <span className="font-normal text-muted-foreground">Name, slug and extra routing tags</span>
+        </summary>
+        <div className="space-y-6 border-t px-5 py-5 sm:px-6">
+          <FirmDetailsCard firm={firm} />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">Extra routing tags</h3>
+            <p className="text-sm text-muted-foreground">A lead with one of these CallRail tags routes here, whatever its company.</p>
+            <FirmStringListCard
+              firmId={firm.id}
+              kind="tags"
+              bodyKey="tagName"
+              addLabel="Add a routing tag"
+              placeholder="Smith Law"
+              emptyHint="No extra tags."
+              initial={tags.map((t) => ({ id: t.id, value: t.tagName }))}
+            />
+          </div>
+        </div>
+      </details>
+
+      <details className="group rounded-xl border border-destructive/30 bg-card shadow-sm" data-section="danger">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4 text-sm font-semibold text-destructive sm:px-6 [&::-webkit-details-marker]:hidden">
+          <ChevronRight aria-hidden className="h-4 w-4 transition-transform group-open:rotate-90" />
+          Danger zone
+          <span className="font-normal text-muted-foreground">Delete this firm</span>
+        </summary>
+        <div className="border-t px-5 py-5 sm:px-6">
+          <FirmDangerZoneCard firmId={firm.id} firmName={firm.name} leadCount={leadCount} />
+        </div>
+      </details>
     </div>
   );
 }

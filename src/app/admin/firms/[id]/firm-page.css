@@ -1,0 +1,27 @@
+/*
+ * The firm page's colour tokens, scoped to .firm-ui so nothing else in the
+ * internal app changes. The values are the portal's green family
+ * (src/app/(portal)/portal-theme.css, --portal-green-*), copied — update both
+ * together. Dark mode follows the INTERNAL app's theme (html.dark), not the
+ * portal's.
+ */
+.firm-ui {
+  --fu-soft: #ebf7ef;
+  --fu-tint: #d4efdd;
+  --fu-ring: #8fcca4;
+  --fu-text: #166534;
+  --fu-solid: #15803d;
+  --fu-solid-hover: #166534;
+  --fu-warn-bg: #fffaeb;
+  --fu-warn-text: #b54708;
+}
+.dark .firm-ui {
+  --fu-soft: #15271d;
+  --fu-tint: #1b3727;
+  --fu-ring: #2f6e47;
+  --fu-text: #5fd68f;
+  --fu-solid: #1b7a43;
+  --fu-solid-hover: #17673a;
+  --fu-warn-bg: rgb(245 158 11 / 0.12);
+  --fu-warn-text: #fcd34d;
+}

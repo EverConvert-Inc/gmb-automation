@@ -1,17 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { FormError, Input, Label } from "@/components/ui/form";
+import { CallRailCompanyPicker } from "./callrail-company-picker";
 
 export type FirmListItem = { id: string; value: string };
 
@@ -24,23 +18,22 @@ export type FirmListItem = { id: string; value: string };
 export function FirmStringListCard({
   firmId,
   kind,
-  title,
-  description,
   addLabel,
   placeholder,
   emptyHint,
   bodyKey,
   initial,
+  picker = false,
 }: {
   firmId: string;
   kind: "tags" | "companies";
-  title: string;
-  description: string;
   addLabel: string;
   placeholder: string;
   emptyHint: string;
   bodyKey: "tagName" | "callrailCompanyId";
   initial: FirmListItem[];
+  /** Companies only: also offer the CallRail company picker. The paste box stays. */
+  picker?: boolean;
 }) {
   const router = useRouter();
   const [items, setItems] = useState<FirmListItem[]>(initial);
@@ -50,21 +43,28 @@ export function FirmStringListCard({
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [, startRefresh] = useTransition();
 
+  // A refresh (after the picker, or another step) brings the server's list.
+  useEffect(() => setItems(initial), [initial]);
+
   async function add(e: React.FormEvent) {
     e.preventDefault();
+    if (await addValue(draft)) setDraft("");
+  }
+
+  /** The one add path, for the typed box and the picker alike. Returns whether it saved. */
+  async function addValue(value: string): Promise<boolean> {
     setError(null);
     setBusy(true);
     try {
       const res = await fetch(`/api/admin/firms/${firmId}/${kind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [bodyKey]: draft }),
+        body: JSON.stringify({ [bodyKey]: value }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      setDraft("");
       // Refetched rather than appended from the response: the server
       // normalises what was typed (whitespace collapsed, company id
       // trimmed), so echoing the draft would show something different from
@@ -72,8 +72,10 @@ export function FirmStringListCard({
       startRefresh(() => router.refresh());
       const listRes = await fetch(`/api/admin/firms/${firmId}/${kind}`);
       if (listRes.ok) setItems(await readList(listRes, kind));
+      return true;
     } catch (err) {
       setError((err as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -100,62 +102,48 @@ export function FirmStringListCard({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {items.length === 0 ? (
-          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-            {emptyHint}
-          </p>
-        ) : (
-          <ul className="divide-y rounded-md border">
-            {items.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+    <div className="space-y-4">
+      {items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{emptyHint}</p>
+      ) : (
+        <ul className="divide-y rounded-lg border">
+          {items.map((item) => (
+            <li key={item.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <span className="truncate font-mono text-xs sm:text-sm">{item.value}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => remove(item.id)}
+                disabled={removingId === item.id}
+                aria-label={`Remove ${item.value}`}
               >
-                <span className="truncate font-mono text-xs sm:text-sm">
-                  {item.value}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => remove(item.id)}
-                  disabled={removingId === item.id}
-                  aria-label={`Remove ${item.value}`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
 
-        <form
-          onSubmit={add}
-          className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-end"
-        >
-          <div className="flex-1">
-            <Label htmlFor={`firm-${kind}-add`}>{addLabel}</Label>
-            <Input
-              id={`firm-${kind}-add`}
-              required
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder={placeholder}
-            />
-          </div>
-          <Button type="submit" disabled={busy || !draft.trim()}>
-            {busy ? "Adding…" : "Add"}
-          </Button>
-        </form>
-        <FormError>{error}</FormError>
-      </CardContent>
-    </Card>
+      {picker && kind === "companies" && <CallRailCompanyPicker firmId={firmId} onPick={addValue} />}
+
+      <form onSubmit={add} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <div className="flex-1">
+          <Label htmlFor={`firm-${kind}-add`}>{addLabel}</Label>
+          <Input
+            id={`firm-${kind}-add`}
+            required
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={placeholder}
+          />
+        </div>
+        <Button type="submit" variant="outline" disabled={busy || !draft.trim()}>
+          {busy ? "Adding…" : "Add"}
+        </Button>
+      </form>
+      <FormError>{error}</FormError>
+    </div>
   );
 }
 

@@ -293,6 +293,40 @@ export async function listTrackerCompanyIds(
   return ids;
 }
 
+export type TrackerCompany = { id: string; name: string | null; disabled: boolean };
+
+/**
+ * Every company in the account WITH its name and status, for the admin
+ * firm page's company picker. Separate from listTrackerCompanyIds (which the
+ * sync uses and which skips disabled companies) so the sync path is
+ * unchanged. `signal` lets the caller put a hard time limit on the whole
+ * listing, retries included.
+ */
+export async function listTrackerCompanies(
+  opts: TransportOptions & { signal?: AbortSignal } = {},
+): Promise<TrackerCompany[]> {
+  const accountId = await resolveTrackerAccountId(opts);
+  const out: TrackerCompany[] = [];
+  let page = 1;
+  while (true) {
+    const url = `${BASE_URL}/v3/a/${accountId}/companies.json?page=${page}&per_page=100`;
+    const res = await fetchWithRetry(url, { headers: authHeaders(), signal: opts.signal }, opts);
+    if (!res.ok) throw new Error(`CallRail companies request failed: ${res.status}`);
+    const body = (await res.json()) as { companies?: CompanyRecord[]; total_pages?: number };
+    for (const c of body.companies ?? []) {
+      if (!c?.id) continue;
+      out.push({
+        id: c.id,
+        name: typeof c.name === "string" && c.name.trim() ? c.name.trim() : null,
+        disabled: !!c.status && c.status.toLowerCase() === "disabled",
+      });
+    }
+    if (!body.total_pages || page >= body.total_pages) break;
+    page += 1;
+  }
+  return out;
+}
+
 // CallRail caps per_page at 250 (see the shared client's own comment).
 const PER_PAGE = 250;
 
