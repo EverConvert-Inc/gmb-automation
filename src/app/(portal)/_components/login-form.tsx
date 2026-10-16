@@ -78,7 +78,7 @@ export function PortalLoginForm() {
         </p>
       )}
       <button type="submit" disabled={busy} className={portalButton("primary", "md", "w-full")}>
-        {busy && <PortalSpinner size={18} decorative />}
+        {busy && <PortalSpinner size={18} decorative accent="hsl(var(--primary-foreground))" second="#ffffff" />}
         {busy ? "Signing in…" : "Sign in"}
       </button>
     </form>

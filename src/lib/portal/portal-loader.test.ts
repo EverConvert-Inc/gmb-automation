@@ -48,6 +48,15 @@ describe("PortalSpinner", () => {
   });
 });
 
+describe("on the green buttons", () => {
+  it("Save and Sign in swap the green arrow so it doesn't vanish into the button", () => {
+    for (const f of ["lead-note.tsx", "login-form.tsx"]) {
+      const src = readFileSync(join(process.cwd(), "src", "app", "(portal)", "_components", f), "utf8");
+      expect(src, f).toMatch(/<PortalSpinner[^>]*accent="hsl\(var\(--primary-foreground\)\)"[^>]*second="#ffffff"/);
+    }
+  });
+});
+
 describe("the full-page overlay", () => {
   it("is a fixed, full-screen, centred layer: page colour at 40%, 12px blur, 44px spinner", () => {
     const html = render(createElement(PortalLoadingOverlay));
@@ -73,7 +82,9 @@ describe("styling", () => {
   it("the second arrow is white on dark, and not white on light (where it would vanish)", () => {
     expect(css).toMatch(/\.portal-theme\.dark\s*\{[^}]*--portal-loader-second:\s*#ffffff/);
     expect(css).toMatch(/\.portal-theme\s*\{[^}]*--portal-loader-second:\s*#1f2937/);
-    expect(css).toMatch(/--portal-loader-accent:\s*#2563eb/);
+    // The accent is the brand green (the theme's primary), in both modes.
+    expect(css.match(/--portal-loader-accent:\s*hsl\(var\(--primary\)\)/g)).toHaveLength(2);
+    expect(css).not.toMatch(/#2563eb/i);
   });
 
   it("no portal file still uses the old lucide spinner", () => {

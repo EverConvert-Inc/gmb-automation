@@ -122,8 +122,9 @@
 
 /* Loading spinner (_components/loader.tsx). The second arrow is white on
    the dark theme and near-black on the light one, where white would vanish. */
-.portal-theme { --portal-loader-accent: #2563eb; --portal-loader-second: #1f2937; }
-.portal-theme.dark { --portal-loader-accent: #2563eb; --portal-loader-second: #ffffff; }
+/* The accent arrow is the EverConvert green (the theme's primary). */
+.portal-theme { --portal-loader-accent: hsl(var(--primary)); --portal-loader-second: #1f2937; }
+.portal-theme.dark { --portal-loader-accent: hsl(var(--primary)); --portal-loader-second: #ffffff; }
 
 @keyframes portal-loader-spin {
   to { transform: rotate(360deg); }

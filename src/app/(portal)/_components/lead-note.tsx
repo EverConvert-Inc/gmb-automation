@@ -178,7 +178,7 @@ export function LeadNote({
           <div className="flex items-center gap-2">
             {canSave && (
               <button type="submit" disabled={busy} className={portalButton("primary", "sm")}>
-                {busy && <PortalSpinner size={16} decorative />}
+                {busy && <PortalSpinner size={16} decorative accent="hsl(var(--primary-foreground))" second="#ffffff" />}
                 {busy ? "Saving…" : "Save"}
               </button>
             )}

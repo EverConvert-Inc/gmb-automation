@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
  * an arc plus a two-segment hook at its end (no SVG markers, which can point
  * the wrong way), stroke-only, one solid colour each. The whole SVG rotates.
  *
- * Colours default to CSS variables in portal-theme.css: a blue accent, and a
+ * Colours default to CSS variables in portal-theme.css: the brand green, and a
  * second arrow that is white in dark mode but near-black in light mode, where
  * white would vanish on the page and on cards. Pass `accent` / `second` to
  * override, e.g. when an arrow would match a button's background.
