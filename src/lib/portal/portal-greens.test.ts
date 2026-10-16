@@ -41,7 +41,7 @@ describe("the green tokens", () => {
   // Page / card backgrounds as defined in the same file.
   const SURFACES = {
     light: ["#ffffff", "#f6f7f9"],
-    dark: ["#10131a", "#181c25"],
+    dark: ["#000000", "#0f0f0f"], // pure black page, card at 6%
   };
 
   it.each([
