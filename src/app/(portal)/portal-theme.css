@@ -103,10 +103,10 @@
   height: 0.5rem;
   border-radius: 9999px;
 }
-.portal-theme .portal-summary-dot-signed { background-color: #15803d; }
+.portal-theme .portal-summary-dot-signed { background-color: #6fb744; } /* EverConvert green, like the spinner */
 .portal-theme .portal-summary-dot-pending { background-color: #ca8a04; }
 .portal-theme .portal-summary-dot-opportunity { background-color: #2563eb; }
-.portal-theme.dark .portal-summary-dot-signed { background-color: #4ade80; }
+.portal-theme.dark .portal-summary-dot-signed { background-color: #6fb744; }
 .portal-theme.dark .portal-summary-dot-pending { background-color: #facc15; }
 .portal-theme.dark .portal-summary-dot-opportunity { background-color: #60a5fa; }
 
