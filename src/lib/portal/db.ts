@@ -17,11 +17,10 @@ import {
   inRange,
   isClientVisible,
   monthAnchor,
-  portalMonthRange,
   portalStatusLabel,
-  type PortalMonth,
   type PortalStatusLabel,
 } from "./visibility";
+import { assertPortalRange, type PortalDateRange } from "./range";
 
 type Sql = Parameters<Parameters<typeof portalQuery>[1]>[0];
 
@@ -76,9 +75,10 @@ export type PortalLead = {
 
 export async function listVisibleLeads(
   firmId: SessionFirmId,
-  month: PortalMonth,
+  range: PortalDateRange,
 ): Promise<PortalLead[]> {
-  const range = portalMonthRange(month);
+  // The window is enforced here too, not only where the URL is read.
+  assertPortalRange(range);
   const label = "listVisibleLeads";
 
   const rows = await portalQuery(label, (sql) => sql`
@@ -174,7 +174,7 @@ export async function listVisibleLeads(
       throw new PortalRowError(label, i, "visibility", "returned a lead the rules hide");
     }
     if (!inRange(monthAnchor({ effectiveStatus, signedAt, occurredAt }), range)) {
-      throw new PortalRowError(label, i, "month", `outside ${range.key}`);
+      throw new PortalRowError(label, i, "month", `outside ${range.from}..${range.to}`);
     }
 
     const signed = effectiveStatus === "signed";

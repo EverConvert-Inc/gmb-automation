@@ -102,3 +102,20 @@
   background-color: hsl(var(--muted));
   color: hsl(var(--foreground));
 }
+
+/* Date picker: the selected range's end days, and today. */
+.portal-theme .portal-range-start > button,
+.portal-theme .portal-range-end > button,
+.portal-theme .portal-day-selected:not(.portal-range-middle) > button {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.portal-theme .portal-range-middle > button {
+  border-radius: 0;
+  background-color: transparent;
+}
+.portal-theme .portal-day-today:not(.portal-day-selected) > button {
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+  font-weight: 600;
+}

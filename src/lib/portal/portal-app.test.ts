@@ -548,12 +548,56 @@ describe("the leads page", () => {
     expect(fieldText(html, "Bob Bravo")).toBe("");
   });
 
+  // -------------------------------------------------------------------------
+  // The date range: enforced by the page, whatever the URL says
+  // -------------------------------------------------------------------------
+  const listBounds = () =>
+    calls
+      .filter((c) => c.text.includes("from leads l"))
+      .map((c) => c.params.filter((p) => p instanceof Date).map((d) => (d as Date).toISOString()));
+
+  it("a valid custom range is queried with exactly its Eastern bounds", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [leadRow(FIRM_A, LEAD_A, "Alice Alpha", { occurred_at: new Date("2026-10-02T15:00:00Z") })];
+    const html = await leadsMarkup({ from: "2026-09-28", to: "2026-10-03" });
+    expect(listBounds()).toEqual([["2026-09-28T04:00:00.000Z", "2026-10-04T04:00:00.000Z"]]);
+    expect(html).toContain("Sep 28 – Oct 3, 2026");
+    expect(html).not.toContain("isn&#x27;t available");
+  });
+
+  it.each([
+    ["an older month", { from: "2026-08-01", to: "2026-08-31" }],
+    ["a future day", { from: "2026-10-01", to: "2026-10-16" }],
+    ["reversed", { from: "2026-10-05", to: "2026-10-01" }],
+    ["malformed", { from: "2026-10-01", to: "soon" }],
+    ["only one end", { from: "2026-08-01" }],
+  ])("%s is refused: a notice, and the query uses This month, never the asked-for dates", async (_, sp) => {
+    asClientA();
+    const html = await leadsMarkup(sp as Record<string, string>);
+    expect(html).toContain("That date range isn&#x27;t available");
+    expect(listBounds()).toEqual([["2026-10-01T04:00:00.000Z", "2026-10-16T04:00:00.000Z"]]);
+  });
+
+  it("the picker: the applied range on the trigger, both presets, Apply disabled until the draft changes, future days disabled", async () => {
+    asClientA();
+    const html = await leadsMarkup();
+    expect(html).toMatch(/data-range-label="[^"]*">October 2026</);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>This month</);
+    expect(html).toMatch(/aria-pressed="false"[^>]*>Last month</);
+    expect(html).toMatch(/role="dialog" aria-label="Choose dates"[^>]*hidden=""/);
+    expect(html).toMatch(/disabled=""[^>]*>Apply</);
+    // The calendar is limited to the window: Oct 16 onwards cannot be picked.
+    expect(html).toMatch(/aria-label="[^"]*October 16[^"]*"[^>]*disabled=""|disabled=""[^>]*aria-label="[^"]*October 16/);
+  });
+
   it("shows an empty state when there are no leads", async () => {
     asClientA();
     leadsByFirm[FIRM_A] = [];
     const html = await leadsMarkup();
     expect(html).toContain("No leads for October 2026");
-    expect(html).not.toContain("<table");
+    // No leads table (the date picker's calendar is a table of its own).
+    expect(html).not.toContain("<caption");
+    expect(html).not.toContain("Latest note");
   });
 
   it("two firms' data never mixes: each client sees only their own firm", async () => {

@@ -12,6 +12,7 @@ vi.mock("@/lib/supabase/server", () => ({
 import { PORTAL_CONNECTION_OPTIONS, __setPortalSqlForTests } from "./client";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { addClientNote, listVisibleLeads } from "./db";
+import { presetRange } from "./range";
 import { requirePortalSession } from "./session";
 import type { SessionFirmId } from "./types";
 
@@ -56,8 +57,8 @@ describe("the portal never sends an array parameter", () => {
 
   it("across every portal query: session, both months of the list, and the note insert", async () => {
     await requirePortalSession();
-    await listVisibleLeads(FIRM, "current");
-    await listVisibleLeads(FIRM, "previous");
+    await listVisibleLeads(FIRM, presetRange("current"));
+    await listVisibleLeads(FIRM, presetRange("previous"));
     await addClientNote(FIRM, USER, "c@firm.com", LEAD, "hello");
     await addClientNote(FIRM, USER, null, LEAD, "hello");
     expect(calls).toHaveLength(5);

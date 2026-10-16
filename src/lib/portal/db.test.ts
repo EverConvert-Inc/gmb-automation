@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __setPortalSqlForTests } from "./client";
 import { NOTE_MAX_LENGTH, addClientNote, listVisibleLeads } from "./db";
+import { parsePortalRange, presetRange } from "./range";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { PortalRowError } from "./guards";
 import type { SessionFirmId } from "./types";
@@ -54,7 +55,7 @@ function leadRow(over: Record<string, unknown> = {}) {
 describe("listVisibleLeads — the query", () => {
   it("binds the session firm in the visibility rule and BOTH note joins", async () => {
     answer([]);
-    await listVisibleLeads(FIRM, "current");
+    await listVisibleLeads(FIRM, presetRange("current"));
     const firmParams = calls[0].params.filter((p) => p === FIRM);
     expect(firmParams).toHaveLength(3);
     // The firm's own note: client-authored only.
@@ -65,7 +66,7 @@ describe("listVisibleLeads — the query", () => {
 
   it("binds no firm other than the session's", async () => {
     answer([]);
-    await listVisibleLeads(FIRM, "current");
+    await listVisibleLeads(FIRM, presetRange("current"));
     const uuids = calls[0].params.filter(
       (p) => typeof p === "string" && /^[0-9a-f-]{36}$/.test(p),
     );
@@ -74,7 +75,7 @@ describe("listVisibleLeads — the query", () => {
 
   it("applies the visibility rule in SQL", async () => {
     answer([]);
-    await listVisibleLeads(FIRM, "current");
+    await listVisibleLeads(FIRM, presetRange("current"));
     const t = calls[0].text;
     expect(t).toContain("l.needs_review = false");
     expect(t).toContain("coalesce(l.status_override, l.status_parsed) = 'signed'");
@@ -85,25 +86,55 @@ describe("listVisibleLeads — the query", () => {
   // The hidden tags are SQL literals; this keeps them identical to HIDDEN_TAGS.
   it("hides exactly HIDDEN_TAGS in SQL", async () => {
     answer([]);
-    await listVisibleLeads(FIRM, "current");
+    await listVisibleLeads(FIRM, presetRange("current"));
     const list = /status_tag_matched not in \(([^)]*)\)/.exec(calls[0].text)?.[1] ?? "";
     expect(list.split(",").map((s) => s.trim().replace(/^'|'$/g, ""))).toEqual([...HIDDEN_TAGS]);
   });
 
-  it("binds the Eastern month's half-open bounds", async () => {
+  it("binds half-open Eastern bounds: This month runs to the end of TODAY, never beyond", async () => {
     answer([]);
-    await listVisibleLeads(FIRM, "current");
+    await listVisibleLeads(FIRM, presetRange("current"));
     const dates = calls[0].params.filter((p) => p instanceof Date) as Date[];
     expect(dates.map((d) => d.toISOString())).toEqual([
-      "2026-10-01T04:00:00.000Z",
-      "2026-11-01T04:00:00.000Z",
+      "2026-10-01T04:00:00.000Z", // Oct 1, 00:00 EDT
+      "2026-10-16T04:00:00.000Z", // the start of Oct 16 EDT: all of today, Oct 15, included
     ]);
     expect(calls[0].text).toContain("then coalesce(l.signed_at, l.occurred_at)");
   });
 
+  it("refuses a forged out-of-window range before any query runs", async () => {
+    answer([]);
+    const forged = {
+      from: "2026-01-01",
+      to: "2026-01-31",
+      start: new Date("2026-01-01T05:00:00Z"),
+      endExclusive: new Date("2026-02-01T05:00:00Z"),
+    } as unknown as Parameters<typeof listVisibleLeads>[1];
+    await expect(listVisibleLeads(FIRM, forged)).rejects.toThrow(/outside the allowed window/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("keeps the anchor rule for a custom range: called Sep 28, signed Oct 3 belongs to Oct 1–5, not Sep", async () => {
+    const row = leadRow({
+      effective_status: "signed",
+      effective_opportunity: false,
+      status_tag_matched: "Signed",
+      occurred_at: new Date("2026-09-28T15:00:00Z"),
+      signed_at: new Date("2026-10-03T15:00:00Z"),
+    });
+    const inOct = parsePortalRange("2026-10-01", "2026-10-05");
+    const inSep = parsePortalRange("2026-09-01", "2026-09-30");
+    if (!inOct.ok || !inSep.ok) throw new Error("bad test ranges");
+    answer([row]);
+    await expect(listVisibleLeads(FIRM, inOct.range)).resolves.toHaveLength(1);
+    // Postgres would not return it for September; if it ever did, the re-check refuses it.
+    answer([row]);
+    await expect(listVisibleLeads(FIRM, inSep.range)).rejects.toThrow(/outside 2026-09-01\.\.2026-09-30/);
+  });
+
   it("never selects the CallRail note, tags, source or channel", async () => {
     answer([]);
-    await listVisibleLeads(FIRM, "current");
+    await listVisibleLeads(FIRM, presetRange("current"));
     for (const col of ["raw_note", "raw_tags", "raw_source_name", "raw_tracker_id", "raw_form_data", "callrail_company_id"]) {
       expect(calls[0].text).not.toContain(col);
     }
@@ -113,7 +144,7 @@ describe("listVisibleLeads — the query", () => {
 describe("listVisibleLeads — what it returns", () => {
   it("returns only the client-facing fields", async () => {
     answer([leadRow()]);
-    const [lead] = await listVisibleLeads(FIRM, "current");
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
     expect(Object.keys(lead).sort()).toEqual(
       ["date", "firmNote", "id", "name", "phone", "signedDate", "staffNote", "status"].sort(),
     );
@@ -131,7 +162,7 @@ describe("listVisibleLeads — what it returns", () => {
         signed_at: new Date("2026-10-03T01:30:00Z"), // signed Oct 2, 21:30 EDT
       }),
     ]);
-    const [lead] = await listVisibleLeads(FIRM, "current");
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
     expect(lead.status).toBe("signed");
     expect(lead.date).toBe("2026-09-28"); // the call date
     expect(lead.signedDate).toBe("2026-10-02"); // Eastern, not the UTC Oct 3
@@ -149,7 +180,7 @@ describe("listVisibleLeads — what it returns", () => {
         client_note_firm_id: FIRM,
       }),
     ]);
-    const [lead] = await listVisibleLeads(FIRM, "current");
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
     expect(lead.staffNote).toEqual({ body: "Called back", date: "2026-10-10" });
     expect(lead.firmNote).toEqual({ body: "Our note", date: "2026-10-09" });
   });
@@ -166,7 +197,7 @@ describe("listVisibleLeads — what it returns", () => {
         client_note_firm_id: FIRM,
       }),
     ]);
-    const [lead] = await listVisibleLeads(FIRM, "current");
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
     expect(lead.staffNote).toBeNull();
     expect(lead.firmNote).toEqual({ body: "Our note", date: "2026-10-12" });
   });
@@ -175,13 +206,13 @@ describe("listVisibleLeads — what it returns", () => {
   it("23:30 Eastern on the last day of the month stays in that month", async () => {
     vi.setSystemTime(new Date("2026-10-31T20:00:00Z"));
     answer([leadRow({ occurred_at: new Date("2026-11-01T03:30:00Z") })]); // Oct 31, 23:30 EDT
-    const [lead] = await listVisibleLeads(FIRM, "current");
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
     expect(lead.date).toBe("2026-10-31");
   });
 
   it("an override beats the hidden-tag rule", async () => {
     answer([leadRow({ status_tag_matched: "Lost", has_status_override: true })]);
-    await expect(listVisibleLeads(FIRM, "current")).resolves.toHaveLength(1);
+    await expect(listVisibleLeads(FIRM, presetRange("current"))).resolves.toHaveLength(1);
   });
 });
 
@@ -198,7 +229,7 @@ describe("listVisibleLeads — throws instead of rendering", () => {
     ["a lead from outside the month", { occurred_at: new Date("2026-11-01T04:30:00Z") }],
   ])("%s", async (_label, over) => {
     answer([leadRow(), leadRow(over)]);
-    await expect(listVisibleLeads(FIRM, "current")).rejects.toBeInstanceOf(PortalRowError);
+    await expect(listVisibleLeads(FIRM, presetRange("current"))).rejects.toBeInstanceOf(PortalRowError);
   });
 });
 

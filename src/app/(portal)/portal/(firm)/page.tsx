@@ -1,25 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Inbox } from "lucide-react";
+import { CircleAlert, Inbox } from "lucide-react";
 import { NOTE_MAX_LENGTH, listVisibleLeads, type PortalLead } from "@/lib/portal/db";
-import {
-  PORTAL_STATUS_TEXT,
-  isPortalMonth,
-  portalMonthRange,
-  type PortalMonth,
-  type PortalStatusLabel,
-} from "@/lib/portal/visibility";
+import { allowedPortalWindow, presetOf, rangeFromSearchParams } from "@/lib/portal/range";
+import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
-import { formatPortalMonth } from "../../_components/format";
+import { DateRangePicker } from "../../_components/date-range-picker";
+import { formatPortalRange } from "../../_components/format";
 import { LeadsView } from "../../_components/leads-view";
-import { portalAccentText, portalButton, portalFocus } from "../../_components/ui";
+import { portalAccentText, portalButton } from "../../_components/ui";
 import { requirePortalPage } from "../../_lib/session";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Leads" };
 
 /**
- * The firm's leads for one Eastern month. Only fields of PortalLead are ever
+ * The firm's leads for a date range inside the allowed window (range.ts):
+ * the current or previous Eastern month, never a future day. Only fields of PortalLead are ever
  * rendered — db.ts selects no source, channel, tag or CallRail note, so there
  * is nothing else here to leak. The summary counts are taken from the same
  * list, so they need no query of their own.
@@ -30,11 +27,14 @@ export default async function PortalLeadsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const session = await requirePortalPage();
-  const raw = (await searchParams).month;
-  const month: PortalMonth = isPortalMonth(raw) ? raw : "current";
-  const leads = await listVisibleLeads(session.firmId, month);
+  // Anything outside the window is refused here AND in listVisibleLeads; a
+  // refused URL shows the default range, never the dates it asked for.
+  const { range, invalid } = rangeFromSearchParams(await searchParams);
+  const leads = await listVisibleLeads(session.firmId, range);
 
-  const label = formatPortalMonth(portalMonthRange(month).key);
+  const preset = presetOf(range);
+  const allowed = allowedPortalWindow();
+  const label = formatPortalRange(range, preset);
   const counts = countByStatus(leads);
 
   return (
@@ -46,15 +46,15 @@ export default async function PortalLeadsPage({
             {label} · {leads.length} {leads.length === 1 ? "lead" : "leads"}
           </p>
         </div>
-        <nav aria-label="Month" className="inline-flex w-fit rounded-lg border bg-card p-1 shadow-sm">
-          <MonthLink month="current" active={month === "current"}>
-            This month
-          </MonthLink>
-          <MonthLink month="previous" active={month === "previous"}>
-            Last month
-          </MonthLink>
-        </nav>
+        <DateRangePicker from={range.from} to={range.to} min={allowed.min} max={allowed.max} preset={preset} />
       </div>
+
+      {invalid && (
+        <p role="status" className="flex items-center gap-2 rounded-lg border bg-card px-3.5 py-2.5 text-sm text-muted-foreground">
+          <CircleAlert aria-hidden className="h-4 w-4 shrink-0" />
+          That date range isn&apos;t available. Showing {label} instead.
+        </p>
+      )}
 
       <dl className="grid grid-cols-3 gap-3 sm:gap-4">
         {(["signed", "pending", "opportunity"] as const).map((s) => (
@@ -69,7 +69,7 @@ export default async function PortalLeadsPage({
       </dl>
 
       {leads.length === 0 ? (
-        <EmptyState label={label} month={month} />
+        <EmptyState label={label} showLastMonth={preset === "current"} />
       ) : (
         <LeadsView leads={leads} monthLabel={label} noteMaxLength={NOTE_MAX_LENGTH} />
       )}
@@ -83,7 +83,7 @@ function countByStatus(leads: readonly PortalLead[]): Record<PortalStatusLabel, 
   return counts;
 }
 
-function EmptyState({ label, month }: { label: string; month: PortalMonth }) {
+function EmptyState({ label, showLastMonth }: { label: string; showLastMonth: boolean }) {
   return (
     <div className="flex flex-col items-center rounded-xl border border-dashed bg-card px-6 py-14 text-center">
       <span className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
@@ -93,35 +93,11 @@ function EmptyState({ label, month }: { label: string; month: PortalMonth }) {
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
         New leads appear here as they come in.
       </p>
-      {month === "current" && (
+      {showLastMonth && (
         <Link href="/portal?month=previous" className={portalButton("secondary", "sm", cn("mt-5", portalAccentText))}>
           View last month
         </Link>
       )}
     </div>
-  );
-}
-
-function MonthLink({
-  month,
-  active,
-  children,
-}: {
-  month: PortalMonth;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      href={month === "current" ? "/portal" : "/portal?month=previous"}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors",
-        portalFocus,
-        active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-      )}
-    >
-      {children}
-    </Link>
   );
 }
