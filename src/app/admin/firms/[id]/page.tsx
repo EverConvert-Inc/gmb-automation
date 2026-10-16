@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   leadFirmCallrailCompanies,
@@ -20,6 +20,7 @@ import { FirmStatusStrip } from "@/components/leads/firm-status-strip";
 import { FirmStep } from "@/components/leads/firm-step";
 import { FirmSyncStep } from "@/components/leads/firm-sync-step";
 import { queueCount, visibleNowCount } from "./_lib/firm-status";
+import { countForFirm } from "../_lib/firm-counts";
 import "./firm-page.css";
 
 import { checkAdmin } from "@/lib/leads/admin-auth";
@@ -40,7 +41,8 @@ async function getFirm(id: string) {
       name: leadFirms.name,
       slug: leadFirms.slug,
       isActive: leadFirms.isActive,
-      leadCount: sql<number>`(select count(*)::int from ${leads} where ${leads.firmId} = ${leadFirms.id})`,
+      // Table-qualified — see countForFirm for why the plain form counted 0.
+      leadCount: countForFirm(leads, leads.firmId),
     })
     .from(leadFirms)
     .where(eq(leadFirms.id, id));

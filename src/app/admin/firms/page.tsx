@@ -23,6 +23,8 @@ import { assertRowShape } from "@/lib/leads/row-guard";
 import { checkAdmin } from "@/lib/leads/admin-auth";
 import { NotAuthorized } from "@/components/leads/not-authorized";
 
+import { countForFirm } from "./_lib/firm-counts";
+
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Firms" };
@@ -48,10 +50,11 @@ function perFirmCounts() {
     name: leadFirms.name,
     slug: leadFirms.slug,
     isActive: leadFirms.isActive,
-    tagCount: sql<number>`(select count(*)::int from ${leadFirmTags} where ${leadFirmTags.firmId} = ${leadFirms.id})`,
-    companyCount: sql<number>`(select count(*)::int from ${leadFirmCallrailCompanies} where ${leadFirmCallrailCompanies.firmId} = ${leadFirms.id})`,
-    userCount: sql<number>`(select count(*)::int from ${leadFirmUsers} where ${leadFirmUsers.firmId} = ${leadFirms.id})`,
-    leadCount: sql<number>`(select count(*)::int from ${leads} where ${leads.firmId} = ${leadFirms.id})`,
+    // Table-qualified — see countForFirm for why the plain form counted 0.
+    tagCount: countForFirm(leadFirmTags, leadFirmTags.firmId),
+    companyCount: countForFirm(leadFirmCallrailCompanies, leadFirmCallrailCompanies.firmId),
+    userCount: countForFirm(leadFirmUsers, leadFirmUsers.firmId),
+    leadCount: countForFirm(leads, leads.firmId),
   };
 }
 
