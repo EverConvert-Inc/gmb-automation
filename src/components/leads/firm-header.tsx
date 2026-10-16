@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { toggleFirmActive } from "./firm-active";
+import { fuAccentBg, fuFocusRing } from "./firm-ui";
 
 export { deactivateConfirmText } from "./firm-active";
 
@@ -61,13 +62,16 @@ export function FirmHeader({
           aria-label="Firm active"
           disabled={busy}
           onClick={onToggle}
-          className="inline-flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3 text-sm font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-wait disabled:opacity-70"
+          className={cn(
+            "inline-flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3 text-sm font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-wait disabled:opacity-70",
+            fuFocusRing,
+          )}
         >
           <span
             aria-hidden
             className={cn(
               "relative inline-block h-5 w-9 shrink-0 rounded-full transition-colors",
-              active ? "bg-emerald-600 dark:bg-emerald-500" : "bg-muted-foreground/30",
+              active ? fuAccentBg : "bg-muted-foreground/30",
             )}
           >
             <span

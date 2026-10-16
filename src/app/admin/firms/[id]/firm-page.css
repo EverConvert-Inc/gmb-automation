@@ -1,27 +1,29 @@
 /*
- * The firm page's colour tokens, scoped to .firm-ui so nothing else in the
- * internal app changes. The values are the portal's green family
- * (src/app/(portal)/portal-theme.css, --portal-green-*), copied — update both
- * together. Dark mode follows the INTERNAL app's theme (html.dark), not the
- * portal's.
+ * The firm page's ONE green family, scoped to .firm-ui so nothing else in the
+ * internal app changes. It is built from the same Tailwind emerald values as
+ * the primary button (firm-button.tsx): the badges, step checks, login pills
+ * and links use exactly the button's colours, and the switch and focus rings
+ * one step stronger. Dark mode follows the internal app's theme (html.dark).
+ *
+ * WCAG (tested in firm-page-greens.test.ts):
+ *   light — text on soft 7.3, text on white 7.7, switch/focus vs white 5.5
+ *   dark  — text on soft 6.0, text on card 6.7, switch vs card 4.5
  */
 .firm-ui {
-  --fu-soft: #ebf7ef;
-  --fu-tint: #d4efdd;
-  --fu-ring: #8fcca4;
-  --fu-text: #166534;
-  --fu-solid: #15803d;
-  --fu-solid-hover: #166534;
+  --fu-soft: #ecfdf5;   /* emerald-50:  badge / pill background */
+  --fu-border: #a7f3d0; /* emerald-200: badge / pill border */
+  --fu-text: #065f46;   /* emerald-800: green text, icons, links */
+  --fu-accent: #047857; /* emerald-700: switch "on" track */
+  --fu-focus: #047857;  /* emerald-700: keyboard focus ring */
   --fu-warn-bg: #fffaeb;
   --fu-warn-text: #b54708;
 }
 .dark .firm-ui {
-  --fu-soft: #15271d;
-  --fu-tint: #1b3727;
-  --fu-ring: #2f6e47;
-  --fu-text: #5fd68f;
-  --fu-solid: #1b7a43;
-  --fu-solid-hover: #17673a;
+  --fu-soft: #022c22;   /* emerald-950 — the primary button's background */
+  --fu-border: #064e3b; /* emerald-900 — the primary button's border */
+  --fu-text: #10b981;   /* emerald-500 — the primary button's text */
+  --fu-accent: #059669; /* emerald-600 */
+  --fu-focus: #10b981;
   --fu-warn-bg: rgb(245 158 11 / 0.12);
   --fu-warn-text: #fcd34d;
 }

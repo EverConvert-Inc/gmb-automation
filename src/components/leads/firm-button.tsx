@@ -14,7 +14,7 @@ const VARIANTS = {
   danger:
     "rounded-xl bg-gradient-to-t from-red-600 to-red-500 px-4 py-2 text-sm font-medium text-white hover:from-red-700 hover:to-red-600 focus-visible:ring-red-500",
   primary:
-    "py-2 px-4 rounded-xl text-sm font-medium border bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-500 dark:border-emerald-900 dark:hover:bg-emerald-900 focus-visible:ring-emerald-500",
+    "py-2 px-4 rounded-xl text-sm font-medium border bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-500 dark:border-emerald-900 dark:hover:bg-emerald-900 focus-visible:ring-[var(--fu-focus)]",
 } as const;
 
 export type FirmButtonVariant = keyof typeof VARIANTS;

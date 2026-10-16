@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fuDone } from "./firm-ui";
+import { fuDone, fuFocusRing } from "./firm-ui";
 
 export type PickerCompany = {
   id: string;
@@ -203,7 +203,10 @@ export function CallRailCompanyField({
               setOpen(false);
             }
           }}
-          className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-60"
+          className={cn(
+            "h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 disabled:opacity-60",
+            fuFocusRing,
+          )}
         />
       </div>
 

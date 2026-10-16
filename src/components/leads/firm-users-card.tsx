@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormError, Input, Label } from "@/components/ui/form";
 import { FirmButton } from "./firm-button";
+import { fuDone } from "./firm-ui";
 
 export type FirmUser = {
   id: string;
@@ -180,7 +181,9 @@ export function FirmUsersCard({
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate">{u.email}</span>
                   {u.isActive ? (
-                    <Badge variant="success">Active</Badge>
+                    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${fuDone}`}>
+                      Active
+                    </span>
                   ) : (
                     <Badge variant="outline">Inactive</Badge>
                   )}
