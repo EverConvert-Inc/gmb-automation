@@ -2,10 +2,11 @@
 
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, CircleAlert, LoaderCircle } from "lucide-react";
+import { Check, CircleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { noteDraftState, revertedDraft } from "../_lib/note-editor";
 import { formatPortalShortDate } from "./format";
+import { PortalSpinner } from "./loader";
 import { portalButton } from "./ui";
 
 export type NoteValue = { body: string; date: string } | null;
@@ -177,7 +178,7 @@ export function LeadNote({
           <div className="flex items-center gap-2">
             {canSave && (
               <button type="submit" disabled={busy} className={portalButton("primary", "sm")}>
-                {busy && <LoaderCircle aria-hidden className="h-3.5 w-3.5 animate-spin" />}
+                {busy && <PortalSpinner size={16} decorative />}
                 {busy ? "Saving…" : "Save"}
               </button>
             )}

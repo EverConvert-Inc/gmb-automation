@@ -3,10 +3,11 @@
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { DayPicker, type DateRange } from "react-day-picker";
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { closesOnFocusOut } from "../_lib/popover";
 import { formatPortalRange } from "./format";
+import { PortalSpinner } from "./loader";
 import { portalButton, portalFocus } from "./ui";
 
 type Preset = "current" | "previous";
@@ -126,7 +127,7 @@ export function DateRangePicker({
         )}
       >
         {pending ? (
-          <LoaderCircle aria-hidden className="h-4 w-4 animate-spin text-muted-foreground" />
+          <PortalSpinner size={16} label="Loading dates" />
         ) : (
           <CalendarDays aria-hidden className="h-4 w-4 text-muted-foreground" />
         )}

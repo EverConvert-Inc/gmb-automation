@@ -119,3 +119,21 @@
   box-shadow: inset 0 0 0 1px hsl(var(--border));
   font-weight: 600;
 }
+
+/* Loading spinner (_components/loader.tsx). The second arrow is white on
+   the dark theme and near-black on the light one, where white would vanish. */
+.portal-theme { --portal-loader-accent: #2563eb; --portal-loader-second: #1f2937; }
+.portal-theme.dark { --portal-loader-accent: #2563eb; --portal-loader-second: #ffffff; }
+
+@keyframes portal-loader-spin {
+  to { transform: rotate(360deg); }
+}
+.portal-theme .portal-loader {
+  /* 1.4s rather than the usual 1s, so it feels calmer. */
+  animation: portal-loader-spin 1.4s linear infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-theme .portal-loader { animation-duration: 3.2s; }
+}

@@ -159,7 +159,12 @@ describe("kept apart from the internal app's theme", () => {
 
   it("every rule in portal-theme.css is scoped to the portal root", () => {
     const css = readFileSync(join(PORTAL_DIR, "portal-theme.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    const selectors = [...css.matchAll(/([^{}]+)\{/g)].map((m) => m[1].trim());
+    // @-rules (keyframes, media) and keyframe steps are not selectors; the
+    // rules inside an @media block are still checked.
+    const selectors = [...css.matchAll(/([^{}]+)\{/g)]
+      .map((m) => m[1].trim())
+      .filter((s) => !s.startsWith("@") && !/^(from|to|\d+%)$/.test(s));
+    expect(css).not.toMatch(/@keyframes\s+(?!portal-)/);
     expect(selectors.length).toBeGreaterThan(5);
     for (const s of selectors) {
       for (const part of s.split(",")) expect(part.trim(), s).toMatch(/^\.portal-theme(\.dark)?(\s|$)/);

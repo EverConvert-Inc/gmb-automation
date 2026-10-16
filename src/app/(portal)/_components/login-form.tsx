@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
-import { CircleAlert, LoaderCircle } from "lucide-react";
+import { CircleAlert } from "lucide-react";
+import { PortalSpinner } from "./loader";
 import { portalButton, portalInput } from "./ui";
 
 // One message for every failure — wrong password, unknown email, banned
@@ -77,7 +78,7 @@ export function PortalLoginForm() {
         </p>
       )}
       <button type="submit" disabled={busy} className={portalButton("primary", "md", "w-full")}>
-        {busy && <LoaderCircle aria-hidden className="h-4 w-4 animate-spin" />}
+        {busy && <PortalSpinner size={18} decorative />}
         {busy ? "Signing in…" : "Sign in"}
       </button>
     </form>
