@@ -379,6 +379,13 @@
       "when": 1791989375575,
       "tag": "0053_lead_tracker_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792161949587,
+      "tag": "0054_portal_events",
+      "breakpoints": true
     }
   ]
 }

@@ -1723,3 +1723,45 @@ export type LeadNote = typeof leadNotes.$inferSelect;
 export type LeadSyncJob = typeof leadSyncJobs.$inferSelect;
 export type LeadWebhookSecret = typeof leadWebhookSecrets.$inferSelect;
 export type LeadSignedWebhookEvent = typeof leadSignedWebhookEvents.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Client portal activity log
+// ---------------------------------------------------------------------------
+//
+// One row per thing a client user did in the portal. Append-only from the
+// portal; the only other operation is the 13-month retention delete.
+//
+// Deliberately NO foreign keys: an FK would be an ALTER on this table that
+// also locks lead_firms / leads while it is added, and a cascade from leads
+// would add work to every lead delete the sync makes. This table must not
+// touch any existing table. firm_id / lead_id are plain uuids; the admin read
+// left-joins and tolerates a deleted firm or lead.
+//
+// metadata holds small, non-sensitive values only (preset names, counts,
+// which statuses were ticked) — never note text, names, phones, emails,
+// search terms, typed dates, IPs or user agents. The check caps its size.
+export const portalEvents = pgTable(
+  "portal_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    firmId: uuid("firm_id").notNull(),
+    authUserId: uuid("auth_user_id").notNull(),
+    eventType: text("event_type").notNull(),
+    leadId: uuid("lead_id"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  },
+  (t) => ({
+    firmCreatedIdx: index("portal_events_firm_created_idx").on(t.firmId, t.createdAt),
+    typeCreatedIdx: index("portal_events_type_created_idx").on(t.eventType, t.createdAt),
+    eventTypeCheck: check(
+      "portal_events_event_type_check",
+      sql`${t.eventType} IN ('sign_in','page_view','note_saved','date_range_changed','status_filter_used','search_used')`,
+    ),
+    metadataCheck: check(
+      "portal_events_metadata_check",
+      sql`jsonb_typeof(${t.metadata}) = 'object' AND pg_column_size(${t.metadata}) <= 1024`,
+    ),
+  }),
+).enableRLS();
+export type PortalEvent = typeof portalEvents.$inferSelect;
