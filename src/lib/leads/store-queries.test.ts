@@ -13,6 +13,7 @@ import {
   buildFinishJobUpdate,
   buildLeadUpsert,
   buildPendingCallrailIdsQuery,
+  buildRepointNotesUpdate,
   buildRepointUpdate,
   buildStartJobInsert,
   buildTagRulesQuery,
@@ -275,6 +276,12 @@ describe("the suggested_status_seen_at CASE — the construct that failed live",
 });
 
 describe("the reconciliation write path", () => {
+  it("a moved lead's notes: every note of that lead takes the new firm", () => {
+    const { sql: text, params } = buildRepointNotesUpdate(db, "row-1", "firm-b").toSQL();
+    expect(text).toBe('update "lead_notes" set "firm_id" = $1 where "lead_notes"."lead_id" = $2');
+    expect(params).toEqual(["firm-b", "row-1"]);
+  });
+
   it("a repoint to the queue also re-raises needs_review", () => {
     const { sql: text } = buildRepointUpdate(db, "row-1", null, NOW).toSQL();
     expect(text).toContain('"firm_id"');

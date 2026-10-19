@@ -183,6 +183,22 @@ export function buildRepointUpdate(
     .where(eq(leads.id, rowId));
 }
 
+/**
+ * A moved lead's notes move with it. lead_notes.firm_id is denormalised from
+ * leads.firm_id and is what the portal filters notes on, so a note left on
+ * the old firm would vanish from the new firm's portal and be deleted with
+ * the old firm (its firm_id is ON DELETE CASCADE). Only for a move TO a firm:
+ * firm_id is NOT NULL, so a lead demoted to the queue keeps its notes on the
+ * last firm — the queue lead is visible to no firm — and they follow it when
+ * routing next sends it somewhere.
+ */
+export function buildRepointNotesUpdate(database: LeadDb, rowId: string, toFirmId: string) {
+  return database
+    .update(leadNotes)
+    .set({ firmId: toFirmId })
+    .where(eq(leadNotes.leadId, rowId));
+}
+
 export function buildFlagStaleUpdate(
   database: LeadDb,
   rowIds: readonly string[],
@@ -402,6 +418,8 @@ export const drizzleLeadStore: LeadStore = {
         // of the row that already holds the notes and overrides.
         for (const r of repoints) {
           await buildRepointUpdate(tx, r.rowId, r.toFirmId, now);
+          // Same transaction: a lead and its notes never disagree on the firm.
+          if (r.toFirmId !== null) await buildRepointNotesUpdate(tx, r.rowId, r.toFirmId);
         }
         const assigned = upserts.filter((r) => r.firmId !== null);
         const unassigned = upserts.filter((r) => r.firmId === null);

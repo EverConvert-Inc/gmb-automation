@@ -1893,6 +1893,34 @@ describe("syncLeadsForMonth — texts", () => {
     expect([...fake.rows.values()].map((r) => r.firmId)).toEqual(["firm-x"]);
   });
 
+  it("an existing text row routed by company moves to the tagged firm, same row ids", async () => {
+    const twoPeople = thread({
+      tags: ["2 Person", "Signed", "Schuerger Shunnarah NC"],
+      note: "Jane Doe, 555-111-2222, Signed; John Roe, 555-333-4444, Signed",
+    });
+    // First run: no tag rule yet, so the company's firm gets both people.
+    const first = makeFakeStore({ companyRules: [{ firmId: "panchenko", callrailCompanyId: "COM1" }] });
+    await syncLeadsForMonth(textDeps(first.store, [twoPeople]).deps, { includeTexts: true, companyIds: ["COM1"] });
+    const before = [...first.rows.values()].map((r) => [r.personSuffix, r.firmId, r.id]);
+    expect(before).toEqual([
+      ["p1", "panchenko", "row-1"],
+      ["p2", "panchenko", "row-2"],
+    ]);
+
+    // The firm's tag now exists; the rows carry notes and overrides.
+    const second = makeFakeStore({
+      seed: [...first.rows.values()].map((r) => ({ ...r, hasNotes: true, hasOverrides: true })),
+      tagRules: [{ firmId: "schuerger", tagName: "Schuerger Shunnarah NC" }],
+      companyRules: [{ firmId: "panchenko", callrailCompanyId: "COM1" }],
+    });
+    const r = await syncLeadsForMonth(textDeps(second.store, [twoPeople]).deps, { includeTexts: true, companyIds: ["COM1"] });
+    expect([...second.rows.values()].map((x) => [x.personSuffix, x.firmId, x.id])).toEqual([
+      ["p1", "schuerger", "row-1"],
+      ["p2", "schuerger", "row-2"],
+    ]);
+    expect(r.texts).toMatchObject({ repointed: 2, flaggedStale: 0, deleted: 0 });
+  });
+
   it("a multi-person note in a text gives p1/p2, each with their own status", async () => {
     const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
     const t = textDeps(fake.store, [
