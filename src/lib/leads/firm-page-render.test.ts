@@ -77,6 +77,6 @@ describe("Sync now refreshes the page's status", () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(process.cwd(), "src", "components", "leads", "firm-sync-step.tsx"), "utf8");
-    expect(src).toMatch(/setResult\(\{ calls: body\.calls, forms: body\.forms \}\);\s*startRefresh\(\(\) => router\.refresh\(\)\);/);
+    expect(src).toMatch(/setResult\(\{ calls: body\.calls, forms: body\.forms, texts: body\.texts \?\? null \}\);\s*startRefresh\(\(\) => router\.refresh\(\)\);/);
   });
 });

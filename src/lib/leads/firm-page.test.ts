@@ -153,8 +153,8 @@ describe("status strip", () => {
 // ---------------------------------------------------------------------------
 
 describe("Sync now", () => {
-  it("calls the existing staff sync route with this firm's company ids", () => {
-    expect(firmSyncUrl(["COM1", "COM2"])).toBe("/api/admin/leads/sync-now?companyIds=COM1%2CCOM2");
+  it("calls the existing staff sync route with this firm's company ids, texts included", () => {
+    expect(firmSyncUrl(["COM1", "COM2"])).toBe("/api/admin/leads/sync-now?companyIds=COM1%2CCOM2&texts=1");
   });
 
   it("is disabled until a company is mapped", () => {
@@ -169,6 +169,15 @@ describe("Sync now", () => {
     expect(summarise({ calls: src, forms: { ...src, fetched: 2, written: 1, parseFailed: 0 } })).toBe(
       "12 fetched · 4 written · 1 couldn't be read",
     );
+  });
+
+  it("adds texts to the summary when the run included them", () => {
+    const src = { fetched: 10, written: 3, parseFailed: 1, error: null };
+    const texts = { fetched: 4, written: 4, parseFailed: 0, error: null };
+    expect(summarise({ calls: src, forms: src, texts })).toBe(
+      "20 fetched · 6 written · 2 couldn't be read · Texts: 4 fetched · 4 written · 0 couldn't be read",
+    );
+    expect(summarise({ calls: src, forms: src, texts: null })).toBe("20 fetched · 6 written · 2 couldn't be read");
   });
 });
 

@@ -6,19 +6,30 @@ import { useRouter } from "next/navigation";
 import { FirmButton } from "./firm-button";
 import { fuGreenText } from "./firm-ui";
 
-/** The existing staff sync route, narrowed to this firm's companies. */
+/**
+ * The existing staff sync route, narrowed to this firm's companies, with
+ * text conversations included (texts=1) — calls, forms and texts, the same
+ * as the scheduled run.
+ */
 export function firmSyncUrl(companyIds: readonly string[]): string {
-  return `/api/admin/leads/sync-now?companyIds=${encodeURIComponent(companyIds.join(","))}`;
+  return `/api/admin/leads/sync-now?companyIds=${encodeURIComponent(companyIds.join(","))}&texts=1`;
 }
 
 type SourceSummary = { fetched: number; written: number; parseFailed: number; error: string | null };
-type Summary = { calls: SourceSummary; forms: SourceSummary };
+/** texts is null when the run did not include texts. */
+type Summary = { calls: SourceSummary; forms: SourceSummary; texts?: SourceSummary | null };
+
+const line = (fetched: number, written: number, failed: number) =>
+  `${fetched} fetched · ${written} written · ${failed} couldn't be read`;
 
 export function summarise(s: Summary): string {
-  const fetched = s.calls.fetched + s.forms.fetched;
-  const written = s.calls.written + s.forms.written;
-  const failed = s.calls.parseFailed + s.forms.parseFailed;
-  return `${fetched} fetched · ${written} written · ${failed} couldn't be read`;
+  const calls = line(
+    s.calls.fetched + s.forms.fetched,
+    s.calls.written + s.forms.written,
+    s.calls.parseFailed + s.forms.parseFailed,
+  );
+  if (!s.texts) return calls;
+  return `${calls} · Texts: ${line(s.texts.fetched, s.texts.written, s.texts.parseFailed)}`;
 }
 
 /** Step 3: run the sync for this firm's companies now, and see the result. */
@@ -44,7 +55,7 @@ export function FirmSyncStep({
       const res = await fetch(firmSyncUrl(companyIds), { method: "POST" });
       const body = (await res.json().catch(() => ({}))) as Partial<Summary> & { error?: string };
       if (!body.calls || !body.forms) throw new Error(body.error ?? `HTTP ${res.status}`);
-      setResult({ calls: body.calls, forms: body.forms });
+      setResult({ calls: body.calls, forms: body.forms, texts: body.texts ?? null });
       startRefresh(() => router.refresh());
     } catch (err) {
       setError((err as Error).message);
@@ -53,7 +64,7 @@ export function FirmSyncStep({
     }
   }
 
-  const sourceError = result ? (result.calls.error ?? result.forms.error) : null;
+  const sourceError = result ? (result.calls.error ?? result.forms.error ?? result.texts?.error ?? null) : null;
 
   return (
     <div className="space-y-3">

@@ -22,7 +22,9 @@ export async function POST(req: Request) {
     ? companyParam.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
-  // Texts only when asked for (?texts=1).
+  // Texts only when asked for (?texts=1). The firm page's Sync now always
+  // asks, so it matches the scheduled run; budget, stale-job cleanup and the
+  // "manual" label are syncLeadsForMonth's, the same with or without texts.
   const includeTexts = url.searchParams.get("texts") === "1";
 
   const result = await syncLeadsForMonth(createSyncDeps(), {
