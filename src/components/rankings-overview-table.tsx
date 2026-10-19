@@ -1,23 +1,13 @@
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
+import { badgeClasses, type BadgeColour } from "@/components/ui/badge";
 import type { RankAnnotation, RankingsOverviewRow } from "@/lib/queries";
 
 // Deterministic color assignment per client slug. Keeps badge colors
 // consistent across renders without storing them in the DB.
-const CLIENT_PALETTE = [
-  "bg-green-100 text-green-900 border-green-200",
-  "bg-amber-100 text-amber-900 border-amber-200",
-  "bg-rose-100 text-rose-900 border-rose-200",
-  "bg-sky-100 text-sky-900 border-sky-200",
-  "bg-teal-100 text-teal-900 border-teal-200",
-  "bg-violet-100 text-violet-900 border-violet-200",
-  "bg-indigo-100 text-indigo-900 border-indigo-200",
-  "bg-orange-100 text-orange-900 border-orange-200",
-  "bg-fuchsia-100 text-fuchsia-900 border-fuchsia-200",
-  "bg-lime-100 text-lime-900 border-lime-200",
-];
+const CLIENT_PALETTE: BadgeColour[] = ["green", "amber", "rose", "sky", "teal", "violet", "indigo", "orange", "fuchsia", "lime"];
 
-function clientColor(slug: string): string {
+function clientColor(slug: string): BadgeColour {
   let hash = 0;
   for (let i = 0; i < slug.length; i++) hash = (hash * 31 + slug.charCodeAt(i)) >>> 0;
   return CLIENT_PALETTE[hash % CLIENT_PALETTE.length];
@@ -70,7 +60,7 @@ function ClientBadge({ name, slug }: { name: string; slug: string }) {
   return (
     <Link
       href={`/clients/${slug}`}
-      className={`inline-flex max-w-[28ch] items-center truncate whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${clientColor(slug)} hover:opacity-80`}
+      className={badgeClasses(clientColor(slug), "default", "max-w-[28ch] truncate whitespace-nowrap rounded-full border border-transparent hover:opacity-80")}
       title={name}
     >
       {name}

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Copy, Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeClasses, type BadgeColour } from "@/components/ui/badge";
 import { updateTakedownStatus, type TakedownStatus } from "@/app/takedowns/actions";
 import type { TakedownAlertRow } from "@/lib/queries";
 import { formatRelativeDate, formatRelativeTime } from "@/lib/utils";
@@ -11,18 +11,9 @@ import { formatRelativeDate, formatRelativeTime } from "@/lib/utils";
 // Deterministic color assignment per client slug, matching the palette used
 // on /rankings — kept local here rather than shared since both are small,
 // single-file uses.
-const CLIENT_PALETTE = [
-  "bg-green-100 text-green-900 border-green-200",
-  "bg-amber-100 text-amber-900 border-amber-200",
-  "bg-rose-100 text-rose-900 border-rose-200",
-  "bg-sky-100 text-sky-900 border-sky-200",
-  "bg-teal-100 text-teal-900 border-teal-200",
-  "bg-violet-100 text-violet-900 border-violet-200",
-  "bg-indigo-100 text-indigo-900 border-indigo-200",
-  "bg-orange-100 text-orange-900 border-orange-200",
-];
+const CLIENT_PALETTE: BadgeColour[] = ["green", "amber", "rose", "sky", "teal", "violet", "indigo", "orange"];
 
-function clientColor(slug: string): string {
+function clientColor(slug: string): BadgeColour {
   let hash = 0;
   for (let i = 0; i < slug.length; i++) hash = (hash * 31 + slug.charCodeAt(i)) >>> 0;
   return CLIENT_PALETTE[hash % CLIENT_PALETTE.length];
@@ -142,7 +133,7 @@ export function TakedownsTable({ rows }: { rows: TakedownAlertRow[] }) {
                 <td className="px-3 py-3">
                   <Link
                     href={`/clients/${r.clientSlug}`}
-                    className={`inline-flex max-w-[16ch] items-center truncate rounded-full border px-2 py-0.5 text-xs font-medium ${clientColor(r.clientSlug)} hover:opacity-80`}
+                    className={badgeClasses(clientColor(r.clientSlug), "default", "max-w-[16ch] truncate rounded-full border border-transparent hover:opacity-80")}
                     title={r.clientName}
                   >
                     {r.clientName}

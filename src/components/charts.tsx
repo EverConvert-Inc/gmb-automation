@@ -1,5 +1,7 @@
 // Lightweight no-dep SVG sparklines for KPI cards. Server-renderable.
 
+import { badgeClasses } from "@/components/ui/badge";
+
 export function MiniBars({
   values,
   labels,
@@ -119,16 +121,13 @@ export function DeltaPill({
   const positive = delta > 0;
   const neutral = delta === 0;
   const isGood = neutral ? false : invert ? !positive : positive;
-  const color = neutral
-    ? "text-muted-foreground"
-    : isGood
-      ? "text-green-700 bg-green-50 border-green-200"
-      : "text-amber-700 bg-amber-50 border-amber-200";
+  // Neutral keeps its plain muted look; good/bad use the shared badge colours.
+  const className = neutral
+    ? "inline-flex items-center rounded-full border border-transparent px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+    : badgeClasses(isGood ? "green" : "amber", "sm", "rounded-full border border-transparent");
   const sign = positive ? "+" : "";
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-medium ${color}`}
-    >
+    <span className={className}>
       {sign}
       {Math.abs(delta) < 10 ? delta.toFixed(1) : Math.round(delta)}
       {unit} vs prior
@@ -155,14 +154,9 @@ export function NumericDeltaPill({
     return <span className="text-[10px] text-muted-foreground">no change</span>;
   }
   const isGood = invert ? delta < 0 : delta > 0;
-  const color = isGood
-    ? "text-green-700 bg-green-50 border-green-200"
-    : "text-amber-700 bg-amber-50 border-amber-200";
   const sign = delta > 0 ? "+" : "";
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-medium ${color}`}
-    >
+    <span className={badgeClasses(isGood ? "green" : "amber", "sm", "rounded-full border border-transparent")}>
       {sign}
       {delta.toFixed(precision)}
     </span>

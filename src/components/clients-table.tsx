@@ -297,22 +297,24 @@ function LocationSnapshotCard({
             <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="truncate font-medium">{loc.name}</span>
             {loc.isGbpConnected ? (
-              <Badge variant="success" className="shrink-0 px-1.5 py-px text-[10px]">
+              <Badge variant="success" size="sm" className="shrink-0">
                 GBP
               </Badge>
             ) : (
-              <Badge variant="secondary" className="shrink-0 px-1.5 py-px text-[10px]">
+              <Badge variant="secondary" size="sm" className="shrink-0">
                 no GBP
               </Badge>
             )}
             {loc.isGbpConnected && loc.lastPollError && (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-1.5 py-px text-[10px] font-medium text-red-800"
+              <Badge
+                variant="red"
+                size="sm"
+                className="shrink-0 gap-1 rounded-full"
                 title={`${loc.consecutivePollFailures} consecutive failed sync${loc.consecutivePollFailures === 1 ? "" : "s"} — ${loc.lastPollError}`}
               >
                 <AlertTriangle className="h-2.5 w-2.5" />
                 sync failing
-              </span>
+              </Badge>
             )}
           </div>
           <div
