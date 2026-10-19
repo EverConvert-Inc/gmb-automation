@@ -23,7 +23,7 @@ const STATUS_OPTIONS = FILTER_STATUSES.map((s) => ({
 
 /**
  * The month's leads, with a status filter, a name/phone search and pages of
- * 25. All of it runs here, in the browser, over exactly the rows the server
+ * 15. All of it runs here, in the browser, over exactly the rows the server
  * already sent for this month — so it can show nothing the page did not
  * already show. Filtering or searching goes back to page 1.
  */

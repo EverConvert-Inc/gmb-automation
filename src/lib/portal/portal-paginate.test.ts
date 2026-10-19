@@ -1,4 +1,4 @@
-// The portal's leads list in pages of 25: the pure slicing, plus the
+// The portal's leads list in pages of 15: the pure slicing, plus the
 // rendered page 1 of a month with more leads than fit.
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
@@ -13,23 +13,27 @@ import type { PortalLead } from "./db";
 const nums = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 
 describe("paginate", () => {
-  it("pages of 25", () => {
-    expect(PORTAL_PAGE_SIZE).toBe(25);
-    const p = paginate(nums(60), 1);
-    expect(p).toMatchObject({ page: 1, pageCount: 3, first: 1, last: 25, total: 60 });
-    expect(p.items).toEqual(nums(25));
+  it("the page size is 15", () => {
+    expect(PORTAL_PAGE_SIZE).toBe(15);
+  });
+
+  it("pages of 15", () => {
+    const p = paginate(nums(40), 1);
+    expect(p).toMatchObject({ page: 1, pageCount: 3, first: 1, last: 15, total: 40 });
+    expect(p.items).toEqual(nums(15));
+    expect(paginate(nums(40), 2)).toMatchObject({ first: 16, last: 30 });
   });
 
   it("a short last page", () => {
-    const p = paginate(nums(60), 3);
-    expect(p).toMatchObject({ page: 3, first: 51, last: 60 });
+    const p = paginate(nums(40), 3);
+    expect(p).toMatchObject({ page: 3, first: 31, last: 40 });
     expect(p.items).toHaveLength(10);
   });
 
   it("clamps a page past either end", () => {
-    expect(paginate(nums(60), 9).page).toBe(3);
-    expect(paginate(nums(60), 0).page).toBe(1);
-    expect(paginate(nums(60), Number.NaN).page).toBe(1);
+    expect(paginate(nums(40), 9).page).toBe(3);
+    expect(paginate(nums(40), 0).page).toBe(1);
+    expect(paginate(nums(40), Number.NaN).page).toBe(1);
   });
 
   it("an empty list is one empty page", () => {
@@ -37,7 +41,7 @@ describe("paginate", () => {
   });
 
   it("exactly one page has no second", () => {
-    expect(paginate(nums(25), 2)).toMatchObject({ page: 1, pageCount: 1, last: 25 });
+    expect(paginate(nums(15), 2)).toMatchObject({ page: 1, pageCount: 1, last: 15 });
   });
 });
 
@@ -66,19 +70,19 @@ function tableNames(html: string): string[] {
 }
 
 describe("the leads list in pages", () => {
-  it("shows the first 25 of 30, with Next enabled and Previous disabled", () => {
-    const html = render(30);
-    expect(tableNames(html)).toEqual(nums(25).map((i) => `Lead ${i}`));
+  it("shows the first 15 of 20, with Next enabled and Previous disabled", () => {
+    const html = render(20);
+    expect(tableNames(html)).toEqual(nums(15).map((i) => `Lead ${i}`));
     expect(html).toContain('aria-label="Leads pages"');
-    expect(html).toContain("1–25 of 30");
+    expect(html).toContain("1–15 of 20");
     expect(html).toContain("Page 1 of 2");
     expect(html).toMatch(/<button type="button" disabled=""[^>]*>.*?Previous/);
     expect(html).not.toMatch(/<button type="button" disabled=""[^>]*>Next/);
   });
 
   it("no page controls when everything fits", () => {
-    const html = render(25);
-    expect(tableNames(html)).toHaveLength(25);
+    const html = render(15);
+    expect(tableNames(html)).toHaveLength(15);
     expect(html).not.toContain("Leads pages");
   });
 });

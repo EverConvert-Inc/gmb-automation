@@ -1,7 +1,7 @@
 // The portal's leads list, one page at a time. Pure: it slices rows the page
 // already loaded, so it can show nothing the server did not already send.
 
-export const PORTAL_PAGE_SIZE = 25;
+export const PORTAL_PAGE_SIZE = 15;
 
 export type Page<T> = {
   /** 1-based, clamped into 1..pageCount. */
