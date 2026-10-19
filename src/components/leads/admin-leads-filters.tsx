@@ -2,7 +2,8 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
-import { Label, Select } from "@/components/ui/form";
+import { Label } from "@/components/ui/form";
+import { AdminSelect } from "@/components/leads/admin-select";
 import { formatMonthKey } from "@/lib/leads/admin-dates";
 
 export function AdminLeadsFilters({
@@ -32,7 +33,7 @@ export function AdminLeadsFilters({
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
       <div className="sm:w-56">
         <Label htmlFor="lead-month">Month (Eastern)</Label>
-        <Select
+        <AdminSelect
           id="lead-month"
           value={monthKey}
           onChange={(e) => setParam("month", e.target.value)}
@@ -43,11 +44,11 @@ export function AdminLeadsFilters({
               {formatMonthKey(m)}
             </option>
           ))}
-        </Select>
+        </AdminSelect>
       </div>
       <div className="sm:w-64">
         <Label htmlFor="lead-firm">Firm</Label>
-        <Select
+        <AdminSelect
           id="lead-firm"
           value={firmFilter}
           onChange={(e) => setParam("firm", e.target.value)}
@@ -61,7 +62,7 @@ export function AdminLeadsFilters({
               {f.isActive ? "" : " (inactive)"}
             </option>
           ))}
-        </Select>
+        </AdminSelect>
       </div>
     </div>
   );

@@ -6,7 +6,8 @@ import { X } from "lucide-react";
 import "@/app/admin/firms/[id]/firm-page.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FormError, Input, Label, Select, Textarea } from "@/components/ui/form";
+import { FormError, Input, Label, Textarea } from "@/components/ui/form";
+import { AdminSelect } from "./admin-select";
 import { formatEasternDateTime } from "@/lib/leads/admin-dates";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 import { cn } from "@/lib/utils";
@@ -154,7 +155,7 @@ export function AdminLeadDrawer({
             label="Status"
             current={`Now ${capitalise(lead.status)} · ${statusSource}`}
           >
-            <Select
+            <AdminSelect
               id={`status-${lead.id}`}
               defaultValue={lead.statusOverride ?? ""}
               disabled={busy}
@@ -166,7 +167,7 @@ export function AdminLeadDrawer({
               <option value="">From tags ({lead.statusParsed})</option>
               <option value="pending">Pending</option>
               <option value="signed">Signed</option>
-            </Select>
+            </AdminSelect>
           </Field>
 
           <Field
@@ -174,7 +175,7 @@ export function AdminLeadDrawer({
             label="Opportunity"
             current={`Now ${lead.isOpportunity ? "Yes" : "No"} · ${opportunitySource}`}
           >
-            <Select
+            <AdminSelect
               id={`opp-${lead.id}`}
               defaultValue={
                 lead.isOpportunityOverride === null
@@ -196,7 +197,7 @@ export function AdminLeadDrawer({
               </option>
               <option value="yes">Yes</option>
               <option value="no">No</option>
-            </Select>
+            </AdminSelect>
           </Field>
 
           <OverrideField
