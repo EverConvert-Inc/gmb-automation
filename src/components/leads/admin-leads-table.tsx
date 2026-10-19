@@ -2,10 +2,10 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { formatEasternDate, formatEasternDateTime } from "@/lib/leads/admin-dates";
 import { AdminLeadActions } from "@/components/leads/admin-lead-actions";
+import { sourceLabel } from "@/components/leads/source-label";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 
-/** Admin-only: how each lead source is labelled. The portal never shows a source. */
-export const SOURCE_LABEL: Record<string, string> = { call: "Call", form: "Form", text: "Text" };
+export { SOURCE_LABEL } from "@/components/leads/source-label";
 
 /**
  * Admin-only. Shows the CallRail tracker and the raw parse state alongside
@@ -45,7 +45,7 @@ export function AdminLeadsTable({
               <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
                 {formatEasternDateTime(row.occurredAt)}
                 <div className="text-xs">
-                  {SOURCE_LABEL[row.source] ?? row.source}
+                  {sourceLabel(row.source)}
                   {row.personSuffix !== "p1" ? ` · ${row.personSuffix}` : ""}
                 </div>
               </td>
