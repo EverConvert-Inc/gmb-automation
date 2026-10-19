@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Phone, Search, SearchX, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Phone, Search, SearchX, X } from "lucide-react";
 import type { PortalLead } from "@/lib/portal/db";
 import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
 import { FILTER_STATUSES, filterLeads, isFiltered, statusFacets } from "../_lib/filter";
+import { paginate } from "../_lib/paginate";
 import { trackSearch, trackStatusFilter } from "../_lib/track";
 import { FacetedFilter } from "./faceted-filter";
 import { formatPortalDate, formatPortalPhone } from "./format";
@@ -21,9 +22,10 @@ const STATUS_OPTIONS = FILTER_STATUSES.map((s) => ({
 }));
 
 /**
- * The month's leads, with a status filter and a name/phone search. All of it
- * runs here, in the browser, over exactly the rows the server already sent
- * for this month — so it can show nothing the page did not already show.
+ * The month's leads, with a status filter, a name/phone search and pages of
+ * 25. All of it runs here, in the browser, over exactly the rows the server
+ * already sent for this month — so it can show nothing the page did not
+ * already show. Filtering or searching goes back to page 1.
  */
 export function LeadsView({
   leads,
@@ -36,14 +38,25 @@ export function LeadsView({
 }) {
   const [statuses, setStatuses] = useState<Set<PortalStatusLabel>>(() => new Set());
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const listTop = useRef<HTMLDivElement>(null);
 
   const filter = { statuses, query };
   const shown = useMemo(() => filterLeads(leads, { statuses, query }), [leads, statuses, query]);
   const counts = useMemo(() => statusFacets(leads, query), [leads, query]);
   const filtered = isFiltered(filter);
+  const current = paginate(shown, page);
+
+  function goTo(next: number) {
+    setPage(next);
+    // Back to the top of the list, not the top of the page, so the filters
+    // stay in view.
+    listTop.current?.scrollIntoView({ block: "start" });
+  }
 
   function changeStatuses(next: Set<PortalStatusLabel>) {
     setStatuses(next);
+    setPage(1);
     trackStatusFilter(next); // the ticked labels only
   }
 
@@ -51,10 +64,11 @@ export function LeadsView({
     if (statuses.size > 0) trackStatusFilter([]);
     setStatuses(new Set());
     setQuery("");
+    setPage(1);
   }
 
   return (
-    <div className="space-y-4">
+    <div ref={listTop} className="scroll-mt-4 space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative w-full sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -63,6 +77,7 @@ export function LeadsView({
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
+              setPage(1);
               trackSearch(e.target.value); // logs name-or-phone, never the text
             }}
             placeholder="Search name or phone"
@@ -118,7 +133,7 @@ export function LeadsView({
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {shown.map((lead) => (
+                {current.items.map((lead) => (
                   <LeadRow key={lead.id} lead={lead} noteMaxLength={noteMaxLength} />
                 ))}
               </tbody>
@@ -127,10 +142,41 @@ export function LeadsView({
 
           {/* Phone: one card per lead. */}
           <ul className="space-y-3 md:hidden" aria-label={`Leads for ${monthLabel}`}>
-            {shown.map((lead) => (
+            {current.items.map((lead) => (
               <LeadCard key={lead.id} lead={lead} noteMaxLength={noteMaxLength} />
             ))}
           </ul>
+
+          {current.pageCount > 1 && (
+            <nav aria-label="Leads pages" className="flex items-center justify-between gap-3">
+              <p className="text-xs tabular-nums text-muted-foreground">
+                {current.first}–{current.last} of {current.total}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => goTo(current.page - 1)}
+                  disabled={current.page === 1}
+                  className={portalButton("secondary", "sm")}
+                >
+                  <ChevronLeft aria-hidden className="h-4 w-4" />
+                  Previous
+                </button>
+                <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
+                  Page {current.page} of {current.pageCount}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => goTo(current.page + 1)}
+                  disabled={current.page === current.pageCount}
+                  className={portalButton("secondary", "sm")}
+                >
+                  Next
+                  <ChevronRight aria-hidden className="h-4 w-4" />
+                </button>
+              </div>
+            </nav>
+          )}
         </>
       )}
     </div>
