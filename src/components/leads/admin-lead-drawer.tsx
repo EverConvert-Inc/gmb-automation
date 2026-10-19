@@ -12,7 +12,7 @@ import { formatEasternDateTime } from "@/lib/leads/admin-dates";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 import { cn } from "@/lib/utils";
 import { firmButtonClasses } from "./firm-button";
-import { fuGreenText } from "./firm-ui";
+import { fuFocusRing, fuGreenText } from "./firm-ui";
 import { sourceLabel } from "./source-label";
 
 const FOCUSABLE =
@@ -156,6 +156,7 @@ export function AdminLeadDrawer({
             current={`Now ${capitalise(lead.status)} · ${statusSource}`}
           >
             <AdminSelect
+              className={fuFocusRing}
               id={`status-${lead.id}`}
               defaultValue={lead.statusOverride ?? ""}
               disabled={busy}
@@ -176,6 +177,7 @@ export function AdminLeadDrawer({
             current={`Now ${lead.isOpportunity ? "Yes" : "No"} · ${opportunitySource}`}
           >
             <AdminSelect
+              className={fuFocusRing}
               id={`opp-${lead.id}`}
               defaultValue={
                 lead.isOpportunityOverride === null
@@ -224,6 +226,7 @@ export function AdminLeadDrawer({
               Visible to the firm in the portal
             </p>
             <Textarea
+              className={fuFocusRing}
               id={`note-${lead.id}`}
               rows={4}
               value={note}
@@ -289,7 +292,7 @@ function OverrideField({
       <div className="flex gap-2">
         <Input
           id={id}
-          className="min-w-0 flex-1"
+          className={cn("min-w-0 flex-1", fuFocusRing)}
           value={draft}
           disabled={disabled}
           onChange={(e) => setDraft(e.target.value)}

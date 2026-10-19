@@ -153,3 +153,17 @@ describe("one drawer at a time", () => {
     expect(__peekLeadDrawerForTests()).toBeNull();
   });
 });
+
+describe("the drawer's input focus ring", () => {
+  // Same green as the firm page's buttons (--fu-focus), not the app's lime ring.
+  const html = render();
+  const controls = [...html.matchAll(/<(select|textarea|input)\b[^>]*>/g)].map((m) => m[0]);
+
+  it("is on every field: status, opportunity, name, phone, note", () => {
+    expect(controls).toHaveLength(5);
+    for (const c of controls) {
+      expect(c).toContain("focus-visible:ring-[var(--fu-focus)]");
+      expect(c).not.toContain("focus-visible:ring-ring");
+    }
+  });
+});
