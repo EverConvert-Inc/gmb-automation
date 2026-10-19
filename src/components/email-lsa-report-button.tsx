@@ -64,18 +64,18 @@ export function EmailLsaReportButton({
         {busy ? "Sending…" : "Email this report"}
       </Button>
       {status.kind === "sent" && (
-        <p className="text-xs text-emerald-600 dark:text-emerald-400">
+        <p className="text-xs text-emerald-700 dark:text-emerald-400">
           Sent to {status.recipients.length} recipient
           {status.recipients.length === 1 ? "" : "s"}.
         </p>
       )}
       {status.kind === "skipped" && (
-        <p className="text-xs text-amber-600 dark:text-amber-400">
+        <p className="text-xs text-amber-800 dark:text-amber-400">
           Skipped: {status.reason}.
         </p>
       )}
       {status.kind === "error" && (
-        <p className="max-w-xs text-right text-xs text-red-600 dark:text-red-400">
+        <p className="max-w-xs text-right text-xs text-red-700 dark:text-red-400">
           {status.message}
         </p>
       )}

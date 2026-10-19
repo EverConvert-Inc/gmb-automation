@@ -84,7 +84,7 @@ export function VelocityDelta({
   const positive = delta > 0;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 ${positive ? "text-emerald-600" : "text-red-600"}`}
+      className={`inline-flex items-center gap-0.5 ${positive ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}
     >
       {showArrow && (positive ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
       {Math.abs(delta)}

@@ -270,9 +270,9 @@ export function ClientsTable({
 
 function freshnessTone(days: number | null): string {
   if (days === null) return "text-muted-foreground";
-  if (days <= 14) return "text-green-700";
-  if (days <= 45) return "text-amber-700";
-  return "text-red-700";
+  if (days <= 14) return "text-green-800 dark:text-green-400";
+  if (days <= 45) return "text-amber-800 dark:text-amber-400";
+  return "text-red-700 dark:text-red-400";
 }
 
 function LocationSnapshotCard({

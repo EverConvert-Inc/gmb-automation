@@ -63,7 +63,7 @@ export default function LoginPage() {
                 className="w-full rounded-md border bg-background px-3 py-2 text-sm"
               />
             </div>
-            {error && <div className="text-sm text-red-600">{error}</div>}
+            {error && <div className="text-sm text-red-700 dark:text-red-400">{error}</div>}
             <Button type="submit" disabled={busy} className="w-full">
               {busy ? "Signing in…" : "Sign in"}
             </Button>

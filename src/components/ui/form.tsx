@@ -60,5 +60,5 @@ export function Label({
 
 export function FormError({ children }: { children?: React.ReactNode }) {
   if (!children) return null;
-  return <div className="text-sm text-red-600">{children}</div>;
+  return <div className="text-sm text-red-700 dark:text-red-400">{children}</div>;
 }

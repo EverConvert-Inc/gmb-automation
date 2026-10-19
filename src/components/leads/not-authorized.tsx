@@ -15,7 +15,7 @@ export function NotAuthorized() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ShieldAlert className="h-5 w-5 text-amber-600" />
+            <ShieldAlert className="h-5 w-5 text-amber-700 dark:text-amber-400" />
             Not authorized
           </CardTitle>
         </CardHeader>

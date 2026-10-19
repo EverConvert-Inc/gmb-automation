@@ -86,8 +86,8 @@ export function SyncReviewsButton({
         <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
         {buttonLabel}
       </Button>
-      {okMessage && <span className="text-xs text-green-700">{okMessage}</span>}
-      {error && <span className="text-xs text-red-600">{error}</span>}
+      {okMessage && <span className="text-xs text-green-800 dark:text-green-400">{okMessage}</span>}
+      {error && <span className="text-xs text-red-700 dark:text-red-400">{error}</span>}
     </div>
   );
 }

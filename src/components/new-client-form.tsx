@@ -1,5 +1,6 @@
 "use client";
 
+import { badgeTone } from "@/components/ui/badge";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -51,7 +52,7 @@ export function NewClientForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+      <p className={`rounded-md px-3 py-2 text-xs ${badgeTone("blue")}`}>
         You&apos;ll add locations (with addresses + Google Business Profile)
         and tracked keywords on the next screens. This first step just
         creates the client workspace.

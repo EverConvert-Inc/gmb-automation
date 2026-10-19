@@ -66,12 +66,12 @@ export function SyncLsaNowButton({ from, to }: { from: string; to: string }) {
         {busy ? "Syncing…" : "Sync now"}
       </Button>
       {status.kind === "done" && status.lsa.errored === 0 && (
-        <p className="text-xs text-emerald-600 dark:text-emerald-400">
+        <p className="text-xs text-emerald-700 dark:text-emerald-400">
           Synced {status.lsa.synced} client{status.lsa.synced === 1 ? "" : "s"}.
         </p>
       )}
       {status.kind === "done" && status.lsa.errored > 0 && (
-        <p className="max-w-xs text-right text-xs text-amber-600 dark:text-amber-400">
+        <p className="max-w-xs text-right text-xs text-amber-800 dark:text-amber-400">
           Synced {status.lsa.synced} client{status.lsa.synced === 1 ? "" : "s"},{" "}
           {status.lsa.errored} error{status.lsa.errored === 1 ? "" : "s"} (
           {status.lsa.errors[0]?.message}
@@ -79,7 +79,7 @@ export function SyncLsaNowButton({ from, to }: { from: string; to: string }) {
         </p>
       )}
       {status.kind === "error" && (
-        <p className="max-w-xs text-right text-xs text-red-600 dark:text-red-400">
+        <p className="max-w-xs text-right text-xs text-red-700 dark:text-red-400">
           {status.message}
         </p>
       )}

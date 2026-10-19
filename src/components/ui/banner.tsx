@@ -11,19 +11,19 @@ const tones: Record<
   success: {
     container:
       "border-green-200 bg-green-50 text-green-900 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-100",
-    icon: "text-green-600 dark:text-green-400",
+    icon: "text-green-800 dark:text-green-400",
     Icon: CheckCircle2,
   },
   warning: {
     container:
       "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100",
-    icon: "text-amber-600 dark:text-amber-400",
+    icon: "text-amber-800 dark:text-amber-400",
     Icon: AlertTriangle,
   },
   error: {
     container:
       "border-red-200 bg-red-50 text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100",
-    icon: "text-red-600 dark:text-red-400",
+    icon: "text-red-700 dark:text-red-400",
     Icon: XCircle,
   },
   info: {

@@ -161,7 +161,7 @@ export default async function AdminFirmsPage() {
                         </td>
                         <td className="py-2 pr-4 text-right tabular-nums">
                           {tags === 0 && companies === 0 ? (
-                            <span className="text-amber-700 dark:text-amber-300">0</span>
+                            <span className="text-amber-800 dark:text-amber-400">0</span>
                           ) : (
                             tags
                           )}

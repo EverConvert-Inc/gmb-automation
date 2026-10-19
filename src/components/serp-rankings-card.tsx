@@ -16,7 +16,7 @@ function RankCell({ ann }: { ann: RankAnnotation | null }) {
   }
   if (ann.kind === "nr_lost") {
     return (
-      <span className="text-red-700" title={`Previously #${ann.priorRank}`}>
+      <span className="text-red-700 dark:text-red-400" title={`Previously #${ann.priorRank}`}>
         NR (LOST)
       </span>
     );
@@ -25,14 +25,14 @@ function RankCell({ ann }: { ann: RankAnnotation | null }) {
   let annotation: React.ReactNode = null;
   let toneClass = "text-foreground";
   if (isNew) {
-    annotation = <span className="ml-1 text-green-700">(NEW)</span>;
-    toneClass = "text-green-700";
+    annotation = <span className="ml-1 text-green-800 dark:text-green-400">(NEW)</span>;
+    toneClass = "text-green-800 dark:text-green-400";
   } else if (delta != null && delta > 0) {
-    annotation = <span className="ml-1 text-green-700">(+{delta})</span>;
-    toneClass = "text-green-700";
+    annotation = <span className="ml-1 text-green-800 dark:text-green-400">(+{delta})</span>;
+    toneClass = "text-green-800 dark:text-green-400";
   } else if (delta != null && delta < 0) {
-    annotation = <span className="ml-1 text-red-700">({delta})</span>;
-    toneClass = "text-red-700";
+    annotation = <span className="ml-1 text-red-700 dark:text-red-400">({delta})</span>;
+    toneClass = "text-red-700 dark:text-red-400";
   } else if (delta === 0) {
     annotation = <span className="ml-1 text-muted-foreground">(–)</span>;
   }
@@ -43,7 +43,7 @@ function RankCell({ ann }: { ann: RankAnnotation | null }) {
       {isWrongPage && (
         <span
           title={actualUrl ? `Ranking page: ${actualUrl}` : "Wrong page"}
-          className="inline-flex items-center text-amber-700"
+          className="inline-flex items-center text-amber-800 dark:text-amber-400"
         >
           <AlertTriangle className="h-3 w-3" />
           <span className="ml-0.5 text-xs">other URL</span>

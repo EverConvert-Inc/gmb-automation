@@ -14,16 +14,16 @@ const toneRing: Record<Tone, string> = {
 const toneAccent: Record<Tone, string> = {
   default: "bg-muted text-muted-foreground",
   brand: "bg-brand/15 text-brand",
-  amber: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  red: "bg-red-500/15 text-red-600 dark:text-red-400",
+  amber: "bg-amber-500/15 text-amber-800 dark:text-amber-400",
+  red: "bg-red-500/15 text-red-700 dark:text-red-400",
   muted: "bg-muted text-muted-foreground",
 };
 
 const toneValue: Record<Tone, string> = {
   default: "text-foreground",
   brand: "text-foreground",
-  amber: "text-amber-600 dark:text-amber-400",
-  red: "text-red-600 dark:text-red-400",
+  amber: "text-amber-800 dark:text-amber-400",
+  red: "text-red-700 dark:text-red-400",
   muted: "text-muted-foreground",
 };
 

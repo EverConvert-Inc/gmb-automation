@@ -93,7 +93,7 @@ export default async function LsaClientsListPage() {
                         </td>
                         <td className="px-4 py-3 align-top">
                           {c.googleAdsLinked ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400">
+                            <span className="inline-flex items-center gap-1 text-xs text-green-800 dark:text-green-400">
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               {c.googleAdsCustomerId}
                             </span>
@@ -106,7 +106,7 @@ export default async function LsaClientsListPage() {
                         </td>
                         <td className="px-4 py-3 align-top">
                           {c.callrailLinked ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400">
+                            <span className="inline-flex items-center gap-1 text-xs text-green-800 dark:text-green-400">
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               Tag: {c.signedCaseTag}
                             </span>

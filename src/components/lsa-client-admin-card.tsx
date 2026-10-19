@@ -692,7 +692,7 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
               {tagFiltersDirty ? "Save tag & filters" : "Saved"}
             </Button>
             {tagFiltersDirty && (
-              <span className="text-xs text-amber-700 dark:text-amber-400">
+              <span className="text-xs text-amber-800 dark:text-amber-400">
                 Unsaved changes
               </span>
             )}
@@ -751,7 +751,7 @@ export function LsaClientAdminCard(props: LsaClientAdminProps) {
               {gmbFiltersDirty ? "Save GMB filters" : "Saved"}
             </Button>
             {gmbFiltersDirty && (
-              <span className="text-xs text-amber-700 dark:text-amber-400">
+              <span className="text-xs text-amber-800 dark:text-amber-400">
                 Unsaved changes
               </span>
             )}

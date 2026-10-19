@@ -105,7 +105,7 @@ export default async function AdminLeadsPage({
             emptyMessage="No leads for this month and filter."
           />
           {rows.length >= ADMIN_LEAD_LIMIT ? (
-            <p className="text-xs text-amber-700 dark:text-amber-300">
+            <p className="text-xs text-amber-800 dark:text-amber-400">
               Showing the first {ADMIN_LEAD_LIMIT}. Narrow by firm to see the
               rest.
             </p>

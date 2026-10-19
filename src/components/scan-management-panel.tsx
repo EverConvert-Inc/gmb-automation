@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormError, Input, Label, Select, Textarea } from "@/components/ui/form";
 import { formatRelativeDate } from "@/lib/utils";
@@ -254,7 +254,7 @@ export function ScanManagementPanel({
   const inner = (
     <div className="space-y-6">
         {isActive && activeScan && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+          <div className={`rounded-md p-3 text-sm ${badgeTone("amber")}`}>
             Scan in progress · {activeScan.completedPoints}/{activeScan.totalPoints}{" "}
             points complete · live updates above
           </div>
@@ -262,11 +262,7 @@ export function ScanManagementPanel({
 
         {toast && (
           <div
-            className={`rounded-md border p-3 text-sm ${
-              toast.kind === "error"
-                ? "border-red-200 bg-red-50 text-red-700"
-                : "border-blue-200 bg-blue-50 text-blue-700"
-            }`}
+            className={`rounded-md p-3 text-sm ${badgeTone(toast.kind === "error" ? "red" : "blue")}`}
           >
             {toast.message}
           </div>

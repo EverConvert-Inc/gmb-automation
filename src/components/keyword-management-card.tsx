@@ -543,7 +543,7 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
               )}
             </div>
             {bulkProgress && bulkProgress.errors.length > 0 && (
-              <ul className="space-y-0.5 text-[11px] text-amber-700">
+              <ul className="space-y-0.5 text-[11px] text-amber-800 dark:text-amber-400">
                 {bulkProgress.errors.map((e, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="font-medium">✗</span>
@@ -667,7 +667,7 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
                     </a>
                   </div>
                   {r.isActive ? (
-                    <span className="text-[10px] uppercase tracking-wide text-green-700">
+                    <span className="text-[10px] uppercase tracking-wide text-green-800 dark:text-green-400">
                       active
                     </span>
                   ) : (
@@ -851,7 +851,7 @@ Cumming Workers' Compensation Lawyer, https://example.com/cumming/workers-comp/,
                     </td>
                     <td className="px-3 py-2">
                       {r.isActive ? (
-                        <span className="text-xs uppercase tracking-wide text-green-700">
+                        <span className="text-xs uppercase tracking-wide text-green-800 dark:text-green-400">
                           active
                         </span>
                       ) : (

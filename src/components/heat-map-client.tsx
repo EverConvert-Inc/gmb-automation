@@ -371,7 +371,7 @@ function ScanPicker({
         })}
       </div>
       {loading && <span className="text-muted-foreground">Loading…</span>}
-      {error && !loading && <span className="text-red-600">{error}</span>}
+      {error && !loading && <span className="text-red-700 dark:text-red-400">{error}</span>}
     </div>
   );
 }

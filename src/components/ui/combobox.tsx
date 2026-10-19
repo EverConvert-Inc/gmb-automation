@@ -201,7 +201,7 @@ export function ComboBox({
                     <span className="flex-1 min-w-0">
                       {renderOptionLabel(o)}
                       {o.meta && (
-                        <span className="mt-0.5 block text-[10px] text-amber-700 dark:text-amber-400">
+                        <span className="mt-0.5 block text-[10px] text-amber-800 dark:text-amber-400">
                           {o.meta}
                         </span>
                       )}

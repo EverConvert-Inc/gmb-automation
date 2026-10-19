@@ -41,9 +41,9 @@ export function ScanAllButton() {
   return (
     <div className="flex items-center gap-3">
       {message && (
-        <span className="text-xs text-green-700">{message}</span>
+        <span className="text-xs text-green-800 dark:text-green-400">{message}</span>
       )}
-      {error && <span className="text-xs text-red-600">{error}</span>}
+      {error && <span className="text-xs text-red-700 dark:text-red-400">{error}</span>}
       <Button variant="outline" size="sm" onClick={run} disabled={busy}>
         {busy ? (
           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />

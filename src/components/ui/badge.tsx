@@ -62,6 +62,14 @@ const SIZES: Record<BadgeSize, string> = {
 
 export const BADGE_COLOURS = Object.keys(COLOURS) as BadgeColour[];
 
+/**
+ * Just a colour's tint + text pair (light and dark), for elements that are not
+ * badges but should share their colours — notices, inline messages.
+ */
+export function badgeTone(colour: BadgeColour): string {
+  return COLOURS[colour];
+}
+
 /** The classes, for a non-span element (e.g. a Link styled as a badge). */
 export function badgeClasses(variant: BadgeVariant = "default", size: BadgeSize = "default", className?: string): string {
   const colour =

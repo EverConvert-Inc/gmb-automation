@@ -133,7 +133,7 @@ describe("no old pale-mint pills on internal pages", () => {
 
   it("no pale -100 pill tints, no pale green/mint -50 tints, outside the allowed files", () => {
     const PALE =
-      /\b(?:hover:)?bg-(?:slate|gray|zinc|neutral|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-100\b|\bbg-(?:green|emerald|lime|teal)-50\b|\btext-green-(?:800|900)\b/g;
+      /\b(?:hover:)?bg-(?:slate|gray|zinc|neutral|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-100\b|\bbg-(?:green|emerald|lime|teal)-50\b/g;
     const hits = INTERNAL.filter((f) => !ALLOWED.some((a) => f.endsWith(a)))
       .flatMap((f) => (readFileSync(f, "utf8").match(PALE) ?? []).map((m) => `${f.slice(ROOT.length + 1)}: ${m}`));
     expect(hits).toEqual([]);

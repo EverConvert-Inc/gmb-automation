@@ -164,7 +164,7 @@ export function HeatMap({
                             key={c.placeId}
                             className={
                               c.isSelf
-                                ? "font-semibold text-green-700"
+                                ? "font-semibold text-green-800 dark:text-green-400"
                                 : undefined
                             }
                           >
