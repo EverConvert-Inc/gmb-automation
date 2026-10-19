@@ -6,7 +6,7 @@
  * one step stronger. Dark mode follows the internal app's theme (html.dark).
  *
  * WCAG (tested in firm-page-greens.test.ts):
- *   light — text on soft 7.3, text on white 7.7, switch/focus vs white 5.5
+ *   light — text on soft 7.3, text on white 7.7, switch vs white 5.5, focus 5.2
  *   dark  — text on soft 6.0, text on card 6.7, switch vs card 4.5
  */
 .firm-ui {
@@ -14,7 +14,9 @@
   --fu-border: #a7f3d0; /* emerald-200: badge / pill border */
   --fu-text: #065f46;   /* emerald-800: green text, icons, links */
   --fu-accent: #047857; /* emerald-700: switch "on" track */
-  --fu-focus: #047857;  /* emerald-700: keyboard focus ring */
+  --fu-focus: #367862;  /* calm firm green, = the admin --ring (admin-theme.css) */
+  --fu-solid: #065f46;  /* emerald-800: deep green fill, white label 7.7:1 */
+  --fu-solid-hover: #064e3b; /* emerald-900 */
   --fu-warn-bg: #fffaeb;
   --fu-warn-text: #b54708;
 }
@@ -23,7 +25,9 @@
   --fu-border: #064e3b; /* emerald-900 — the primary button's border */
   --fu-text: #10b981;   /* emerald-500 — the primary button's text */
   --fu-accent: #059669; /* emerald-600 */
-  --fu-focus: #10b981;
+  --fu-focus: #5dac92;  /* calm firm green, = the admin --ring */
+  --fu-solid: #065f46;  /* emerald-800, as in light: white label 7.7:1 */
+  --fu-solid-hover: #064e3b;
   --fu-warn-bg: rgb(245 158 11 / 0.12);
   --fu-warn-text: #fcd34d;
 }

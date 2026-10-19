@@ -37,20 +37,64 @@ describe("no stray greens in the lead drawer", () => {
     expect(used.every((t) => t.startsWith("fu-"))).toBe(true);
   });
 
-  it("Save and Add note: the firm primary when enabled, muted grey when disabled", () => {
-    expect(drawer).toContain('firmButtonClasses("primary", className)');
-    expect(drawer).toMatch(/const DISABLED_BUTTON =\s*"[^"]*bg-muted[^"]*text-muted-foreground/);
+  it("Save and Add note: solid green with a white label when enabled, muted grey when disabled", () => {
+    expect(drawer).toMatch(/const ENABLED_BUTTON =\s*"[^"]*bg-\[var\(--fu-solid\)\] text-white/);
+    expect(drawer).toMatch(/const DISABLED_BUTTON = "[^"]*bg-muted text-muted-foreground/);
+    expect(drawer).toContain("disabled ? DISABLED_BUTTON : ENABLED_BUTTON");
     expect(drawer).not.toContain("<FirmButton");
-    expect(drawer).not.toMatch(/<button(?![^>]*SaveButton)[^>]*disabled:opacity-50[^>]*>\s*(Save|Add note)/);
+    expect(drawer).not.toContain("firmButtonClasses");
+  });
+
+  it("the Revert link is neutral text, not green", () => {
+    expect(drawer).not.toContain("fuGreenText");
+    expect(drawer).toMatch(/className="font-medium text-foreground underline[^"]*"[^>]*>\s*Revert to/);
   });
 
   it("the note label is grey with a green dot, not green text", () => {
     expect(drawer).toMatch(/text-muted-foreground">\s*<span aria-hidden className="[^"]*bg-\[var\(--fu-accent\)\]" \/>\s*Visible to the firm in the portal/);
   });
 
-  it("inputs keep the shared admin focus ring", () => {
-    expect(drawer).not.toMatch(/focus-visible:ring-(?!\[var\(--fu-)/);
-    expect(read("src/components/ui/form.tsx").match(/focus-visible:ring-ring/g)).toHaveLength(3);
+  it("no lime anywhere in the drawer files: no lime palette class, no app --primary", () => {
+    for (const f of DRAWER_FILES) {
+      const src = read(f);
+      expect(src, f).not.toMatch(/\blime-\d{2,3}\b/);
+      expect(src, f).not.toMatch(/\b(?:[a-z-]+:)*(?:bg|text|border|ring|outline|from|to)-primary\b/);
+    }
+  });
+
+  it("every focus ring in the drawer is the calm admin green, not the app's lime --ring", () => {
+    // Its own buttons use --fu-focus; its inputs use the shared ring-ring,
+    // which .admin-ui (on the drawer's root) sets to the calm green.
+    expect(drawer).toContain('import "@/app/admin/admin-theme.css"');
+    expect(drawer).toMatch(/<div className="admin-ui fixed inset-0/);
+    const rings = [...new Set(drawer.match(/focus-visible:ring-\[[^\]]+\]/g) ?? [])];
+    expect(rings).toEqual(["focus-visible:ring-[var(--fu-focus)]"]);
+  });
+});
+
+describe("the admin focus ring (admin-theme.css)", () => {
+  const theme = read("src/app/admin/admin-theme.css");
+  const ring = (sel: RegExp) => theme.match(sel)![1].match(/--ring:\s*([\d.]+) ([\d.]+)% ([\d.]+)%/)!.slice(1).map(Number);
+  const LIGHT_RING = ring(/\n\.admin-ui \{([^}]*)\}/);
+  const DARK_RING = ring(/\n\.dark \.admin-ui \{([^}]*)\}/);
+
+  it("covers every admin page: the admin layout wraps them in .admin-ui", () => {
+    const layout = read("src/app/admin/layout.tsx");
+    expect(layout).toContain('import "./admin-theme.css"');
+    expect(layout).toMatch(/<div className="admin-ui">\s*<AdminTabs \/>\s*\{children\}\s*<\/div>/);
+  });
+
+  it("is the firm green family, calmer: hue 160 (lime is 98), saturation 40% or less", () => {
+    for (const [h, sat] of [LIGHT_RING, DARK_RING]) {
+      expect(h).toBe(160);
+      expect(sat).toBeLessThanOrEqual(40);
+    }
+  });
+
+  it("matches the firm page's own focus token", () => {
+    const hex = (t: number[]) => gTok(`--x: ${t[0]} ${t[1]}% ${t[2]}%`, "x");
+    expect(hex(LIGHT_RING)).toBe(fuTok(FU_LIGHT, "focus").toLowerCase());
+    expect(hex(DARK_RING)).toBe(fuTok(FU_DARK, "focus").toLowerCase());
   });
 });
 
@@ -99,16 +143,17 @@ describe.each([
     expect(contrast(gTok(G, "muted-foreground"), card)).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("the Revert link (green text)", () => {
-    expect(contrast(fuTok(F, "text"), card)).toBeGreaterThanOrEqual(4.5);
-  });
-
   it("the green dot and the button focus ring (non-text, 3:1)", () => {
     expect(contrast(fuTok(F, "accent"), card)).toBeGreaterThanOrEqual(3);
     expect(contrast(fuTok(F, "focus"), card)).toBeGreaterThanOrEqual(3);
   });
 
-  it("the enabled Save label on its soft fill", () => {
-    expect(contrast(fuTok(F, "text"), fuTok(F, "soft"))).toBeGreaterThanOrEqual(4.5);
+  it("the enabled Save: white label on the solid fill, at rest and on hover", () => {
+    expect(contrast("#ffffff", fuTok(F, "solid"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#ffffff", fuTok(F, "solid-hover"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the Revert link (foreground text)", () => {
+    expect(contrast(gTok(G, "foreground"), card)).toBeGreaterThanOrEqual(4.5);
   });
 });

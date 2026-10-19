@@ -1,0 +1,15 @@
+/*
+ * The admin's focus ring: the firm page's green at a calmer, lower-saturation
+ * shade, instead of the app's lime --ring. Scoped to .admin-ui (the admin
+ * layout, and the lead drawer, which portals to <body>), so the rest of the
+ * internal app keeps its own ring. HSL triplets, like globals.css.
+ *
+ * Focus indicators need 3:1 against what they sit on (tested in
+ * admin-lead-drawer-greens.test.ts): light 4.9 on the card, dark 7.1.
+ */
+.admin-ui {
+  --ring: 160 38% 34%; /* #367862 */
+}
+.dark .admin-ui {
+  --ring: 160 32% 52%; /* #5dac92 */
+}
