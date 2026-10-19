@@ -43,7 +43,15 @@ describe("lead-sync route", () => {
 
   it("the daily cron (Vercel's call) is a scheduled, mapped run", async () => {
     expect((await call("?scope=mapped", "Bearer test-secret", fromCron)).status).toBe(200);
-    expect(h.options).toEqual([{ triggeredBy: "scheduled", dryRun: false, scope: "mapped", companyIds: undefined }]);
+    // includeTexts: false — the scheduled run is unchanged; texts are opt-in.
+    expect(h.options).toEqual([{ triggeredBy: "scheduled", dryRun: false, scope: "mapped", companyIds: undefined, includeTexts: false }]);
+  });
+
+  it("?texts=1 opts a manual run into text conversations; nothing else does", async () => {
+    await call("?scope=mapped&texts=1&dryRun=1");
+    expect(h.options[0]).toMatchObject({ includeTexts: true, dryRun: true });
+    await call("?scope=mapped&texts=true");
+    expect(h.options[1]).toMatchObject({ includeTexts: false });
   });
 
   it("the same URL run by hand is manual, so it never moves the scheduled run's reach-back", async () => {

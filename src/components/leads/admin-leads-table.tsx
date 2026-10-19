@@ -4,6 +4,9 @@ import { formatEasternDate, formatEasternDateTime } from "@/lib/leads/admin-date
 import { AdminLeadActions } from "@/components/leads/admin-lead-actions";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 
+/** Admin-only: how each lead source is labelled. The portal never shows a source. */
+export const SOURCE_LABEL: Record<string, string> = { call: "Call", form: "Form", text: "Text" };
+
 /**
  * Admin-only. Shows the CallRail tracker and the raw parse state alongside
  * the effective values — none of which a firm ever sees.
@@ -42,7 +45,7 @@ export function AdminLeadsTable({
               <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
                 {formatEasternDateTime(row.occurredAt)}
                 <div className="text-xs">
-                  {row.source === "form" ? "Form" : "Call"}
+                  {SOURCE_LABEL[row.source] ?? row.source}
                   {row.personSuffix !== "p1" ? ` · ${row.personSuffix}` : ""}
                 </div>
               </td>

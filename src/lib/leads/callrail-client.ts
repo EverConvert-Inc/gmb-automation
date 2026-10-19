@@ -529,3 +529,146 @@ export async function probeTagFilterSemantics(
 export function trackerConcurrency(opts: TransportOptions = {}): number {
   return opts.concurrency ?? DEFAULTS.concurrency;
 }
+
+// ---------------------------------------------------------------------------
+// Text conversations (the lead tracker's own fetch — not the LSA sync's
+// pullTextMessagesForCompany in src/lib/callrail.ts, which is untouched)
+// ---------------------------------------------------------------------------
+
+/** Fields requested on the conversation list. Valid names confirmed live (lead-text-probe). */
+export const CALLRAIL_TRACKER_TEXT_FIELDS = [
+  "customer_name",
+  "customer_phone_number",
+  "tracker_name",
+  "initial_tracker_id",
+  "last_message_at",
+] as const;
+
+type TextConversationListItem = {
+  id: string;
+  customer_name?: string | null;
+  customer_phone_number?: string | null;
+  tracker_name?: string | null;
+  initial_tracker_id?: string | null;
+  last_message_at?: string | null;
+};
+
+type TextSmsThread = {
+  id?: string | number | null;
+  tags?: CallRailTag[] | null;
+  notes?: string | null;
+};
+
+type TextMessage = { created_at?: string | null; sms_thread?: TextSmsThread | null };
+
+/**
+ * One SMS thread of one conversation: the lead tracker's unit for texts.
+ * Confirmed live (lead-text-probe): every thread has its own id, tags and
+ * notes sit on the thread, and one conversation can hold several threads
+ * with different tags.
+ */
+export type TrackerTextThread = {
+  /** `${conversationId}:${threadId}` — the lead's callrail_id. */
+  id: string;
+  conversationId: string;
+  threadId: string;
+  customer_name: string | null;
+  customer_phone_number: string | null;
+  tracker_name: string | null;
+  initial_tracker_id: string | null;
+  /** The thread's EARLIEST message — never last_message_at, so a lead does not move forward with each new message. */
+  first_message_at: string;
+  /** The thread's tags (as of its newest message). */
+  tags: string[];
+  /** The thread's first non-empty note. */
+  note: string | null;
+};
+
+const TRACKED_TAGS = new Set(LEAD_STATUS_TAGS.map((t) => t.trim().toLowerCase().replace(/\s+/g, " ")));
+
+/** Whether any of these tags is one the tracker follows (a status-ladder tag or Opportunity). */
+export function hasTrackedTag(tags: readonly string[]): boolean {
+  return tags.some((t) => TRACKED_TAGS.has(t.trim().toLowerCase().replace(/\s+/g, " ")));
+}
+
+/**
+ * Splits one conversation's FULL message history into its threads. Pure.
+ * Messages without a thread id are ignored (none were seen live).
+ */
+export function threadsOfConversation(
+  convo: TextConversationListItem,
+  messages: readonly TextMessage[],
+): TrackerTextThread[] {
+  const byThread = new Map<string, { first: string; newest: string; tags: string[]; note: string | null }>();
+  // Oldest first, so "first non-empty note" means the earliest one.
+  const ordered = [...messages]
+    .filter((m) => typeof m?.created_at === "string" && m.sms_thread && m.sms_thread.id != null)
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  for (const m of ordered) {
+    const t = m.sms_thread as TextSmsThread;
+    const threadId = String(t.id);
+    const at = m.created_at as string;
+    const entry = byThread.get(threadId) ?? { first: at, newest: at, tags: [], note: null };
+    if (at >= entry.newest) {
+      entry.newest = at;
+      entry.tags = tagNames(t.tags);
+    }
+    if (entry.note === null && typeof t.notes === "string" && t.notes.trim() !== "") entry.note = t.notes;
+    byThread.set(threadId, entry);
+  }
+  return [...byThread.entries()].map(([threadId, e]) => ({
+    id: `${convo.id}:${threadId}`,
+    conversationId: convo.id,
+    threadId,
+    customer_name: convo.customer_name ?? null,
+    customer_phone_number: convo.customer_phone_number ?? null,
+    tracker_name: convo.tracker_name ?? null,
+    initial_tracker_id: convo.initial_tracker_id ?? null,
+    first_message_at: e.first,
+    tags: e.tags,
+    note: e.note,
+  }));
+}
+
+/**
+ * The text threads of one company whose conversation had activity in the
+ * window (CallRail's start_date/end_date filter on last_message_at —
+ * confirmed live), keeping only threads that carry a tracked status tag.
+ * CallRail cannot filter texts by tag, so the filter runs here, AFTER each
+ * conversation's full history is fetched: the list's recent_messages is a
+ * two-message preview, and an older thread's tags can sit beyond it.
+ */
+export async function fetchTextThreadsForCompany(
+  companyId: string,
+  fromDate: string,
+  toDate: string,
+  opts: TransportOptions = {},
+): Promise<TrackerTextThread[]> {
+  const accountId = await resolveTrackerAccountId(opts);
+  const conversations: TextConversationListItem[] = [];
+  let page = 1;
+  while (true) {
+    const url = new URL(`${BASE_URL}/v3/a/${accountId}/text-messages.json`);
+    url.searchParams.set("company_id", companyId);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(PER_PAGE));
+    url.searchParams.set("start_date", fromDate);
+    url.searchParams.set("end_date", toDate);
+    url.searchParams.set("fields", CALLRAIL_TRACKER_TEXT_FIELDS.join(","));
+    const body = await getJson<{ conversations?: TextConversationListItem[]; total_pages?: number }>(url.toString(), opts);
+    for (const c of body.conversations ?? []) if (c?.id) conversations.push(c);
+    if (!body.total_pages || page >= body.total_pages) break;
+    page += 1;
+  }
+
+  // A failed history fetch fails the whole pass (the job is marked failed and
+  // the next run retries) rather than silently dropping that conversation.
+  const perConversation = await mapWithConcurrency(conversations, trackerConcurrency(opts), async (convo) => {
+    const url = new URL(`${BASE_URL}/v3/a/${accountId}/text-messages/${convo.id}.json`);
+    url.searchParams.set("fields", "messages");
+    const body = await getJson<{ messages?: TextMessage[] }>(url.toString(), opts);
+    return threadsOfConversation(convo, body.messages ?? []);
+  });
+
+  return perConversation.flat().filter((t) => hasTrackedTag(t.tags));
+}

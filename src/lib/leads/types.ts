@@ -1,7 +1,8 @@
 // Shared shapes for the lead tracker's ingestion, split out so sync.ts and
 // store.ts can both reference them without importing each other.
 
-export type LeadSource = "call" | "form";
+/** "text" = one thread of a CallRail text conversation (migration 0055). */
+export type LeadSource = "call" | "form" | "text";
 
 /** The identity of one person on one CallRail record, firm-independent. */
 export function leadKey(callrailId: string, personSuffix: string): string {
@@ -68,7 +69,7 @@ export type PlannedLead = {
   signedAt: Date | null;
 };
 
-export type JobKind = "callrail_calls" | "callrail_forms";
+export type JobKind = "callrail_calls" | "callrail_forms" | "callrail_texts";
 
 export type LeadStore = {
   loadRoutingRules(): Promise<{

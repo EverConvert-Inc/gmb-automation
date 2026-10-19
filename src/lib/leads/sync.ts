@@ -27,6 +27,7 @@ import {
   type TransportOptions,
   type TrackerCallRecord,
   type TrackerFormRecord,
+  type TrackerTextThread,
 } from "./callrail-client";
 import { reconcileLeadRows } from "./reconcile";
 import { firmIdsIn, flagPossibleDuplicates } from "./dedup";
@@ -143,6 +144,31 @@ export function normalizeForm(
     rawSourceName: record.source ?? record.referrer ?? null,
     rawTrackerId: null,
     rawFormData: record.form_data ?? null,
+  };
+}
+
+/**
+ * One CallRail text thread as a lead. Keyed by conversation id + thread id
+ * (one lead per thread: tags and notes belong to the thread). occurred_at is
+ * the thread's FIRST message, never last_message_at, so a lead stays in the
+ * month it started. The note goes through the same parser as a call's, so a
+ * multi-person note gives p1, p2… with each person's own status.
+ */
+export function normalizeText(record: TrackerTextThread, companyId: string): TrackerLead | null {
+  const occurredAt = parseCallrailInstant(record.first_message_at);
+  if (!record.id || !record.conversationId || !record.threadId || !occurredAt) return null;
+  return {
+    source: "text",
+    callrailId: record.id,
+    callrailCompanyId: companyId,
+    occurredAt,
+    tags: record.tags,
+    note: record.note,
+    customerName: record.customer_name,
+    customerPhoneNumber: record.customer_phone_number,
+    rawSourceName: record.tracker_name,
+    rawTrackerId: record.initial_tracker_id,
+    rawFormData: null,
   };
 }
 
@@ -403,6 +429,16 @@ export type SyncDeps = {
     to: string,
     opts: TransportOptions,
   ) => Promise<TrackerFormRecord[]>;
+  /**
+   * Text conversation threads, already filtered to tracked status tags.
+   * Optional: only used when a run asks for texts (includeTexts).
+   */
+  fetchTexts?: (
+    companyId: string,
+    from: string,
+    to: string,
+    opts: TransportOptions,
+  ) => Promise<TrackerTextThread[]>;
   store: LeadStore;
   now: () => Date;
   /**
@@ -435,8 +471,13 @@ export type SyncOptions = {
   dryRun?: boolean;
   /** Defaults to "all". Ignored when companyIds is given. */
   scope?: SyncScope;
-  /** Defaults to FETCH_BUDGET_MS. Shared by the calls and forms passes. */
+  /** Defaults to FETCH_BUDGET_MS. Shared by the calls, forms and texts passes. */
   fetchBudgetMs?: number;
+  /**
+   * Include CallRail text conversations. OFF unless a run asks for it
+   * (?texts=1 on a manual run); the scheduled run does not.
+   */
+  includeTexts?: boolean;
   /** Overrides company discovery. Narrows what is fetched and stored. */
   companyIds?: string[];
   transport?: TransportOptions;
@@ -487,6 +528,8 @@ export type SyncResult = {
   tagFilter: readonly string[];
   calls: SourceResult;
   forms: SourceResult;
+  /** Null when the run did not include texts. */
+  texts: SourceResult | null;
   sample: MaskedSample[];
   /**
    * Dry run only. Whether CallRail's repeated tags[] param unions or
@@ -638,6 +681,32 @@ export async function syncLeadsForMonth(
     fetchBudgetMs,
   });
 
+  // Texts only when asked for — a third pass, after calls and forms, under
+  // the same fetch budget, reach-back and safeguards.
+  let texts: SourceResult | null = null;
+  if (options.includeTexts) {
+    const fetchTexts = deps.fetchTexts;
+    texts = fetchTexts
+      ? await runSourcePass<TrackerTextThread>({
+          source: "text",
+          kind: "callrail_texts",
+          deps,
+          index,
+          window,
+          companyIds,
+          transport,
+          dryRun,
+          triggeredBy,
+          sample,
+          sampleSize,
+          fetchPage: (companyId, from, to) => fetchTexts(companyId, from, to, transport),
+          normalize: normalizeText,
+          deadlineMs,
+          fetchBudgetMs,
+        })
+      : { ...emptySourceResult(), error: "texts requested but no text fetcher is configured" };
+  }
+
   // One company is enough to settle the semantics question, and three extra
   // single-record requests is the whole cost.
   let tagFilterProbe: SyncResult["tagFilterProbe"] = { calls: null, forms: null };
@@ -663,6 +732,7 @@ export async function syncLeadsForMonth(
     tagFilter: LEAD_STATUS_TAGS,
     calls,
     forms,
+    texts,
     sample,
     tagFilterProbe,
   };

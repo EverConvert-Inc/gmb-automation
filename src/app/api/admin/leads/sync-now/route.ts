@@ -22,12 +22,17 @@ export async function POST(req: Request) {
     ? companyParam.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
+  // Texts only when asked for (?texts=1).
+  const includeTexts = url.searchParams.get("texts") === "1";
+
   const result = await syncLeadsForMonth(createSyncDeps(), {
     triggeredBy: dryRun ? "dry-run" : "manual",
     dryRun,
     companyIds,
+    includeTexts,
   });
 
-  const allFailed = result.calls.error !== null && result.forms.error !== null;
+  const allFailed =
+    result.calls.error !== null && result.forms.error !== null && (result.texts === null || result.texts.error !== null);
   return NextResponse.json(result, { status: allFailed ? 500 : 200 });
 }

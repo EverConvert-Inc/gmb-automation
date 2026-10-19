@@ -1824,3 +1824,137 @@ describe("syncLeadsForMonth — reach-back counts scheduled runs only", () => {
     expect(next.result.calls.fetchedFrom).toBe("2026-10-31");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Text conversations: an opt-in third pass
+// ---------------------------------------------------------------------------
+
+describe("syncLeadsForMonth — texts", () => {
+  type Thread = Parameters<NonNullable<SyncDeps["fetchTexts"]>>[0] extends string ? import("./callrail-client").TrackerTextThread : never;
+  const thread = (over: Partial<Thread> = {}): Thread => ({
+    id: "CON1:11",
+    conversationId: "CON1",
+    threadId: "11",
+    customer_name: "Fallback Name",
+    customer_phone_number: "555-000-1111",
+    tracker_name: "Texts",
+    initial_tracker_id: null,
+    first_message_at: "2026-10-05T14:30:00.000-04:00",
+    tags: ["Signed"],
+    note: "Jane Doe, 555-123-4567",
+    ...over,
+  });
+  const textDeps = (store: LeadStore, threads: Thread[] | ((c: string) => Thread[]), over: Partial<SyncDeps> = {}) => {
+    const asked: string[] = [];
+    const deps = makeDeps(store, {
+      now: () => NOW,
+      fetchTexts: async (companyId) => {
+        asked.push(companyId);
+        return typeof threads === "function" ? threads(companyId) : threads;
+      },
+      ...over,
+    });
+    return { deps, asked };
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+
+  it("is OFF unless asked for: texts never fetched, result.texts null", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const t = textDeps(fake.store, [thread()]);
+    const r = await syncLeadsForMonth(t.deps, { scope: "mapped" });
+    expect(t.asked).toEqual([]);
+    expect(r.texts).toBeNull();
+    expect(fake.jobs.map((j) => j.kind)).toEqual(["callrail_calls", "callrail_forms"]);
+  });
+
+  it("with includeTexts: a text lead, its own job row, routed by company", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const t = textDeps(fake.store, [thread()]);
+    const r = await syncLeadsForMonth(t.deps, { scope: "mapped", includeTexts: true, triggeredBy: "manual" });
+    expect(t.asked).toEqual(["COM1"]);
+    expect(r.texts).toMatchObject({ fetched: 1, planned: 1, assigned: 1, unassigned: 0, written: 1, error: null });
+    const [row] = [...fake.rows.values()];
+    expect(row).toMatchObject({ source: "text", callrailId: "CON1:11", personSuffix: "p1", firmId: "firm-a", statusParsed: "signed" });
+    expect(row.occurredAt.toISOString()).toBe("2026-10-05T18:30:00.000Z");
+    expect(fake.jobs.map((j) => [j.kind, j.status])).toContainEqual(["callrail_texts", "completed"]);
+  });
+
+  it("routes by firm tag first, like calls", async () => {
+    const fake = makeFakeStore({
+      tagRules: [{ firmId: "firm-x", tagName: "Smith Law" }],
+      companyRules: [{ firmId: "firm-y", callrailCompanyId: "COM1" }],
+    });
+    const t = textDeps(fake.store, [thread({ tags: ["Signed", "Smith Law"] })]);
+    await syncLeadsForMonth(t.deps, { scope: "mapped", includeTexts: true });
+    expect([...fake.rows.values()].map((r) => r.firmId)).toEqual(["firm-x"]);
+  });
+
+  it("a multi-person note in a text gives p1/p2, each with their own status", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const t = textDeps(fake.store, [
+      thread({ tags: ["2 Person", "Pending"], note: "Jane Doe, 555-111-2222, Signed; John Roe, 555-333-4444, Pending" }),
+    ]);
+    await syncLeadsForMonth(t.deps, { scope: "mapped", includeTexts: true });
+    const rows = [...fake.rows.values()].sort((a, b) => a.personSuffix.localeCompare(b.personSuffix));
+    expect(rows.map((r) => [r.callrailId, r.personSuffix, r.statusParsed])).toEqual([
+      ["CON1:11", "p1", "signed"],
+      ["CON1:11", "p2", "pending"],
+    ]);
+  });
+
+  it("two threads of one conversation are two leads", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const t = textDeps(fake.store, [
+      thread(),
+      thread({ id: "CON1:12", threadId: "12", tags: ["Pending"], note: "Ann Poe, 555-555-6666", first_message_at: "2026-10-09T10:00:00.000-04:00" }),
+    ]);
+    await syncLeadsForMonth(t.deps, { scope: "mapped", includeTexts: true });
+    expect([...fake.rows.values()].map((r) => r.callrailId).sort()).toEqual(["CON1:11", "CON1:12"]);
+  });
+
+  it("a dry run reports text counts — fetched, planned, parse failures, assigned vs unassigned — and writes nothing", async () => {
+    const fake = makeFakeStore({ companyRules: [{ firmId: "firm-a", callrailCompanyId: "COM1" }] });
+    const t = textDeps(fake.store, [
+      thread(),
+      thread({ id: "CON2:21", conversationId: "CON2", threadId: "21", note: "Jane 555-111-2222 John 555-333-4444" }),
+    ]);
+    const r = await syncLeadsForMonth(t.deps, { scope: "mapped", includeTexts: true, dryRun: true });
+    expect(r.texts).toMatchObject({ fetched: 2, planned: 2, parseFailed: 1, assigned: 2, unassigned: 0, written: 0 });
+    expect(r.texts?.parseFailureReasons).toEqual({ multiple_phone_numbers: 1 });
+    expect(fake.rows.size).toBe(0);
+    expect(fake.jobs).toEqual([]);
+  });
+
+  it("shares the fetch budget: a run out of time stops texts and finishes their job as failed", async () => {
+    let t = NOW.getTime();
+    const fake = makeFakeStore({ companyRules: ["COM1", "COM2", "COM3"].map((c) => ({ firmId: "firm-a", callrailCompanyId: c })) });
+    const deps = makeDeps(fake.store, {
+      now: () => new Date(t),
+      fetchCalls: async () => {
+        t += 72_000; // calls use 216s of the 220s budget over three companies
+        return [];
+      },
+      fetchForms: async () => [],
+      fetchTexts: async () => {
+        t += 5_000; // the first text company starts at 216s and ends past 220s
+        return [thread()];
+      },
+    });
+    const r = await syncLeadsForMonth(deps, { scope: "mapped", includeTexts: true });
+    expect(r.texts?.stoppedEarly).toEqual({ phase: "current", afterCompanies: 1, of: 3 });
+    const job = fake.jobs.find((j) => j.kind === "callrail_texts")!;
+    expect(job.status).toBe("failed");
+    expect(job.errorMessage).toBe("stopped after 1 of 3 companies (fetch budget 220s)");
+  });
+
+  it("asked for texts without a fetcher: reported, never fatal to calls and forms", async () => {
+    const fake = makeFakeStore();
+    const r = await syncLeadsForMonth(makeDeps(fake.store, { now: () => NOW }), { includeTexts: true });
+    expect(r.texts?.error).toMatch(/no text fetcher/);
+    expect(r.calls.error).toBeNull();
+  });
+});

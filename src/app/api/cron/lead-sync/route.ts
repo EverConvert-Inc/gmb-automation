@@ -55,6 +55,10 @@ export async function GET(req: Request) {
   }
   const scope: SyncScope = scopeParam === "mapped" ? "mapped" : "all";
 
+  // Text conversations are opt-in for now: only a run that asks (?texts=1)
+  // includes them. The scheduled cron URL does not, so it is unchanged.
+  const includeTexts = url.searchParams.get("texts") === "1";
+
   // "scheduled" only when Vercel's cron made the call: Vercel sends
   // x-vercel-cron-schedule on every cron invocation, and only a caller that
   // already holds CRON_SECRET gets this far. A hand-run is "manual", so it
@@ -66,11 +70,13 @@ export async function GET(req: Request) {
     dryRun,
     scope,
     companyIds,
+    includeTexts,
   });
 
   // 500 only when NOTHING worked. A single source failing still leaves real
   // rows written by the other, and its own job row carries the error — so
   // failing the whole response would misreport a partial success.
-  const allFailed = result.calls.error !== null && result.forms.error !== null;
+  const allFailed =
+    result.calls.error !== null && result.forms.error !== null && (result.texts === null || result.texts.error !== null);
   return NextResponse.json(result, { status: allFailed ? 500 : 200 });
 }
