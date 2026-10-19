@@ -10,7 +10,7 @@ import { FormError, Input, Label, Select, Textarea } from "@/components/ui/form"
 import { formatEasternDateTime } from "@/lib/leads/admin-dates";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 import { cn } from "@/lib/utils";
-import { FirmButton } from "./firm-button";
+import { firmButtonClasses } from "./firm-button";
 import { fuGreenText } from "./firm-ui";
 import { sourceLabel } from "./source-label";
 
@@ -18,6 +18,25 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Save and Add note. Enabled: the firm page's primary button, unchanged.
+ * Disabled: plain muted grey, not a faded green, so it never reads as
+ * enabled-but-dim (WCAG exempts disabled controls from the contrast minimum).
+ */
+const DISABLED_BUTTON =
+  "inline-flex cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-transparent bg-muted px-4 py-2 text-sm font-medium text-muted-foreground/70";
+
+function SaveButton({ disabled, className, type = "button", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type={type}
+      disabled={disabled}
+      className={disabled ? cn(DISABLED_BUTTON, className) : firmButtonClasses("primary", className)}
+      {...props}
+    />
+  );
+}
 
 /**
  * The lead editor: a right-side drawer, a centred modal on small screens.
@@ -199,7 +218,8 @@ export function AdminLeadDrawer({
 
           <form onSubmit={onAddNote} className="space-y-2 border-t pt-6">
             <Label htmlFor={`note-${lead.id}`}>Add a staff note</Label>
-            <p id={`note-hint-${lead.id}`} className={cn("text-xs font-medium", fuGreenText)}>
+            <p id={`note-hint-${lead.id}`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--fu-accent)]" />
               Visible to the firm in the portal
             </p>
             <Textarea
@@ -210,9 +230,9 @@ export function AdminLeadDrawer({
               onChange={(e) => onNoteChange(e.target.value)}
               placeholder="Visible to the firm in the portal."
             />
-            <FirmButton type="submit" variant="primary" disabled={busy || !note.trim()}>
+            <SaveButton type="submit" disabled={busy || !note.trim()}>
               {busy ? "Saving…" : "Add note"}
-            </FirmButton>
+            </SaveButton>
           </form>
 
           <FormError>{error}</FormError>
@@ -274,13 +294,9 @@ function OverrideField({
           onChange={(e) => setDraft(e.target.value)}
           placeholder={parsed ?? "—"}
         />
-        <FirmButton
-          variant="primary"
-          disabled={disabled || draft === (value ?? "")}
-          onClick={() => onSave(draft)}
-        >
+        <SaveButton disabled={disabled || draft === (value ?? "")} onClick={() => onSave(draft)}>
           Save
-        </FirmButton>
+        </SaveButton>
       </div>
       <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
         <span>
