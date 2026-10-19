@@ -4,7 +4,6 @@ import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import "@/app/admin/firms/[id]/firm-page.css";
-import "@/app/admin/admin-theme.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormError, Input, Label, Textarea } from "@/components/ui/form";
@@ -12,6 +11,8 @@ import { AdminSelect } from "./admin-select";
 import { formatEasternDateTime } from "@/lib/leads/admin-dates";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 import { cn } from "@/lib/utils";
+import { firmButtonClasses } from "./firm-button";
+import { fuGreenText } from "./firm-ui";
 import { sourceLabel } from "./source-label";
 
 const FOCUSABLE =
@@ -20,23 +21,19 @@ const FOCUSABLE =
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
- * Save and Add note. Enabled: a solid firm-green fill with a white label, so
- * it reads as a live button in both themes. Disabled: plain muted grey, so
- * the two states never look alike (WCAG exempts disabled controls from the
- * contrast minimum).
+ * Save and Add note. Enabled: the firm page's primary button, unchanged.
+ * Disabled: plain muted grey, not a faded green, so it never reads as
+ * enabled-but-dim (WCAG exempts disabled controls from the contrast minimum).
  */
-const BUTTON_BASE =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fu-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-const ENABLED_BUTTON =
-  "border-transparent bg-[var(--fu-solid)] text-white shadow-sm hover:bg-[var(--fu-solid-hover)]";
-const DISABLED_BUTTON = "cursor-not-allowed border-transparent bg-muted text-muted-foreground/70";
+const DISABLED_BUTTON =
+  "inline-flex cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-transparent bg-muted px-4 py-2 text-sm font-medium text-muted-foreground/70";
 
 function SaveButton({ disabled, className, type = "button", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       type={type}
       disabled={disabled}
-      className={cn(BUTTON_BASE, disabled ? DISABLED_BUTTON : ENABLED_BUTTON, className)}
+      className={disabled ? cn(DISABLED_BUTTON, className) : firmButtonClasses("primary", className)}
       {...props}
     />
   );
@@ -121,7 +118,7 @@ export function AdminLeadDrawer({
   const opportunitySource = lead.isOpportunityOverride !== null ? "set by staff" : "from tags";
 
   return createPortal(
-    <div className="admin-ui fixed inset-0 z-50 flex items-center justify-center p-4 md:items-stretch md:justify-end md:p-0">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:items-stretch md:justify-end md:p-0">
       <div aria-hidden className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
         ref={panel}
@@ -315,7 +312,7 @@ function OverrideField({
               setDraft(parsed ?? "");
               onSave("");
             }}
-            className="font-medium text-foreground underline underline-offset-2 hover:text-muted-foreground disabled:opacity-50"
+            className={cn("font-medium underline-offset-2 hover:underline disabled:opacity-50", fuGreenText)}
           >
             Revert to {parsed ?? "nothing"}
           </button>
