@@ -73,7 +73,29 @@ export type PortalLead = {
   staffNote: { body: string; date: string } | null;
 };
 
+/** The firm's visible leads for a range: at most PORTAL_LEAD_LIMIT of them. */
 export async function listVisibleLeads(
+  firmId: SessionFirmId,
+  range: PortalDateRange,
+): Promise<PortalLead[]> {
+  return (await listVisibleLeadsCapped(firmId, range)).leads;
+}
+
+/**
+ * The same ONE query, plus whether the range holds more than the limit: it
+ * asks for one row past PORTAL_LEAD_LIMIT, so a range of exactly 500 is not
+ * mistaken for a cut-off one. The extra row is checked like every other row
+ * and then dropped, never shown.
+ */
+export async function listVisibleLeadsCapped(
+  firmId: SessionFirmId,
+  range: PortalDateRange,
+): Promise<{ leads: PortalLead[]; reachedLimit: boolean }> {
+  const all = await queryVisibleLeads(firmId, range);
+  return { leads: all.slice(0, PORTAL_LEAD_LIMIT), reachedLimit: all.length > PORTAL_LEAD_LIMIT };
+}
+
+async function queryVisibleLeads(
   firmId: SessionFirmId,
   range: PortalDateRange,
 ): Promise<PortalLead[]> {
@@ -127,7 +149,7 @@ export async function listVisibleLeads(
                 then coalesce(l.signed_at, l.occurred_at)
                 else l.occurred_at end) <  ${range.endExclusive}::timestamptz
     order by l.occurred_at desc, l.id
-    limit ${PORTAL_LEAD_LIMIT}
+    limit ${PORTAL_LEAD_LIMIT + 1}
   `);
 
   assertFirmRows(label, rows, firmId, {

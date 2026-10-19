@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CircleAlert, Inbox } from "lucide-react";
-import { NOTE_MAX_LENGTH, listVisibleLeads, type PortalLead } from "@/lib/portal/db";
+import { NOTE_MAX_LENGTH, PORTAL_LEAD_LIMIT, listVisibleLeadsCapped, type PortalLead } from "@/lib/portal/db";
 import { logPortalEvents } from "@/lib/portal/events";
 import { allowedPortalWindow, presetOf, rangeFromSearchParams } from "@/lib/portal/range";
 import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
@@ -20,7 +20,8 @@ export const metadata: Metadata = { title: "Leads" };
  * the current or previous Eastern month, never a future day. Only fields of PortalLead are ever
  * rendered — db.ts selects no source, channel, tag or CallRail note, so there
  * is nothing else here to leak. The summary counts are taken from the same
- * list, so they need no query of their own.
+ * list, so they need no query of their own. A range past PORTAL_LEAD_LIMIT
+ * says so: a notice, and the counts read "at least" rather than undercounting.
  */
 export default async function PortalLeadsPage({
   searchParams,
@@ -41,7 +42,7 @@ export default async function PortalLeadsPage({
     { type: "page_view", meta: { page: "leads", range: invalid ? "refused" : (preset ?? "custom") } },
   ]);
 
-  const leads = await listVisibleLeads(session.firmId, range);
+  const { leads, reachedLimit } = await listVisibleLeadsCapped(session.firmId, range);
 
   const allowed = allowedPortalWindow();
   const label = formatPortalRange(range, preset);
@@ -53,7 +54,8 @@ export default async function PortalLeadsPage({
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Leads</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {label} · {leads.length} {leads.length === 1 ? "lead" : "leads"}
+            {label} · {leads.length}
+            {reachedLimit ? "+" : ""} {leads.length === 1 ? "lead" : "leads"}
           </p>
         </div>
         <DateRangePicker from={range.from} to={range.to} min={allowed.min} max={allowed.max} preset={preset} />
@@ -66,6 +68,13 @@ export default async function PortalLeadsPage({
         </p>
       )}
 
+      {reachedLimit && (
+        <p role="status" className="flex items-center gap-2 rounded-lg border bg-card px-3.5 py-2.5 text-sm text-muted-foreground">
+          <CircleAlert aria-hidden className="h-4 w-4 shrink-0" />
+          Showing the first {PORTAL_LEAD_LIMIT} leads; narrow the date range.
+        </p>
+      )}
+
       <dl className="grid grid-cols-3 gap-3 sm:gap-4">
         {(["signed", "pending", "opportunity"] as const).map((s) => (
           <div key={s} className="rounded-xl border bg-card px-4 py-3 shadow-sm sm:px-5 sm:py-4">
@@ -73,7 +82,13 @@ export default async function PortalLeadsPage({
               <span aria-hidden className={`portal-summary-dot portal-summary-dot-${s}`} />
               {PORTAL_STATUS_TEXT[s]}
             </dt>
-            <dd className="mt-1 font-display text-2xl font-bold tabular-nums sm:text-3xl">{counts[s]}</dd>
+            <dd className="mt-1 font-display text-2xl font-bold tabular-nums sm:text-3xl">
+              {counts[s]}
+              {reachedLimit ? "+" : ""}
+            </dd>
+            {reachedLimit && (
+              <dd className="mt-0.5 text-xs text-muted-foreground">In the first {PORTAL_LEAD_LIMIT} leads</dd>
+            )}
           </div>
         ))}
       </dl>

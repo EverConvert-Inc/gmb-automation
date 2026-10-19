@@ -32,7 +32,7 @@ vi.mock("next/link", () => ({
 import { __setPortalSqlForTests } from "./client";
 import { __resetEventsForTests, __setEventSchedulerForTests, __setEventsSqlForTests } from "./events";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
-import { NOTE_MAX_LENGTH } from "./db";
+import { NOTE_MAX_LENGTH, PORTAL_LEAD_LIMIT } from "./db";
 import FirmLayout from "@/app/(portal)/portal/(firm)/layout";
 import LeadsPage from "@/app/(portal)/portal/(firm)/page";
 import LoginPage from "@/app/(portal)/portal/login/page";
@@ -897,5 +897,68 @@ describe("POST /api/portal/leads/[leadId]/notes", () => {
     expect(body).not.toContain("Sensitive");
     expect(body).not.toContain("connection");
     expect(errors.join("\n")).not.toContain("Sensitive");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The lead limit: a range past PORTAL_LEAD_LIMIT says so instead of
+// undercounting silently.
+// ---------------------------------------------------------------------------
+describe("the leads page at the lead limit", () => {
+  const manyLeads = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      leadRow(FIRM_A, `a3a3a3a3-a3a3-4a3a-8a3a-${String(i).padStart(12, "0")}`, `Lead ${i}`),
+    );
+  /** Honours the query's own LIMIT, as Postgres would. */
+  function limitedList(call: FakeCall) {
+    const limit = call.params[call.params.length - 1] as number;
+    return (leadsByFirm[FIRM_A] ?? []).slice(0, limit);
+  }
+  const NOTICE = `Showing the first ${PORTAL_LEAD_LIMIT} leads; narrow the date range.`;
+  /** The three summary numbers, as rendered. */
+  const cardNumbers = (html: string) =>
+    [...html.matchAll(/<dd class="mt-1 font-display[^"]*">([^<]*(?:<!-- -->)?[^<]*)<\/dd>/g)].map((m) =>
+      m[1].replace(/<!-- -->/g, ""),
+    );
+
+  beforeEach(() => {
+    asClientA();
+    listOverride = limitedList;
+  });
+
+  it("asks for one row past the limit", async () => {
+    leadsByFirm[FIRM_A] = manyLeads(3);
+    await leadsMarkup();
+    const list = calls.find((c) => c.text.includes("from leads l"))!;
+    expect(list.text).toMatch(/limit \$\d+\s*$/);
+    expect(list.params[list.params.length - 1]).toBe(PORTAL_LEAD_LIMIT + 1);
+  });
+
+  it("past the limit: a notice, 500+ in the header, and every card reads as at-least", async () => {
+    leadsByFirm[FIRM_A] = manyLeads(PORTAL_LEAD_LIMIT + 40);
+    const html = await leadsMarkup();
+    expect(html).toContain(NOTICE);
+    expect(html).toMatch(/role="status"[^>]*>.*?Showing the first 500 leads/);
+    expect(html.replace(/<!-- -->/g, "")).toContain(`· ${PORTAL_LEAD_LIMIT}+ leads`);
+    const numbers = cardNumbers(html);
+    expect(numbers).toHaveLength(3);
+    for (const n of numbers) expect(n).toMatch(/^\d+\+$/);
+    expect(numbers.reduce((sum, n) => sum + parseInt(n, 10), 0)).toBe(PORTAL_LEAD_LIMIT);
+    expect(html.match(/In the first 500 leads/g)).toHaveLength(3);
+    // The extra row is fetched to detect the cut-off, never shown.
+    expect(html).not.toContain(`Lead ${PORTAL_LEAD_LIMIT}<`);
+  });
+
+  it("exactly at the limit: no notice, plain counts", async () => {
+    leadsByFirm[FIRM_A] = manyLeads(PORTAL_LEAD_LIMIT);
+    const html = await leadsMarkup();
+    expect(html).not.toContain("Showing the first");
+    expect(html).not.toContain("In the first 500");
+    for (const n of cardNumbers(html)) expect(n).toMatch(/^\d+$/);
+  });
+
+  it("an ordinary range: no notice", async () => {
+    leadsByFirm[FIRM_A] = manyLeads(3);
+    expect(await leadsMarkup()).not.toContain("Showing the first");
   });
 });
