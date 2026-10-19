@@ -21,6 +21,7 @@ import {
   type PortalStatusLabel,
 } from "./visibility";
 import { assertPortalRange, type PortalDateRange } from "./range";
+import { portalDisplayName } from "./display-name";
 
 type Sql = Parameters<Parameters<typeof portalQuery>[1]>[0];
 
@@ -57,6 +58,7 @@ export type PortalLead = {
   id: string;
   /** The call date, Eastern, YYYY-MM-DD. */
   date: string;
+  /** The display name; null means "Unknown caller" (see display-name.ts). */
   name: string | null;
   phone: string | null;
   /** See portalStatusLabel in visibility.ts. */
@@ -115,6 +117,7 @@ async function queryVisibleLeads(
       (l.status_override is not null)                                 as has_status_override,
       l.status_tag_matched                                            as status_tag_matched,
       coalesce(l.name_override, l.name_parsed)                        as name,
+      (l.name_override is not null)                                   as name_is_override,
       coalesce(l.phone_override, l.phone_parsed)                      as phone,
       ln.body                                                         as note_body,
       ln.created_at                                                   as note_created_at,
@@ -162,6 +165,7 @@ async function queryVisibleLeads(
     has_status_override: "boolean",
     status_tag_matched: "string?",
     name: "string?",
+    name_is_override: "boolean",
     phone: "string?",
     note_body: "string?",
     note_created_at: "date?",
@@ -203,7 +207,9 @@ async function queryVisibleLeads(
     const lead: PortalLead = {
       id: r.id as string,
       date: toIsoDateEastern(occurredAt),
-      name: (r.name as string | null) ?? null,
+      // Placeholders ("No Name", a number, a source label) become null, shown
+      // as "Unknown caller"; a staff override always shows. See display-name.ts.
+      name: portalDisplayName((r.name as string | null) ?? null, r.name_is_override as boolean),
       phone: (r.phone as string | null) ?? null,
       status: portalStatusLabel({
         effectiveStatus,

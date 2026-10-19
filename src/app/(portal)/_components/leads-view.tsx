@@ -183,6 +183,11 @@ export function LeadsView({
   );
 }
 
+/** A lead with no usable name (see display-name.ts): muted, not a name. */
+function UnknownCaller() {
+  return <span className="font-normal text-muted-foreground">Unknown caller</span>;
+}
+
 /** Plain text, deliberately not a tel: link. */
 function PhoneText({ phone }: { phone: string | null }) {
   return (
@@ -197,7 +202,7 @@ function LeadRow({ lead, noteMaxLength }: { lead: PortalLead; noteMaxLength: num
     <tr className="align-top transition-colors hover:bg-muted/40">
       <td className="whitespace-nowrap px-5 py-4 tabular-nums text-muted-foreground">{formatPortalDate(lead.date)}</td>
       <td className="px-5 py-4 font-medium text-foreground">
-        {lead.name ?? <span className="font-normal text-muted-foreground">—</span>}
+        {lead.name ?? <UnknownCaller />}
       </td>
       <td className="whitespace-nowrap px-5 py-4">
         <PhoneText phone={lead.phone} />
@@ -217,7 +222,7 @@ function LeadCard({ lead, noteMaxLength }: { lead: PortalLead; noteMaxLength: nu
     <li className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-semibold text-foreground">{lead.name ?? "No name"}</p>
+          <p className="truncate font-semibold text-foreground">{lead.name ?? <UnknownCaller />}</p>
           <p className="mt-0.5 text-sm tabular-nums text-muted-foreground">{formatPortalDate(lead.date)}</p>
         </div>
         <StatusBadge status={lead.status} />

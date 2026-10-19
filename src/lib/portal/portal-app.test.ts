@@ -78,6 +78,7 @@ function leadRow(firm: string, id: string, name: string, over: Record<string, un
     has_status_override: false,
     status_tag_matched: "SECRET-STATUS-TAG-MATCHED",
     name,
+    name_is_override: false,
     phone: "+15551234567",
     note_body: null,
     note_created_at: null,

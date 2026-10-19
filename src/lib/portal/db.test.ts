@@ -40,6 +40,7 @@ function leadRow(over: Record<string, unknown> = {}) {
     has_status_override: false,
     status_tag_matched: "Pending",
     name: "Jane Doe",
+    name_is_override: false,
     phone: "555-123-4567",
     note_body: null,
     note_created_at: null,
@@ -311,5 +312,33 @@ describe("a forged firm id cannot be passed in", () => {
     // @ts-expect-error a month key from a URL is not accepted
     void (() => listVisibleLeads(FIRM, "2026-09"));
     expect(true).toBe(true);
+  });
+});
+
+describe("listVisibleLeads — the display name", () => {
+  it("selects whether the name is a staff override, still never the source", async () => {
+    answer([]);
+    await listVisibleLeads(FIRM, presetRange("current"));
+    expect(calls[0].text).toMatch(/\(l\.name_override is not null\)\s+as name_is_override/);
+    expect(calls[0].text).not.toContain("raw_source_name");
+  });
+
+  it("a placeholder name comes back null, the phone untouched", async () => {
+    answer([leadRow({ name: " no name. " })]);
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
+    expect(lead.name).toBeNull();
+    expect(lead.phone).toBe("555-123-4567");
+  });
+
+  it("a staff override wins", async () => {
+    answer([leadRow({ name: "Jane Fixed", name_is_override: true })]);
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
+    expect(lead.name).toBe("Jane Fixed");
+  });
+
+  it("a real name passes through", async () => {
+    answer([leadRow()]);
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
+    expect(lead.name).toBe("Jane Doe");
   });
 });
