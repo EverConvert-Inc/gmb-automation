@@ -1558,7 +1558,8 @@ export const leads = pgTable(
       t.callrailCompanyId,
       t.statusParsed,
     ),
-    sourceCheck: check("leads_source_check", sql`${t.source} IN ('call','form')`),
+    // 'text' = a CallRail text conversation thread (migration 0055).
+    sourceCheck: check("leads_source_check", sql`${t.source} IN ('call','form','text')`),
     statusParsedCheck: check(
       "leads_status_parsed_check",
       sql`${t.statusParsed} IN ('pending','signed')`,

@@ -50,12 +50,12 @@ describe("migration 0054_portal_events", () => {
     );
   });
 
-  it("is the next entry in the journal", () => {
+  it("comes right after 0053 in the journal", () => {
     const journal = JSON.parse(readFileSync(join(DIR, "meta", "_journal.json"), "utf8")) as {
       entries: { idx: number; tag: string }[];
     };
-    const last = journal.entries[journal.entries.length - 1];
-    expect(last.tag).toBe("0054_portal_events");
-    expect(journal.entries[journal.entries.length - 2].tag).toBe("0053_lead_tracker_schema");
+    const i = journal.entries.findIndex((e) => e.tag === "0054_portal_events");
+    expect(i).toBeGreaterThan(0);
+    expect(journal.entries[i - 1].tag).toBe("0053_lead_tracker_schema");
   });
 });
