@@ -21,7 +21,7 @@ import {
   type PortalStatusLabel,
 } from "./visibility";
 import { assertPortalRange, type PortalDateRange } from "./range";
-import { portalDisplayName } from "./display-name";
+import { STAFF_NAMED_SQL, hasUsableName, unusableNameSql } from "./usable-name";
 
 type Sql = Parameters<Parameters<typeof portalQuery>[1]>[0];
 
@@ -35,9 +35,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // checks these literals are exactly HIDDEN_TAGS, so the two cannot drift.
 const HIDDEN_TAGS_SQL = HIDDEN_TAGS.map((t) => `'${t.replace(/'/g, "''")}'`).join(", ");
 
+/** A placeholder name (usable-name.ts), over the lead's effective name. */
+const UNUSABLE_NAME_SQL = unusableNameSql("coalesce(l.name_override, l.name_parsed)");
+
 /**
  * The visibility rule for a lead aliased `l`, scoped to the session's firm.
- * Kept in ONE place so the list and the note insert can never disagree.
+ * Kept in ONE place so the list and the note insert can never disagree —
+ * and the summary cards are counted from that same list.
  */
 function visibleTo(sql: Sql, firmId: SessionFirmId) {
   return sql`
@@ -51,6 +55,10 @@ function visibleTo(sql: Sql, firmId: SessionFirmId) {
           l.status_override is not null
        or l.status_tag_matched is null
        or l.status_tag_matched not in (${sql.unsafe(HIDDEN_TAGS_SQL)})
+    )
+    and (
+          ${sql.unsafe(STAFF_NAMED_SQL)}
+       or not ${sql.unsafe(UNUSABLE_NAME_SQL)}
     )`;
 }
 
@@ -58,7 +66,7 @@ export type PortalLead = {
   id: string;
   /** The call date, Eastern, YYYY-MM-DD. */
   date: string;
-  /** The display name; null means "Unknown caller" (see display-name.ts). */
+  /** Always a usable name (usable-name.ts): leads without one are not shown. */
   name: string | null;
   phone: string | null;
   /** See portalStatusLabel in visibility.ts. */
@@ -117,7 +125,7 @@ async function queryVisibleLeads(
       (l.status_override is not null)                                 as has_status_override,
       l.status_tag_matched                                            as status_tag_matched,
       coalesce(l.name_override, l.name_parsed)                        as name,
-      (l.name_override is not null)                                   as name_is_override,
+      ${sql.unsafe(STAFF_NAMED_SQL)}                                   as name_is_override,
       coalesce(l.phone_override, l.phone_parsed)                      as phone,
       ln.body                                                         as note_body,
       ln.created_at                                                   as note_created_at,
@@ -176,7 +184,7 @@ async function queryVisibleLeads(
     client_note_firm_id: "string?",
   });
 
-  return rows.map((r, i) => {
+  const leads = rows.map((r, i) => {
     // A note, when present, must belong to the session's firm too.
     if (r.note_body !== null && r.note_firm_id !== firmId) {
       throw new PortalRowError(label, i, "note_firm_id", "does not match the session");
@@ -207,9 +215,7 @@ async function queryVisibleLeads(
     const lead: PortalLead = {
       id: r.id as string,
       date: toIsoDateEastern(occurredAt),
-      // Placeholders ("No Name", a number, a source label) become null, shown
-      // as "Unknown caller"; a staff override always shows. See display-name.ts.
-      name: portalDisplayName((r.name as string | null) ?? null, r.name_is_override as boolean),
+      name: (r.name as string | null) ?? null,
       phone: (r.phone as string | null) ?? null,
       status: portalStatusLabel({
         effectiveStatus,
@@ -234,6 +240,14 @@ async function queryVisibleLeads(
     };
     return lead;
   });
+
+  // The name rule, re-applied in TypeScript. The SQL already hides these; a
+  // row it let through is dropped here rather than failing the page — a
+  // placeholder name is not a leak, so it needs no hard stop like the checks
+  // above. The admin "visible now" count uses this same function.
+  return leads.filter((_, i) =>
+    hasUsableName({ name: (rows[i].name as string | null) ?? null, hasNameOverride: rows[i].name_is_override as boolean }),
+  );
 }
 
 export type AddNoteResult =

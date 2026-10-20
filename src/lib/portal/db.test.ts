@@ -6,6 +6,7 @@ import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { PortalRowError } from "./guards";
 import type { SessionFirmId } from "./types";
 import { HIDDEN_TAGS } from "./visibility";
+import { STAFF_NAMED_SQL, unusableNameSql } from "./usable-name";
 
 const FIRM = "11111111-1111-1111-1111-111111111111" as SessionFirmId;
 const OTHER = "22222222-2222-2222-2222-222222222222";
@@ -315,28 +316,41 @@ describe("a forged firm id cannot be passed in", () => {
   });
 });
 
-describe("listVisibleLeads — the display name", () => {
-  it("selects whether the name is a staff override, still never the source", async () => {
+describe("listVisibleLeads — leads without a usable name are not shown", () => {
+  it("the shared visibility SQL hides them, unless staff typed a name", async () => {
     answer([]);
     await listVisibleLeads(FIRM, presetRange("current"));
-    expect(calls[0].text).toMatch(/\(l\.name_override is not null\)\s+as name_is_override/);
-    expect(calls[0].text).not.toContain("raw_source_name");
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    const text = flat(calls[0].text);
+    expect(text).toContain(flat(`${STAFF_NAMED_SQL} or not ${unusableNameSql("coalesce(l.name_override, l.name_parsed)")}`));
+    expect(text).toMatch(/\(l\.name_override is not null and btrim\(l\.name_override\) <> ''\)\s+as name_is_override/);
+    expect(text).not.toContain("raw_source_name");
   });
 
-  it("a placeholder name comes back null, the phone untouched", async () => {
-    answer([leadRow({ name: " no name. " })]);
+  it("the note insert uses the same rule (one fragment)", async () => {
+    answer([]);
+    await addClientNote(FIRM, USER, "c@firm.com", LEAD, "hello").catch(() => {});
+    const insert = calls.find((c) => c.text.includes("insert into lead_notes"));
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    expect(flat(insert?.text ?? "")).toContain(flat(unusableNameSql("coalesce(l.name_override, l.name_parsed)")));
+  });
+
+  it.each([["No Name"], [" no name. "], [""], [null], ["5551234567"], ["(555) 123-4567"], ["Google Local Services Ads"]])(
+    "a row with name %j that got past the SQL is dropped, not shown",
+    async (name) => {
+      answer([leadRow({ name }), leadRow({ id: "55555555-5555-5555-5555-555555555555", name: "Jane Doe" })]);
+      const leads = await listVisibleLeads(FIRM, presetRange("current"));
+      expect(leads.map((l) => l.name)).toEqual(["Jane Doe"]);
+    },
+  );
+
+  it("a staff override keeps it, even a number", async () => {
+    answer([leadRow({ name: "5551234567", name_is_override: true })]);
     const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
-    expect(lead.name).toBeNull();
-    expect(lead.phone).toBe("555-123-4567");
+    expect(lead.name).toBe("5551234567");
   });
 
-  it("a staff override wins", async () => {
-    answer([leadRow({ name: "Jane Fixed", name_is_override: true })]);
-    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
-    expect(lead.name).toBe("Jane Fixed");
-  });
-
-  it("a real name passes through", async () => {
+  it("a real name passes through untouched", async () => {
     answer([leadRow()]);
     const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
     expect(lead.name).toBe("Jane Doe");

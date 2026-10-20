@@ -999,3 +999,34 @@ describe("the leads page at the lead limit", () => {
     expect(await leadsMarkup()).not.toContain("Showing the first");
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Leads without a usable name: hidden from the list, the cards and the count
+// ---------------------------------------------------------------------------
+describe("the leads page and unusable names", () => {
+  beforeEach(() => asClientA());
+
+  it("the list, the header count and the summary cards all leave them out, and agree", async () => {
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "Alice Alpha"),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-000000000001", "No Name", { effective_status: "signed", signed_at: new Date("2026-10-11T15:00:00Z") }),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-000000000002", "5551234567"),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-000000000003", "Google Local Services Ads"),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-000000000004", "Fixed By Staff", { name_is_override: true }),
+    ];
+    const html = (await leadsMarkup()).replace(/<!-- -->/g, "");
+    // The leads table (the date picker's calendar has a tbody too).
+    const leadsTable = html.slice(html.indexOf("<caption"));
+    const table = leadsTable.slice(leadsTable.indexOf("<tbody"), leadsTable.indexOf("</tbody>"));
+    const rows = table.match(/<tr\b/g) ?? [];
+    expect(rows).toHaveLength(2);
+    expect(table).toContain("Alice Alpha");
+    expect(table).toContain("Fixed By Staff");
+    for (const hidden of ["No Name", "5551234567", "Google Local Services Ads"]) expect(html).not.toContain(hidden);
+    expect(html).toContain("· 2 leads");
+    const cards = [...html.matchAll(/<dd class="mt-1 font-display[^"]*">\s*(\d+)/g)].map((m) => Number(m[1]));
+    expect(cards).toEqual([0, 0, 2]); // signed, pending, opportunity — the signed No Name lead is not counted
+    expect(html).not.toContain("Unknown caller");
+  });
+});
