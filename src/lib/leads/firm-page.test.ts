@@ -24,7 +24,7 @@ import {
   type VisibilityFacts,
 } from "@/app/admin/firms/[id]/_lib/firm-status";
 import { hasUsableName } from "@/lib/portal/usable-name";
-import { inRange, isClientVisible, monthAnchor } from "@/lib/portal/visibility";
+import { inRange, isVisibleToClient, monthAnchor, negativeTagsOf } from "@/lib/portal/visibility";
 import { FirmStep } from "@/components/leads/firm-step";
 import { FirmStatusStrip, statusTiles } from "@/components/leads/firm-status-strip";
 import { FirmSyncStep, firmSyncUrl, summarise } from "@/components/leads/firm-sync-step";
@@ -56,10 +56,12 @@ afterEach(() => vi.useRealTimers());
 
 const lead = (over: Partial<VisibilityFacts> = {}): VisibilityFacts => ({
   effectiveStatus: "pending",
-  effectiveOpportunity: true,
   needsReview: false,
   hasStatusOverride: false,
-  statusTagMatched: null,
+  statusTagMatched: "Pending",
+  rawTags: ["Pending"],
+  clientApprovedAt: null,
+  clientApprovedNegativeTags: [],
   occurredAt: new Date("2026-10-10T15:00:00Z"),
   signedAt: null,
   name: "Jane Doe",
@@ -67,24 +69,30 @@ const lead = (over: Partial<VisibilityFacts> = {}): VisibilityFacts => ({
   ...over,
 });
 
+const signedOct11 = { effectiveStatus: "signed", statusTagMatched: "Signed", rawTags: ["Signed"], signedAt: new Date("2026-10-11T15:00:00Z") };
+
 const SAMPLES: [string, VisibilityFacts, boolean][] = [
-  ["an opportunity this month", lead(), true],
-  ["an opportunity last month", lead({ occurredAt: new Date("2026-09-03T15:00:00Z") }), true],
-  ["an opportunity two months ago", lead({ occurredAt: new Date("2026-08-20T15:00:00Z") }), false],
+  ["a Pending lead this month", lead(), true],
+  ["a Pending lead last month", lead({ occurredAt: new Date("2026-09-03T15:00:00Z") }), true],
+  ["a Pending lead two months ago", lead({ occurredAt: new Date("2026-08-20T15:00:00Z") }), false],
   ["Aug 31 23:30 Eastern — still August", lead({ occurredAt: new Date("2026-09-01T03:30:00Z") }), false],
   ["Sep 1 00:10 Eastern — in the window", lead({ occurredAt: new Date("2026-09-01T04:10:00Z") }), true],
-  ["a pending lead that is not an opportunity", lead({ effectiveOpportunity: false, statusTagMatched: "Pending" }), false],
+  ["Opportunity only — waits for approval", lead({ statusTagMatched: null, rawTags: ["Opportunity"] }), false],
+  ["Opportunity only, approved", lead({ statusTagMatched: null, rawTags: ["Opportunity"], clientApprovedAt: new Date() }), true],
   ["needs review", lead({ needsReview: true }), false],
-  ["hidden by a Lost tag", lead({ statusTagMatched: "Lost" }), false],
-  ["Lost, but staff overrode the status to signed", lead({ statusTagMatched: "Lost", hasStatusOverride: true, effectiveStatus: "signed", signedAt: new Date("2026-10-11T15:00:00Z") }), true],
-  ["called in August, signed Sep 3 — belongs to September", lead({ effectiveStatus: "signed", effectiveOpportunity: false, statusTagMatched: "Signed", occurredAt: new Date("2026-08-28T15:00:00Z"), signedAt: new Date("2026-09-03T15:00:00Z") }), true],
+  ["Pending + No Case", lead({ rawTags: ["Pending", "No Case"] }), false],
+  ["Signed + Lost — a Signed lead waits too", lead({ ...signedOct11, rawTags: ["Signed", "Lost"] }), false],
+  ["Signed + Lost, approved for Lost", lead({ ...signedOct11, rawTags: ["Signed", "Lost"], clientApprovedAt: new Date(), clientApprovedNegativeTags: ["lost"] }), true],
+  ["approved for No Case, then tagged Declined", lead({ rawTags: ["Pending", "No Case", "Declined"], clientApprovedAt: new Date(), clientApprovedNegativeTags: ["no case"] }), false],
+  ["Lost, and staff overrode the status to signed — still waits", lead({ ...signedOct11, statusTagMatched: "Lost", rawTags: ["Lost"], hasStatusOverride: true }), false],
+  ["called in August, signed Sep 3 — belongs to September", lead({ effectiveStatus: "signed", statusTagMatched: "Signed", rawTags: ["Signed"], occurredAt: new Date("2026-08-28T15:00:00Z"), signedAt: new Date("2026-09-03T15:00:00Z") }), true],
   ["named No Name", lead({ name: "No Name" }), false],
   ["no name at all", lead({ name: null }), false],
   ["named with a phone number", lead({ name: "(555) 123-4567" }), false],
   ["named with a source label", lead({ name: "Google Local Services Ads" }), false],
   ["No Name, but staff typed a name", lead({ name: "Jane Fixed", hasNameOverride: true }), true],
-  ["signed and named No Name — not counted either", lead({ name: "no name", effectiveStatus: "signed", signedAt: new Date("2026-10-11T15:00:00Z") }), false],
-  ["called and signed in August", lead({ effectiveStatus: "signed", effectiveOpportunity: false, statusTagMatched: "Signed", occurredAt: new Date("2026-08-10T15:00:00Z"), signedAt: new Date("2026-08-30T15:00:00Z") }), false],
+  ["signed and named No Name — not counted either", lead({ ...signedOct11, name: "no name" }), false],
+  ["called and signed in August", lead({ effectiveStatus: "signed", statusTagMatched: "Signed", rawTags: ["Signed"], occurredAt: new Date("2026-08-10T15:00:00Z"), signedAt: new Date("2026-08-30T15:00:00Z") }), false],
 ];
 
 describe("visible now = the portal's rule, this month + last month", () => {
@@ -101,7 +109,7 @@ describe("visible now = the portal's rule, this month + last month", () => {
   it("over all the samples, matches the portal's own functions one by one", () => {
     const w = portalWindowNow();
     const portalSays = SAMPLES.filter(([, f]) =>
-      isClientVisible(f) && hasUsableName(f) && inRange(monthAnchor({ effectiveStatus: f.effectiveStatus, signedAt: f.signedAt, occurredAt: f.occurredAt }), w),
+      isVisibleToClient({ ...f, negativeTags: negativeTagsOf(f) }) && hasUsableName(f) && inRange(monthAnchor({ effectiveStatus: f.effectiveStatus, signedAt: f.signedAt, occurredAt: f.occurredAt }), w),
     ).length;
     expect(countVisibleNow(SAMPLES.map(([, f]) => f))).toBe(portalSays);
     expect(portalSays).toBe(SAMPLES.filter(([, , e]) => e).length);

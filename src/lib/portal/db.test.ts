@@ -5,7 +5,7 @@ import { parsePortalRange, presetRange } from "./range";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { PortalRowError } from "./guards";
 import type { SessionFirmId } from "./types";
-import { HIDDEN_TAGS, clientVisibleSql } from "./visibility";
+import { NEGATIVE_TAG_KEYS, clientVisibleSql } from "./visibility";
 import { STAFF_NAMED_SQL, unusableNameSql } from "./usable-name";
 
 const FIRM = "11111111-1111-1111-1111-111111111111" as SessionFirmId;
@@ -94,7 +94,7 @@ describe("listVisibleLeads — the query", () => {
     answer([]);
     await listVisibleLeads(FIRM, presetRange("current"));
     const list = /x\.k in \(([^)]*)\)/.exec(calls[0].text)?.[1] ?? "";
-    expect(list.split(",").map((s) => s.trim().replace(/^'|'$/g, ""))).toEqual(HIDDEN_TAGS.map((t) => t.toLowerCase()));
+    expect(list.split(",").map((s) => s.trim().replace(/^'|'$/g, ""))).toEqual([...NEGATIVE_TAG_KEYS]);
   });
 
   it("binds half-open Eastern bounds: This month runs to the end of TODAY, never beyond", async () => {

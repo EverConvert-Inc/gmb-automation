@@ -1,5 +1,6 @@
-// Admin status display = the portal's own label, or the rejection-style tag
-// that hides the lead from the client. Never the raw stored 'pending'.
+// Admin status display = what the client sees, by the portal's own rule
+// (clientVisibility): Signed or Pending when shown, the negative tags holding
+// it back, Opportunity-only waiting for approval, or under review.
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -11,50 +12,56 @@ vi.mock("next/link", () => ({
 
 import { adminStatusView, fromTagsStatusText } from "@/components/leads/admin-status";
 import { AdminLeadsTable } from "@/components/leads/admin-leads-table";
-import { HIDDEN_TAGS, isClientVisible, portalStatusLabel } from "@/lib/portal/visibility";
+import { clientVisibility, negativeTagsOf } from "@/lib/portal/visibility";
 import type { AdminLeadRow } from "./queries-admin";
 
-const TAGS = [null, "Pending", "Signed", "Opportunity", "Retained", ...HIDDEN_TAGS];
-const CASES: { status: string; statusOverride: string | null; statusTagMatched: string | null }[] = [];
-for (const statusTagMatched of TAGS) {
-  for (const [status, statusOverride] of [["pending", null], ["signed", null], ["pending", "pending"], ["signed", "signed"]] as const) {
-    CASES.push({ status, statusOverride, statusTagMatched });
+const SIX = ["Lost", "Rejected", "No Case", "Referred out", "No Contact", "Declined"];
+type Case = Pick<AdminLeadRow, "status" | "statusOverride" | "statusTagMatched" | "needsReview" | "rawTags" | "clientApprovedAt" | "clientApprovedNegativeTags">;
+const CASES: Case[] = [];
+for (const rawTags of [[], ["Pending"], ["Signed"], ["Opportunity"], ["Pending", "No Case"], ["Signed", "Lost"], ["Opportunity", "Declined"]]) {
+  for (const statusTagMatched of [null, "Pending", "Signed", "No Case"]) {
+    for (const [status, statusOverride] of [["pending", null], ["signed", null], ["pending", "pending"], ["signed", "signed"]] as const) {
+      for (const approval of [null, [], ["no case"], ["lost", "no case", "declined"]]) {
+        for (const needsReview of [false, true]) {
+          CASES.push({ rawTags, statusTagMatched, status, statusOverride, needsReview, clientApprovedAt: approval ? new Date() : null, clientApprovedNegativeTags: approval ?? [] });
+        }
+      }
+    }
   }
 }
 
-describe("adminStatusView is the portal's reading", () => {
-  it.each(CASES.map((c) => [c.statusTagMatched, c.status, c.statusOverride, c] as const))(
-    "tag %s, status %s, override %s",
-    (_t, _s, _o, c) => {
+describe("adminStatusView is the portal's clientVisibility", () => {
+  it(`agrees over ${CASES.length} combinations`, () => {
+    for (const c of CASES) {
       const v = adminStatusView(c);
-      const hasStatusOverride = c.statusOverride !== null;
-      // Hidden exactly when the portal's isClientVisible rejects it for the tag alone.
-      const portalHidesForTag = !isClientVisible({
-        effectiveStatus: "signed", effectiveOpportunity: true, needsReview: false, hasStatusOverride, statusTagMatched: c.statusTagMatched,
+      const p = clientVisibility({
+        effectiveStatus: c.status, hasStatusOverride: c.statusOverride !== null, statusTagMatched: c.statusTagMatched, needsReview: c.needsReview,
+        negativeTags: negativeTagsOf(c), clientApprovedAt: c.clientApprovedAt, clientApprovedNegativeTags: c.clientApprovedNegativeTags,
       });
-      expect(v.kind === "hidden").toBe(portalHidesForTag);
-      if (v.kind === "label") {
-        expect(v.label).toBe(portalStatusLabel({ effectiveStatus: c.status, hasStatusOverride, statusTagMatched: c.statusTagMatched }));
-      } else {
-        expect(v.tag).toBe(c.statusTagMatched);
-      }
-    },
-  );
-
-  it("Opportunity + No Case with no Pending tag is No Case, not Pending", () => {
-    expect(adminStatusView({ status: "pending", statusOverride: null, statusTagMatched: "No Case" })).toEqual({ kind: "hidden", tag: "No Case" });
+      const expected = p.visible ? "shown" : p.reason === "negative_tag" ? "negative" : p.reason === "opportunity_only" ? "opportunity" : "review";
+      expect(v.kind, JSON.stringify(c)).toBe(expected);
+      if (v.kind === "shown" && p.visible) expect([v.label, v.approved]).toEqual([p.label, p.approved]);
+    }
   });
 
-  it("an override un-hides and decides the label", () => {
-    expect(adminStatusView({ status: "pending", statusOverride: "pending", statusTagMatched: "No Case" })).toEqual({ kind: "label", label: "pending", text: "Pending" });
-    expect(adminStatusView({ status: "signed", statusOverride: "signed", statusTagMatched: "Lost" })).toMatchObject({ label: "signed" });
+  it("Opportunity + No Case with no Pending tag reads as No Case, needing review — not Pending", () => {
+    expect(adminStatusView({ status: "pending", statusOverride: null, statusTagMatched: "No Case", needsReview: false, rawTags: ["Opportunity", "No Case"], clientApprovedAt: null, clientApprovedNegativeTags: [] })).toEqual({ kind: "negative", tags: "No Case" });
+  });
+
+  it("a staff status override no longer un-hides a negative tag; an approval does", () => {
+    const base = { status: "signed", statusOverride: "signed", statusTagMatched: "Lost", needsReview: false, rawTags: ["Lost"], clientApprovedAt: null, clientApprovedNegativeTags: [] as string[] };
+    expect(adminStatusView(base)).toEqual({ kind: "negative", tags: "Lost" });
+    expect(adminStatusView({ ...base, clientApprovedAt: new Date(), clientApprovedNegativeTags: ["lost"] })).toEqual({ kind: "shown", label: "signed", text: "Signed", approved: true });
   });
 
   it("the drawer's From-tags text", () => {
-    expect(fromTagsStatusText({ statusParsed: "pending", statusTagMatched: "Declined" })).toBe("Declined, hidden from client");
-    expect(fromTagsStatusText({ statusParsed: "pending", statusTagMatched: "Pending" })).toBe("Pending");
-    expect(fromTagsStatusText({ statusParsed: "pending", statusTagMatched: null })).toBe("Opportunity");
-    expect(fromTagsStatusText({ statusParsed: "signed", statusTagMatched: "Signed" })).toBe("Signed");
+    const r = (rawTags: string[], statusTagMatched: string | null, statusParsed = "pending") => ({
+      status: statusParsed, statusParsed, statusOverride: "signed", statusTagMatched, needsReview: false, rawTags, clientApprovedAt: null, clientApprovedNegativeTags: [] as string[],
+    });
+    expect(fromTagsStatusText(r(["Opportunity", "Declined"], "Declined"))).toBe("Declined, needs review");
+    expect(fromTagsStatusText(r(["Pending"], "Pending"))).toBe("Pending");
+    expect(fromTagsStatusText(r(["Opportunity"], null))).toBe("Opportunity, not shown");
+    expect(fromTagsStatusText(r(["Signed"], "Signed", "signed"))).toBe("Signed");
   });
 });
 
@@ -76,7 +83,7 @@ const row = (over: Partial<AdminLeadRow>): AdminLeadRow => ({
   statusOverride: null,
   isOpportunityParsed: true,
   isOpportunityOverride: null,
-  statusTagMatched: null,
+  statusTagMatched: "Pending",
   rawSourceName: null,
   signedAt: null,
   suggestedStatus: null,
@@ -85,7 +92,7 @@ const row = (over: Partial<AdminLeadRow>): AdminLeadRow => ({
   parseFailed: false,
   parseError: null,
   possibleDuplicateOf: null,
-  rawTags: [],
+  rawTags: ["Pending"],
   clientApprovedAt: null,
   clientApprovedBy: null,
   clientApprovedNegativeTags: [],
@@ -104,29 +111,33 @@ function statusCells(rows: AdminLeadRow[]): string[] {
 }
 
 describe("the admin table (leads, queue, hidden) Status column", () => {
-  it("shows the portal's label, and a hidden tag as the tag with a note", () => {
+  it("shows what the client sees, and why not when it does not", () => {
     expect(
       statusCells([
-        row({ statusTagMatched: "No Case" }),
-        row({ statusTagMatched: "Pending" }),
-        row({ statusTagMatched: null }),
-        row({ status: "signed", statusParsed: "signed", statusTagMatched: "Signed" }),
-        row({ status: "pending", statusOverride: "pending", statusTagMatched: "Lost" }),
-        row({ statusTagMatched: "Referred out", isOpportunity: false }),
+        row({ rawTags: ["Pending", "No Case"] }),
+        row({}),
+        row({ rawTags: ["Opportunity"], statusTagMatched: null }),
+        row({ status: "signed", statusParsed: "signed", statusTagMatched: "Signed", rawTags: ["Signed"] }),
+        row({ status: "signed", statusParsed: "signed", statusTagMatched: "Signed", rawTags: ["Signed", "Lost"], clientApprovedAt: new Date(), clientApprovedNegativeTags: ["lost"] }),
+        row({ status: "pending", statusOverride: "pending", statusTagMatched: "Lost", rawTags: ["Lost"] }),
+        row({ needsReview: true }),
       ]),
     ).toEqual([
-      "No Case Hidden from client",
+      "No Case Hidden from client - needs review",
       "Pending Opportunity",
-      "Opportunity",
+      "Opportunity Not shown to client",
       "Signed Opportunity",
-      "Pending Opportunity (set by admin)",
-      "Referred out Hidden from client",
+      "Signed Opportunity Approved for client",
+      "Lost Hidden from client - needs review (set by admin)",
+      "Pending Under review",
     ]);
   });
 
-  it("never reads a rejection-tagged lead as Pending", () => {
-    for (const tag of HIDDEN_TAGS) {
-      expect(statusCells([row({ statusTagMatched: tag })])[0]).toBe(`${tag} Hidden from client`);
+  it("never reads a negative-tagged lead as Pending or Signed, whatever else it carries", () => {
+    for (const tag of SIX) {
+      for (const other of ["Pending", "Signed", "Opportunity"]) {
+        expect(statusCells([row({ rawTags: [other, tag], statusTagMatched: other === "Opportunity" ? null : other })])[0]).toBe(`${tag} Hidden from client - needs review`);
+      }
     }
   });
 });

@@ -6,7 +6,7 @@ import { isHiddenByNameNow, portalWindowNow } from "@/app/admin/firms/[id]/_lib/
 
 /**
  * The SQL narrows to candidates with the portal's own name SQL; the final
- * decision is isHiddenByNameNow — the portal's isClientVisible, monthAnchor
+ * decision is isHiddenByNameNow — the portal's isVisibleToClient, monthAnchor
  * and hasUsableName — so this list cannot drift from what the client sees.
  */
 export async function listHiddenByName(): Promise<AdminLeadRow[]> {
@@ -17,10 +17,12 @@ export async function listHiddenByName(): Promise<AdminLeadRow[]> {
       isHiddenByNameNow(
         {
           effectiveStatus: r.status,
-          effectiveOpportunity: r.isOpportunity,
           needsReview: r.needsReview,
           hasStatusOverride: r.statusOverride !== null,
           statusTagMatched: r.statusTagMatched,
+          rawTags: r.rawTags,
+          clientApprovedAt: r.clientApprovedAt,
+          clientApprovedNegativeTags: r.clientApprovedNegativeTags,
           occurredAt: r.occurredAt,
           signedAt: r.signedAt,
           name: r.name,

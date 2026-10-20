@@ -10,15 +10,18 @@ import { adminQueueCondition } from "@/lib/leads/queries-admin";
 import { assertRowShape } from "@/lib/leads/row-guard";
 import { presetRange } from "@/lib/portal/range";
 import { hasUsableName } from "@/lib/portal/usable-name";
-import { inRange, isClientVisible, monthAnchor } from "@/lib/portal/visibility";
+import { inRange, isVisibleToClient, monthAnchor, negativeTagsOf } from "@/lib/portal/visibility";
 
 /** The facts "visible now" needs about one lead — the same inputs the portal's rule takes. */
 export type VisibilityFacts = {
   effectiveStatus: string;
-  effectiveOpportunity: boolean;
   needsReview: boolean;
   hasStatusOverride: boolean;
   statusTagMatched: string | null;
+  /** CallRail's tags as stored (for the negative-tag rule). */
+  rawTags: readonly string[];
+  clientApprovedAt: Date | null;
+  clientApprovedNegativeTags: readonly string[];
   occurredAt: Date;
   signedAt: Date | null;
   /** coalesce(name_override, name_parsed) */
@@ -34,7 +37,7 @@ export function portalWindowNow(): { start: Date; endExclusive: Date } {
 
 /**
  * How many of these leads the firm's portal shows right now. Uses the
- * portal's OWN functions (isClientVisible, hasUsableName, monthAnchor) — not
+ * portal's OWN functions (isVisibleToClient, hasUsableName, monthAnchor) — not
  * a copy of the rule — so the admin count cannot drift from what the client
  * sees.
  */
@@ -46,10 +49,10 @@ export function countVisibleNow(rows: readonly VisibilityFacts[], window = porta
   return n;
 }
 
-/** Every portal rule except the name one: the lead's status, tags, review flag and month. */
+/** Every portal rule except the name one: status, negative tags, approval, review flag and month. */
 function shownButForTheName(r: VisibilityFacts, window: { start: Date; endExclusive: Date }): boolean {
   return (
-    isClientVisible(r) &&
+    isVisibleToClient({ ...r, negativeTags: negativeTagsOf(r) }) &&
     inRange(monthAnchor({ effectiveStatus: r.effectiveStatus, signedAt: r.signedAt, occurredAt: r.occurredAt }), window)
   );
 }
@@ -69,10 +72,11 @@ export function buildVisibleNowCandidatesQuery(database: Db, firmId: string, win
     .select({
       statusOverride: leads.statusOverride,
       statusParsed: leads.statusParsed,
-      isOpportunityOverride: leads.isOpportunityOverride,
-      isOpportunityParsed: leads.isOpportunityParsed,
       needsReview: leads.needsReview,
       statusTagMatched: leads.statusTagMatched,
+      rawTags: leads.rawTags,
+      clientApprovedAt: leads.clientApprovedAt,
+      clientApprovedNegativeTags: leads.clientApprovedNegativeTags,
       occurredAt: leads.occurredAt,
       signedAt: leads.signedAt,
       nameOverride: leads.nameOverride,
@@ -94,17 +98,18 @@ export async function visibleNowCount(firmId: string): Promise<number> {
   const rows = await buildVisibleNowCandidatesQuery(db, firmId, window);
   assertRowShape("firm status: visible now", rows, {
     statusParsed: "string",
-    isOpportunityParsed: "boolean",
     needsReview: "boolean",
     occurredAt: "date",
   });
   return countVisibleNow(
     rows.map((r) => ({
       effectiveStatus: r.statusOverride ?? r.statusParsed,
-      effectiveOpportunity: r.isOpportunityOverride ?? r.isOpportunityParsed,
       needsReview: r.needsReview,
       hasStatusOverride: r.statusOverride !== null,
       statusTagMatched: r.statusTagMatched,
+      rawTags: r.rawTags,
+      clientApprovedAt: r.clientApprovedAt,
+      clientApprovedNegativeTags: r.clientApprovedNegativeTags,
       occurredAt: r.occurredAt,
       signedAt: r.signedAt,
       name: r.nameOverride ?? r.nameParsed,

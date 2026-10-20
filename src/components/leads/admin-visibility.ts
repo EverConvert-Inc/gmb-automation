@@ -2,7 +2,8 @@
 // src/lib/portal/visibility.ts) applied to an admin lead row. Every admin
 // place that says whether a client sees a lead goes through here, so admin
 // and portal cannot read a lead differently.
-import { clientVisibility, negativeTagsOf, type ClientVisibility } from "@/lib/portal/visibility";
+import { CLIENT_HIDDEN_STATUS_TAGS } from "@/lib/leads/status-from-tags";
+import { clientVisibility, negativeTagsOf, tagKey, type ClientVisibility } from "@/lib/portal/visibility";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 
 export function adminClientVisibility(
@@ -20,4 +21,12 @@ export function adminClientVisibility(
     clientApprovedAt: r.clientApprovedAt,
     clientApprovedNegativeTags: r.clientApprovedNegativeTags,
   });
+}
+
+/** CallRail's spelling of each negative tag, by its tagKey. */
+const NEGATIVE_TAG_NAME = new Map(CLIENT_HIDDEN_STATUS_TAGS.map((t) => [tagKey(t), t as string]));
+
+/** Negative tag keys as CallRail spells them, joined: "Lost, No Case". */
+export function negativeTagNames(keys: readonly string[]): string {
+  return keys.map((k) => NEGATIVE_TAG_NAME.get(k) ?? k).join(", ");
 }

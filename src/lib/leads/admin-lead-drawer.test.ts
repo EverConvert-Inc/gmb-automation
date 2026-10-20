@@ -101,7 +101,7 @@ describe("the lead drawer", () => {
 
   it("keeps the status and opportunity choices", () => {
     // The tags alone (no tag matched, an opportunity) read as the portal reads them.
-    expect(html).toContain("From tags (Opportunity)");
+    expect(html).toContain("From tags (Opportunity, not shown)");
     expect(html).toContain(">Pending</option>");
     expect(html).toContain(">Signed</option>");
     expect(html).toContain("From tags (no)");
@@ -132,13 +132,13 @@ describe("the lead drawer", () => {
     const pending = render({ ...base, statusOverride: null, status: "pending", statusTagMatched: "Pending" });
     expect(pending).toContain("Now Pending · from tag “Pending”");
     const other = render({ ...base, statusOverride: null, status: "pending", statusTagMatched: "Retained" });
-    expect(other).toContain("Now Opportunity · from tag “Retained”");
+    expect(other).toContain("Now Opportunity · not shown to client");
   });
 
   it("a rejection-style tag reads as that tag, hidden from the client — not Pending", () => {
     const out = render({ ...base, statusOverride: null, status: "pending", statusParsed: "pending", statusTagMatched: "No Case" });
-    expect(out).toContain("Now No Case · hidden from client");
-    expect(out).toContain("From tags (No Case, hidden from client)");
+    expect(out).toContain("Now No Case · hidden from client, needs review");
+    expect(out).toContain("From tags (No Case, needs review)");
     expect(out).not.toContain("Now Pending");
   });
 });

@@ -131,27 +131,45 @@ export function AdminLeadsTable({
   );
 }
 
-const LABEL_BADGE = { signed: "success", pending: "secondary", opportunity: "info" } as const;
+const LABEL_BADGE = { signed: "success", pending: "secondary" } as const;
 
 /**
- * The portal's label for the lead (adminStatusView), or — when a
- * rejection-style tag hides it from the client — that tag, neutral, with a
- * note. The Opportunity flag still shows beside Signed or Pending.
+ * What the client sees of the lead (adminStatusView — the portal's rule):
+ * Signed or Pending when shown, the negative tags holding it back,
+ * Opportunity-only waiting for approval, or under review. The Opportunity
+ * flag still shows beside a shown lead.
  */
 function StatusCell({ row }: { row: AdminLeadRow }) {
   const view = adminStatusView(row);
-  if (view.kind === "hidden") {
+  if (view.kind === "negative") {
     return (
       <>
-        <Badge variant="outline">{view.tag}</Badge>
-        <span className="text-xs text-muted-foreground">Hidden from client</span>
+        <Badge variant="outline">{view.tags}</Badge>
+        <span className="text-xs text-muted-foreground">Hidden from client - needs review</span>
+      </>
+    );
+  }
+  if (view.kind === "opportunity") {
+    return (
+      <>
+        <Badge variant="outline">Opportunity</Badge>
+        <span className="text-xs text-muted-foreground">Not shown to client</span>
+      </>
+    );
+  }
+  if (view.kind === "review") {
+    return (
+      <>
+        <Badge variant="secondary">{view.text}</Badge>
+        <span className="text-xs text-muted-foreground">Under review</span>
       </>
     );
   }
   return (
     <>
       <Badge variant={LABEL_BADGE[view.label]}>{view.text}</Badge>
-      {row.isOpportunity && view.label !== "opportunity" ? <Badge variant="outline">Opportunity</Badge> : null}
+      {row.isOpportunity ? <Badge variant="outline">Opportunity</Badge> : null}
+      {view.approved ? <span className="text-xs text-muted-foreground">Approved for client</span> : null}
     </>
   );
 }

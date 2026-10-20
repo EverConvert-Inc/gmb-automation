@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  HIDDEN_TAGS,
   inRange,
-  isClientVisible,
   isPortalMonth,
   monthAnchor,
   portalMonthRange,
@@ -11,60 +9,7 @@ import { toIsoDateEastern } from "@/lib/date-utils";
 
 afterEach(() => vi.useRealTimers());
 
-const base = {
-  effectiveStatus: "pending",
-  effectiveOpportunity: false,
-  needsReview: false,
-  hasStatusOverride: false,
-  statusTagMatched: null as string | null,
-};
-
-describe("isClientVisible", () => {
-  it("hides exactly the six non-terminal tags", () => {
-    expect([...HIDDEN_TAGS]).toEqual(["Lost", "Rejected", "No Case", "Referred out", "No Contact", "Declined"]);
-  });
-
-  it.each([
-    ["signed", { effectiveStatus: "signed", statusTagMatched: "Signed" }, true],
-    ["opportunity, pending", { effectiveOpportunity: true, statusTagMatched: "Pending" }, true],
-    ["opportunity with no matched tag", { effectiveOpportunity: true }, true],
-    ["pending only — neither signed nor opportunity", { statusTagMatched: "Pending" }, false],
-    ["signed but needs_review", { effectiveStatus: "signed", needsReview: true }, false],
-    ["opportunity but needs_review", { effectiveOpportunity: true, needsReview: true }, false],
-  ])("%s -> %s", (_label, over, expected) => {
-    expect(isClientVisible({ ...base, ...over })).toBe(expected);
-  });
-
-  it.each(HIDDEN_TAGS.map((t) => [t]))("an opportunity tagged %s is hidden", (tag) => {
-    expect(isClientVisible({ ...base, effectiveOpportunity: true, statusTagMatched: tag })).toBe(false);
-  });
-
-  // C7: an explicit status override beats the hidden-tag rule.
-  it.each(HIDDEN_TAGS.map((t) => [t]))("an admin override beats the %s tag", (tag) => {
-    expect(
-      isClientVisible({ ...base, effectiveStatus: "signed", hasStatusOverride: true, statusTagMatched: tag }),
-    ).toBe(true);
-    expect(
-      isClientVisible({
-        ...base,
-        effectiveStatus: "pending",
-        effectiveOpportunity: true,
-        hasStatusOverride: true,
-        statusTagMatched: tag,
-      }),
-    ).toBe(true);
-  });
-
-  it("an override does NOT beat needs_review", () => {
-    expect(
-      isClientVisible({ ...base, effectiveStatus: "signed", hasStatusOverride: true, needsReview: true }),
-    ).toBe(false);
-  });
-
-  it("an override to pending with no opportunity is still not visible", () => {
-    expect(isClientVisible({ ...base, hasStatusOverride: true, statusTagMatched: "Signed" })).toBe(false);
-  });
-});
+// The client-visibility rule is tested in portal-client-rule.test.ts.
 
 describe("monthAnchor", () => {
   const occurredAt = new Date("2026-09-28T15:00:00Z");

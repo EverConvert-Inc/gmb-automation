@@ -1,9 +1,11 @@
-// The client-visibility and month rules, as pure functions.
+// The client-visibility and month rules, as pure functions — and the SQL
+// form of the visibility rule (clientVisibleSql), so db.ts and the admin
+// queries apply the same one.
 //
-// The SQL in db.ts applies the same rules in Postgres. This file exists so the
-// rules are testable without a database, AND so db.ts can re-check every row
-// Postgres returns: if the two ever disagree, the portal throws rather than
-// showing a row the rules say a firm must not see.
+// This file exists so the rules are testable without a database, AND so
+// db.ts can re-check every row Postgres returns: if the two ever disagree,
+// the portal throws rather than showing a row the rules say a firm must not
+// see. The visibility rule itself is at the end: clientVisibility.
 
 import { CLIENT_HIDDEN_STATUS_TAGS, type StatusTag } from "@/lib/leads/status-from-tags";
 import {
@@ -11,31 +13,6 @@ import {
   firstOfMonthIsoEastern,
   firstOfPreviousMonthIsoEastern,
 } from "@/lib/date-utils";
-
-/** Matched tags that hide a lead from its firm — unless an admin overrode its status. */
-export const HIDDEN_TAGS: readonly string[] = [...CLIENT_HIDDEN_STATUS_TAGS];
-
-export type VisibilityInput = {
-  /** coalesce(status_override, status_parsed) */
-  effectiveStatus: string;
-  /** coalesce(is_opportunity_override, is_opportunity_parsed) */
-  effectiveOpportunity: boolean;
-  needsReview: boolean;
-  /** status_override is not null */
-  hasStatusOverride: boolean;
-  statusTagMatched: string | null;
-};
-
-/**
- * Visible = (Signed OR Opportunity) AND NOT needs_review AND NOT hidden by a
- * matched tag — where an explicit status override beats the hidden-tag rule.
- */
-export function isClientVisible(v: VisibilityInput): boolean {
-  if (v.needsReview) return false;
-  if (v.effectiveStatus !== "signed" && !v.effectiveOpportunity) return false;
-  if (v.hasStatusOverride) return true;
-  return v.statusTagMatched === null || !HIDDEN_TAGS.includes(v.statusTagMatched);
-}
 
 /**
  * The instant that decides which month a lead belongs to: a signed lead by

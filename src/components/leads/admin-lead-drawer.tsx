@@ -15,9 +15,8 @@ import { firmButtonClasses } from "./firm-button";
 import { fuFocusRing, fuGreenText } from "./firm-ui";
 import { adminStatusView, fromTagsStatusText } from "./admin-status";
 import { sourceLabel } from "./source-label";
-import { adminClientVisibility } from "./admin-visibility";
-import { CLIENT_HIDDEN_STATUS_TAGS } from "@/lib/leads/status-from-tags";
-import { CLIENT_LABEL_TEXT, tagKey } from "@/lib/portal/visibility";
+import { adminClientVisibility, negativeTagNames } from "./admin-visibility";
+import { CLIENT_LABEL_TEXT } from "@/lib/portal/visibility";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -121,9 +120,15 @@ export function AdminLeadDrawer({
       : lead.statusTagMatched
         ? `from tag “${lead.statusTagMatched}”`
         : "from tags";
-  // The portal's label, or the rejection-style tag that hides the lead.
+  // What the client sees, by the portal's own rule.
   const statusNow =
-    view.kind === "hidden" ? `Now ${view.tag} · hidden from client` : `Now ${view.text} · ${statusSource}`;
+    view.kind === "negative"
+      ? `Now ${view.tags} · hidden from client, needs review`
+      : view.kind === "opportunity"
+        ? "Now Opportunity · not shown to client"
+        : view.kind === "review"
+          ? `Now ${view.text} · under review`
+          : `Now ${view.text} · ${statusSource}`;
   const opportunitySource = lead.isOpportunityOverride !== null ? "set by staff" : "from tags";
 
   return createPortal(
@@ -335,9 +340,6 @@ function OverrideField({
   );
 }
 
-/** CallRail's spelling of each negative tag, by its tagKey. */
-const NEGATIVE_TAG_NAME = new Map(CLIENT_HIDDEN_STATUS_TAGS.map((t) => [tagKey(t), t]));
-const tagNames = (keys: readonly string[]) => keys.map((k) => NEGATIVE_TAG_NAME.get(k) ?? k).join(", ");
 
 /**
  * What the client sees of this lead, and why — the portal's own rule
@@ -354,7 +356,7 @@ function ClientSection({ lead, busy, onApprove }: { lead: AdminLeadRow; busy: bo
       text += ` · approved${lead.clientApprovedBy ? ` by ${lead.clientApprovedBy}` : ""} on ${formatEasternDateTime(lead.clientApprovedAt)}`;
     }
   } else if (v.reason === "negative_tag") {
-    text = `Hidden from the client: negative tag (${tagNames(v.negativeTags)}). Needs review.`;
+    text = `Hidden from the client: negative tag (${negativeTagNames(v.negativeTags)}). Needs review.`;
     if (v.approvedEarlier) text += " An earlier approval does not cover every tag it carries now.";
     canApprove = true;
   } else if (v.reason === "opportunity_only") {

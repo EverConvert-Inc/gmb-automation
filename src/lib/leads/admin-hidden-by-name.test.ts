@@ -24,7 +24,7 @@ import { groupByFirm, listHiddenByName } from "@/app/admin/leads/hidden/_lib/hid
 import { GET as hiddenCount } from "@/app/api/admin/leads/hidden-count/route";
 import { AdminTabsView } from "@/components/leads/admin-tabs";
 import { hasUsableName, unusableNameSql } from "@/lib/portal/usable-name";
-import { inRange, isClientVisible, monthAnchor } from "@/lib/portal/visibility";
+import { inRange, isVisibleToClient, monthAnchor, negativeTagsOf } from "@/lib/portal/visibility";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -36,10 +36,12 @@ afterEach(() => vi.useRealTimers());
 
 const facts = (over: Partial<VisibilityFacts> = {}): VisibilityFacts => ({
   effectiveStatus: "pending",
-  effectiveOpportunity: true,
   needsReview: false,
   hasStatusOverride: false,
-  statusTagMatched: null,
+  statusTagMatched: "Pending",
+  rawTags: ["Pending"],
+  clientApprovedAt: null,
+  clientApprovedNegativeTags: [],
   occurredAt: new Date("2026-10-10T15:00:00Z"),
   signedAt: null,
   name: "No Name",
@@ -52,10 +54,12 @@ for (const name of ["No Name", "no name.", "", null, "5551234567", "Google Local
   for (const hasNameOverride of [false, true]) {
     for (const extra of [
       {},
-      { effectiveStatus: "signed", signedAt: new Date("2026-10-11T15:00:00Z") },
-      { effectiveOpportunity: false, statusTagMatched: "Pending" },
+      { effectiveStatus: "signed", statusTagMatched: "Signed", rawTags: ["Signed"], signedAt: new Date("2026-10-11T15:00:00Z") },
+      { statusTagMatched: null, rawTags: ["Opportunity"] },
+      { statusTagMatched: null, rawTags: ["Opportunity"], clientApprovedAt: new Date() },
       { needsReview: true },
-      { statusTagMatched: "Lost" },
+      { rawTags: ["Pending", "Lost"] },
+      { rawTags: ["Pending", "Lost"], clientApprovedAt: new Date(), clientApprovedNegativeTags: ["lost"] },
       { occurredAt: new Date("2026-08-10T15:00:00Z") },
     ] as Partial<VisibilityFacts>[]) {
       MATRIX.push(facts({ name, hasNameOverride, ...extra }));
@@ -66,7 +70,7 @@ for (const name of ["No Name", "no name.", "", null, "5551234567", "Google Local
 describe("the rule is the portal's", () => {
   const w = portalWindowNow();
   const portalShowsButForName = (f: VisibilityFacts) =>
-    isClientVisible(f) && inRange(monthAnchor({ effectiveStatus: f.effectiveStatus, signedAt: f.signedAt, occurredAt: f.occurredAt }), w);
+    isVisibleToClient({ ...f, negativeTags: negativeTagsOf(f) }) && inRange(monthAnchor({ effectiveStatus: f.effectiveStatus, signedAt: f.signedAt, occurredAt: f.occurredAt }), w);
 
   it.each(MATRIX.map((f, i) => [i, f] as const))("case %i: hidden-by-name = the portal's rules pass but the name fails", (_, f) => {
     expect(isHiddenByNameNow(f, w)).toBe(portalShowsButForName(f) && !hasUsableName(f));
@@ -120,7 +124,7 @@ const row = (over: Partial<AdminLeadRow> & { nameOverride?: string | null } = {}
   statusOverride: null,
   isOpportunityParsed: true,
   isOpportunityOverride: null,
-  statusTagMatched: null,
+  statusTagMatched: "Pending",
   rawSourceName: "Google Local Services Ads",
   signedAt: null,
   suggestedStatus: null,
@@ -129,7 +133,7 @@ const row = (over: Partial<AdminLeadRow> & { nameOverride?: string | null } = {}
   parseFailed: false,
   parseError: null,
   possibleDuplicateOf: null,
-  rawTags: [],
+  rawTags: ["Pending"],
   clientApprovedAt: null,
   clientApprovedBy: null,
   clientApprovedNegativeTags: [],

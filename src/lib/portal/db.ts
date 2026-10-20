@@ -30,9 +30,9 @@ export const NOTE_MAX_LENGTH = 2000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// The hidden-tag list is written into the SQL as literals rather than bound as
-// an array, so the query has no array-typed parameter to get wrong. A test
-// checks these literals are exactly HIDDEN_TAGS, so the two cannot drift.
+// The negative-tag list is written into the SQL as literals rather than bound
+// as an array, so the query has no array-typed parameter to get wrong. A test
+// checks these literals are exactly the negative tags, so the two cannot drift.
 /** Pending or Signed with no negative tag, or approved (visibility.ts). */
 const CLIENT_VISIBLE_SQL = clientVisibleSql("l");
 /** The lead's negative tags, for the row re-check — keys only, never the tags. */
