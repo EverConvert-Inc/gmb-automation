@@ -278,6 +278,33 @@ describe("pages refuse everyone but an active client", () => {
     expect(html).not.toMatch(/sign up|forgot/i);
   });
 
+  it("/portal/login shows the light EverConvert logo by default, not the old scales icon", async () => {
+    h.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const html = render((await LoginPage()) as ReactElement);
+    const imgs = [...html.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
+    expect(imgs).toHaveLength(2);
+    const [light, dark] = imgs;
+    expect(light).toContain('alt="EverConvert"');
+    expect(light).toContain("everconvert-logo-green-black.png");
+    expect(light).toContain("portal-logo-light");
+    expect(dark).toContain('alt="EverConvert"');
+    expect(dark).toContain("ec-logo.png");
+    expect(dark).toContain("portal-logo-dark");
+    // The swap is the portal's own CSS, never Tailwind's dark: (which follows html.dark).
+    for (const img of imgs) expect(img).not.toMatch(/\bdark:/);
+    expect(html).not.toContain("lucide-scale");
+    expect(html).toContain("Client portal");
+    expect(html).toContain("Sign in to see your firm&#x27;s leads.");
+  });
+
+  it("/portal/no-access shows the same logo instead of the shield icon", async () => {
+    signedIn(STAFF_ID, { role: "admin" });
+    const html = render((await NoAccessPage()) as ReactElement);
+    expect(html).toContain("everconvert-logo-green-black.png");
+    expect(html).toContain("ec-logo.png");
+    expect(html).not.toContain("lucide-shield-alert");
+  });
+
   it("a hung Auth call fails at 10s with an error (not a redirect to the login)", async () => {
     vi.useRealTimers(); // replace the Date-only fakes with full ones
     vi.useFakeTimers();

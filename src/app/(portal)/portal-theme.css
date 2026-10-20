@@ -173,3 +173,9 @@
 @media (prefers-reduced-motion: reduce) {
   .portal-theme .portal-loader { animation-duration: 3.2s; }
 }
+
+/* The EverConvert logo (portal-logo.tsx): light by default, the white-lettered
+   one under the portal's own dark class only — never html.dark. */
+.portal-theme .portal-logo-dark { display: none; }
+.portal-theme.dark .portal-logo-light { display: none; }
+.portal-theme.dark .portal-logo-dark { display: block; }

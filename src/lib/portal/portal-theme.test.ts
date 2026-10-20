@@ -171,3 +171,13 @@ describe("kept apart from the internal app's theme", () => {
     }
   });
 });
+
+describe("the portal logo swap", () => {
+  const css = readFileSync(join(process.cwd(), "src/app/(portal)/portal-theme.css"), "utf8");
+  it("light by default, white-lettered only under the portal's own dark class", () => {
+    expect(css).toContain(".portal-theme .portal-logo-dark { display: none; }");
+    expect(css).toContain(".portal-theme.dark .portal-logo-light { display: none; }");
+    expect(css).toContain(".portal-theme.dark .portal-logo-dark { display: block; }");
+    expect(css).not.toMatch(/^\s*\.dark \.portal-logo/m); // never a bare .dark (html.dark)
+  });
+});
