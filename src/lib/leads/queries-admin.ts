@@ -5,13 +5,14 @@
 // tenant-scoped accessor that requires a resolved firm id; nothing in this
 // file may ever be imported from it.
 
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { leadFirms, leadNotes, leads } from "@/lib/db/schema";
 import { easternDayRangeToInstants } from "./store";
 import { monthRangeEastern } from "./admin-dates";
 import { queueReason, type QueueReason } from "./reconcile";
 import { assertRowShape } from "./row-guard";
+import { unusableNameSql } from "@/lib/portal/usable-name";
 
 // Checked on the first row only — crosstalk is per RESPONSE, so every row in
 // a crossed result is wrong the same way and walking 500 buys nothing.
@@ -244,6 +245,47 @@ export async function listFirmOptions(): Promise<
   });
   return rows;
 }
+
+/**
+ * Candidates for the admin "Hidden from clients: no usable name" list: assigned,
+ * not under review, in the portal's window, no staff-typed name, and an
+ * unusable effective name by the PORTAL's own SQL (usable-name.ts). Narrows
+ * the rows only — the caller applies the full rule (isHiddenByNameNow, the
+ * portal's own functions) to what comes back.
+ */
+export async function listHiddenByNameCandidates(window: {
+  start: Date;
+  endExclusive: Date;
+}): Promise<(AdminLeadRow & { nameOverride: string | null })[]> {
+  const rows = await buildHiddenByNameCandidatesQuery(db, window);
+  const withNotes = await attachNotes(rows, "listHiddenByNameCandidates");
+  return withNotes.map((r, i) => ({ ...r, nameOverride: rows[i].nameOverride }));
+}
+
+export function buildHiddenByNameCandidatesQuery(
+  database: Pick<typeof db, "select">,
+  window: { start: Date; endExclusive: Date },
+) {
+  return database
+    .select({ ...baseColumns, nameOverride: leads.nameOverride })
+    .from(leads)
+    .leftJoin(leadFirms, eq(leadFirms.id, leads.firmId))
+    .where(
+      and(
+        isNotNull(leads.firmId),
+        eq(leads.needsReview, false),
+        lt(leads.occurredAt, window.endExclusive),
+        or(gte(leads.occurredAt, window.start), gte(leads.signedAt, window.start)),
+        sql`(${leads.nameOverride} is null or btrim(${leads.nameOverride}) = '')`,
+        sql.raw(unusableNameSql(HIDDEN_NAME_EXPR)),
+      ),
+    )
+    .orderBy(asc(leadFirms.name), desc(leads.occurredAt))
+    .limit(ADMIN_LEAD_LIMIT);
+}
+
+/** The effective name, as the portal's visibility SQL reads it. */
+export const HIDDEN_NAME_EXPR = 'coalesce("leads"."name_override", "leads"."name_parsed")';
 
 export async function countAdminQueue(): Promise<number> {
   const [row] = await db

@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 export const ADMIN_TABS = [
@@ -16,9 +18,32 @@ export function activeAdminTab(pathname: string): string | null {
   return matches.sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
 }
 
+/** The Leads tab's badge: leads hidden from clients by the name rule. */
+export const HIDDEN_COUNT_URL = "/api/admin/leads/hidden-count";
+
 /** The admin area's sub-navigation: Firms · Leads · Queue. */
 export function AdminTabs() {
   const pathname = usePathname() ?? "";
+  const [hidden, setHidden] = useState(0);
+  // Fetched after load (and on each navigation) rather than in the layout,
+  // which stays free of queries. A failure just means no badge.
+  useEffect(() => {
+    let live = true;
+    fetch(HIDDEN_COUNT_URL, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { hidden?: number } | null) => {
+        if (live && typeof b?.hidden === "number") setHidden(b.hidden);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [pathname]);
+  return <AdminTabsView pathname={pathname} hiddenCount={hidden} />;
+}
+
+/** The tab bar itself, given the path and the badge count. */
+export function AdminTabsView({ pathname, hiddenCount }: { pathname: string; hiddenCount: number }) {
   const active = activeAdminTab(pathname);
   return (
     <nav aria-label="Admin" className="mb-6 flex gap-1 border-b">
@@ -35,6 +60,16 @@ export function AdminTabs() {
           )}
         >
           {t.label}
+          {t.href === "/admin/leads" && hiddenCount > 0 ? (
+            <Badge
+              variant="warning"
+              size="sm"
+              className="ml-1.5"
+              title={`${hiddenCount} hidden from clients: no usable name`}
+            >
+              {hiddenCount}
+            </Badge>
+          ) : null}
         </Link>
       ))}
     </nav>

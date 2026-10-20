@@ -52,6 +52,7 @@ vi.mock("@/lib/leads/queries-admin", () => ({
   listAdminQueue: async () => ROWS.map((r) => ({ ...r, reason: "parse_failure" })),
   listFirmOptions: async () => [],
   countAdminQueue: async () => ROWS.length,
+  listHiddenByNameCandidates: async () => [],
 }));
 
 /** The source line under each row's date, in row order. */

@@ -41,14 +41,26 @@ export function portalWindowNow(): { start: Date; endExclusive: Date } {
 export function countVisibleNow(rows: readonly VisibilityFacts[], window = portalWindowNow()): number {
   let n = 0;
   for (const r of rows) {
-    if (!isClientVisible(r)) continue;
-    if (!hasUsableName(r)) continue;
-    if (!inRange(monthAnchor({ effectiveStatus: r.effectiveStatus, signedAt: r.signedAt, occurredAt: r.occurredAt }), window)) {
-      continue;
-    }
-    n += 1;
+    if (shownButForTheName(r, window) && hasUsableName(r)) n += 1;
   }
   return n;
+}
+
+/** Every portal rule except the name one: the lead's status, tags, review flag and month. */
+function shownButForTheName(r: VisibilityFacts, window: { start: Date; endExclusive: Date }): boolean {
+  return (
+    isClientVisible(r) &&
+    inRange(monthAnchor({ effectiveStatus: r.effectiveStatus, signedAt: r.signedAt, occurredAt: r.occurredAt }), window)
+  );
+}
+
+/**
+ * A lead the portal would show right now if it had a usable name — hidden
+ * only by the name rule. The admin "Hidden from clients" list. Same
+ * functions as countVisibleNow, so a lead is in exactly one of the two.
+ */
+export function isHiddenByNameNow(r: VisibilityFacts, window = portalWindowNow()): boolean {
+  return shownButForTheName(r, window) && !hasUsableName(r);
 }
 
 /** Candidates only: any lead whose call OR signing falls in the window (a signed lead belongs to the month it was signed). */

@@ -12,6 +12,7 @@ import { checkAdmin } from "@/lib/leads/admin-auth";
 import { NotAuthorized } from "@/components/leads/not-authorized";
 import { AdminLeadsFilters } from "@/components/leads/admin-leads-filters";
 import { AdminLeadsTable } from "@/components/leads/admin-leads-table";
+import { listHiddenByName } from "./hidden/_lib/hidden";
 import {
   currentMonthKeyEastern,
   formatMonthKey,
@@ -58,6 +59,7 @@ export default async function AdminLeadsPage({
     firmId: firmFilter === "unassigned" ? null : firmFilter || undefined,
   });
   const queueCount = await countAdminQueue();
+  const hiddenCount = (await listHiddenByName()).length;
 
   return (
     <div className="space-y-6">
@@ -72,6 +74,13 @@ export default async function AdminLeadsPage({
         <div className="flex items-center gap-2">
           <Link href="/admin/firms" className="text-sm hover:underline">
             Firms
+          </Link>
+          <Link
+            href="/admin/leads/hidden"
+            className="flex items-center gap-2 text-sm hover:underline"
+          >
+            Hidden from clients
+            {hiddenCount > 0 ? <Badge variant="warning">{hiddenCount}</Badge> : null}
           </Link>
           <Link
             href="/admin/leads/queue"
