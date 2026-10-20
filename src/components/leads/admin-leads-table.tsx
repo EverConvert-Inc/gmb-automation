@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { formatEasternDate, formatEasternDateTime } from "@/lib/leads/admin-dates";
 import { AdminLeadActions } from "@/components/leads/admin-lead-actions";
+import { adminStatusView } from "@/components/leads/admin-status";
 import { sourceLabel } from "@/components/leads/source-label";
 import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 
@@ -72,12 +73,7 @@ export function AdminLeadsTable({
               </td>
               <td className="py-2 pr-4">
                 <div className="flex flex-wrap items-center gap-1">
-                  {row.status === "signed" ? (
-                    <Badge variant="success">Signed</Badge>
-                  ) : (
-                    <Badge variant="secondary">Pending</Badge>
-                  )}
-                  {row.isOpportunity ? <Badge variant="outline">Opportunity</Badge> : null}
+                  <StatusCell row={row} />
                   {row.statusOverride ? (
                     <span className="text-xs text-muted-foreground">(set by admin)</span>
                   ) : null}
@@ -113,5 +109,30 @@ export function AdminLeadsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+const LABEL_BADGE = { signed: "success", pending: "secondary", opportunity: "info" } as const;
+
+/**
+ * The portal's label for the lead (adminStatusView), or — when a
+ * rejection-style tag hides it from the client — that tag, neutral, with a
+ * note. The Opportunity flag still shows beside Signed or Pending.
+ */
+function StatusCell({ row }: { row: AdminLeadRow }) {
+  const view = adminStatusView(row);
+  if (view.kind === "hidden") {
+    return (
+      <>
+        <Badge variant="outline">{view.tag}</Badge>
+        <span className="text-xs text-muted-foreground">Hidden from client</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <Badge variant={LABEL_BADGE[view.label]}>{view.text}</Badge>
+      {row.isOpportunity && view.label !== "opportunity" ? <Badge variant="outline">Opportunity</Badge> : null}
+    </>
   );
 }

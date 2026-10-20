@@ -13,12 +13,11 @@ import type { AdminLeadRow } from "@/lib/leads/queries-admin";
 import { cn } from "@/lib/utils";
 import { firmButtonClasses } from "./firm-button";
 import { fuFocusRing, fuGreenText } from "./firm-ui";
+import { adminStatusView, fromTagsStatusText } from "./admin-status";
 import { sourceLabel } from "./source-label";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
  * Save and Add note. Enabled: the firm page's primary button, unchanged.
@@ -109,12 +108,16 @@ export function AdminLeadDrawer({
     };
   }, [returnFocusTo]);
 
+  const view = adminStatusView(lead);
   const statusSource =
     lead.statusOverride !== null
       ? "set by staff"
       : lead.statusTagMatched
         ? `from tag “${lead.statusTagMatched}”`
         : "from tags";
+  // The portal's label, or the rejection-style tag that hides the lead.
+  const statusNow =
+    view.kind === "hidden" ? `Now ${view.tag} · hidden from client` : `Now ${view.text} · ${statusSource}`;
   const opportunitySource = lead.isOpportunityOverride !== null ? "set by staff" : "from tags";
 
   return createPortal(
@@ -153,7 +156,7 @@ export function AdminLeadDrawer({
           <Field
             id={`status-${lead.id}`}
             label="Status"
-            current={`Now ${capitalise(lead.status)} · ${statusSource}`}
+            current={statusNow}
           >
             <AdminSelect
               className={fuFocusRing}
@@ -165,7 +168,7 @@ export function AdminLeadDrawer({
               }
             >
               {/* Clearing the override hands the lead back to its tags. */}
-              <option value="">From tags ({lead.statusParsed})</option>
+              <option value="">From tags ({fromTagsStatusText(lead)})</option>
               <option value="pending">Pending</option>
               <option value="signed">Signed</option>
             </AdminSelect>
