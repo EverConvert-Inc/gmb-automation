@@ -297,6 +297,15 @@ describe("pages refuse everyone but an active client", () => {
     expect(html).toContain("Sign in to see your firm&#x27;s leads.");
   });
 
+  it("/portal/login: the heading and subtitle sit inside the sign-in card, above the form", async () => {
+    h.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const html = render((await LoginPage()) as ReactElement);
+    const card = html.slice(html.indexOf('class="rounded-2xl border bg-card'));
+    expect(card.indexOf(">Client portal</h1>")).toBeGreaterThan(0);
+    expect(card.indexOf("Sign in to see your firm")).toBeLessThan(card.indexOf('type="password"'));
+    expect(html.indexOf("<img")).toBeLessThan(html.indexOf('class="rounded-2xl border bg-card'));
+  });
+
   it("/portal/no-access shows the same logo instead of the shield icon", async () => {
     signedIn(STAFF_ID, { role: "admin" });
     const html = render((await NoAccessPage()) as ReactElement);

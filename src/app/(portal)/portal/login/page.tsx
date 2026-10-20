@@ -16,12 +16,14 @@ export default async function PortalLoginPage() {
   return (
     <div className="flex min-h-full items-center justify-center px-4 py-12">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex flex-col items-center text-center">
+        <div className="mb-6 flex justify-center">
           <PortalLogo />
-          <h1 className="mt-5 font-display text-2xl font-bold tracking-tight">Client portal</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in to see your firm&apos;s leads.</p>
         </div>
         <div className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
+          <div className="mb-6 text-center">
+            <h1 className="font-display text-2xl font-bold tracking-tight">Client portal</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Sign in to see your firm&apos;s leads.</p>
+          </div>
           <PortalLoginForm />
         </div>
       </div>
