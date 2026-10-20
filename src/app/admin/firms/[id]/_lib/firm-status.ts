@@ -9,6 +9,7 @@ import { leads } from "@/lib/db/schema";
 import { adminQueueCondition } from "@/lib/leads/queries-admin";
 import { assertRowShape } from "@/lib/leads/row-guard";
 import { presetRange } from "@/lib/portal/range";
+import { hasUsableName } from "@/lib/portal/usable-name";
 import { inRange, isClientVisible, monthAnchor } from "@/lib/portal/visibility";
 
 /** The facts "visible now" needs about one lead — the same inputs the portal's rule takes. */
@@ -20,6 +21,10 @@ export type VisibilityFacts = {
   statusTagMatched: string | null;
   occurredAt: Date;
   signedAt: Date | null;
+  /** coalesce(name_override, name_parsed) */
+  name: string | null;
+  /** Staff typed a name in the drawer (name_override set and not blank). */
+  hasNameOverride: boolean;
 };
 
 /** This month (to today) plus last month — exactly what the portal can show. */
@@ -29,13 +34,15 @@ export function portalWindowNow(): { start: Date; endExclusive: Date } {
 
 /**
  * How many of these leads the firm's portal shows right now. Uses the
- * portal's OWN functions (isClientVisible, monthAnchor) — not a copy of the
- * rule — so the admin count cannot drift from what the client sees.
+ * portal's OWN functions (isClientVisible, hasUsableName, monthAnchor) — not
+ * a copy of the rule — so the admin count cannot drift from what the client
+ * sees.
  */
 export function countVisibleNow(rows: readonly VisibilityFacts[], window = portalWindowNow()): number {
   let n = 0;
   for (const r of rows) {
     if (!isClientVisible(r)) continue;
+    if (!hasUsableName(r)) continue;
     if (!inRange(monthAnchor({ effectiveStatus: r.effectiveStatus, signedAt: r.signedAt, occurredAt: r.occurredAt }), window)) {
       continue;
     }
@@ -56,6 +63,8 @@ export function buildVisibleNowCandidatesQuery(database: Db, firmId: string, win
       statusTagMatched: leads.statusTagMatched,
       occurredAt: leads.occurredAt,
       signedAt: leads.signedAt,
+      nameOverride: leads.nameOverride,
+      nameParsed: leads.nameParsed,
     })
     .from(leads)
     .where(
@@ -86,6 +95,9 @@ export async function visibleNowCount(firmId: string): Promise<number> {
       statusTagMatched: r.statusTagMatched,
       occurredAt: r.occurredAt,
       signedAt: r.signedAt,
+      name: r.nameOverride ?? r.nameParsed,
+      // Same test as the portal SQL's STAFF_NAMED_SQL: set and not blank.
+      hasNameOverride: r.nameOverride !== null && r.nameOverride.trim() !== "",
     })),
     window,
   );

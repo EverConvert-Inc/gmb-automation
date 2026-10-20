@@ -23,6 +23,7 @@ import {
   portalWindowNow,
   type VisibilityFacts,
 } from "@/app/admin/firms/[id]/_lib/firm-status";
+import { hasUsableName } from "@/lib/portal/usable-name";
 import { inRange, isClientVisible, monthAnchor } from "@/lib/portal/visibility";
 import { FirmStep } from "@/components/leads/firm-step";
 import { FirmStatusStrip, statusTiles } from "@/components/leads/firm-status-strip";
@@ -61,6 +62,8 @@ const lead = (over: Partial<VisibilityFacts> = {}): VisibilityFacts => ({
   statusTagMatched: null,
   occurredAt: new Date("2026-10-10T15:00:00Z"),
   signedAt: null,
+  name: "Jane Doe",
+  hasNameOverride: false,
   ...over,
 });
 
@@ -75,6 +78,12 @@ const SAMPLES: [string, VisibilityFacts, boolean][] = [
   ["hidden by a Lost tag", lead({ statusTagMatched: "Lost" }), false],
   ["Lost, but staff overrode the status to signed", lead({ statusTagMatched: "Lost", hasStatusOverride: true, effectiveStatus: "signed", signedAt: new Date("2026-10-11T15:00:00Z") }), true],
   ["called in August, signed Sep 3 — belongs to September", lead({ effectiveStatus: "signed", effectiveOpportunity: false, statusTagMatched: "Signed", occurredAt: new Date("2026-08-28T15:00:00Z"), signedAt: new Date("2026-09-03T15:00:00Z") }), true],
+  ["named No Name", lead({ name: "No Name" }), false],
+  ["no name at all", lead({ name: null }), false],
+  ["named with a phone number", lead({ name: "(555) 123-4567" }), false],
+  ["named with a source label", lead({ name: "Google Local Services Ads" }), false],
+  ["No Name, but staff typed a name", lead({ name: "Jane Fixed", hasNameOverride: true }), true],
+  ["signed and named No Name — not counted either", lead({ name: "no name", effectiveStatus: "signed", signedAt: new Date("2026-10-11T15:00:00Z") }), false],
   ["called and signed in August", lead({ effectiveStatus: "signed", effectiveOpportunity: false, statusTagMatched: "Signed", occurredAt: new Date("2026-08-10T15:00:00Z"), signedAt: new Date("2026-08-30T15:00:00Z") }), false],
 ];
 
@@ -92,7 +101,7 @@ describe("visible now = the portal's rule, this month + last month", () => {
   it("over all the samples, matches the portal's own functions one by one", () => {
     const w = portalWindowNow();
     const portalSays = SAMPLES.filter(([, f]) =>
-      isClientVisible(f) && inRange(monthAnchor({ effectiveStatus: f.effectiveStatus, signedAt: f.signedAt, occurredAt: f.occurredAt }), w),
+      isClientVisible(f) && hasUsableName(f) && inRange(monthAnchor({ effectiveStatus: f.effectiveStatus, signedAt: f.signedAt, occurredAt: f.occurredAt }), w),
     ).length;
     expect(countVisibleNow(SAMPLES.map(([, f]) => f))).toBe(portalSays);
     expect(portalSays).toBe(SAMPLES.filter(([, , e]) => e).length);
