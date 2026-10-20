@@ -15,9 +15,12 @@ export { SOURCE_LABEL } from "@/components/leads/source-label";
 export function AdminLeadsTable({
   rows,
   emptyMessage,
+  selectable = false,
 }: {
   rows: AdminLeadRow[];
   emptyMessage: string;
+  /** A checkbox per row (name="leadId"), for BulkApproveForm around the table. */
+  selectable?: boolean;
 }) {
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
@@ -28,6 +31,11 @@ export function AdminLeadsTable({
       <table className="w-full text-sm">
         <thead className="border-b text-left text-xs uppercase text-muted-foreground">
           <tr>
+            {selectable ? (
+              <th className="py-2 pr-3 font-medium">
+                <span className="sr-only">Select</span>
+              </th>
+            ) : null}
             <th className="py-2 pr-4 font-medium">Date</th>
             <th className="py-2 pr-4 font-medium">Firm</th>
             <th className="py-2 pr-4 font-medium">Name</th>
@@ -43,6 +51,17 @@ export function AdminLeadsTable({
         <tbody className="divide-y">
           {rows.map((row) => (
             <tr key={row.id} className="align-top">
+              {selectable ? (
+                <td className="py-2 pr-3">
+                  <input
+                    type="checkbox"
+                    name="leadId"
+                    value={row.id}
+                    aria-label={`Select the lead from ${formatEasternDateTime(row.occurredAt)}`}
+                    className="h-4 w-4"
+                  />
+                </td>
+              ) : null}
               <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
                 {formatEasternDateTime(row.occurredAt)}
                 <div className="text-xs">

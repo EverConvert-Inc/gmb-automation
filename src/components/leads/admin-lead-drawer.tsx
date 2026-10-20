@@ -15,6 +15,9 @@ import { firmButtonClasses } from "./firm-button";
 import { fuFocusRing, fuGreenText } from "./firm-ui";
 import { adminStatusView, fromTagsStatusText } from "./admin-status";
 import { sourceLabel } from "./source-label";
+import { adminClientVisibility } from "./admin-visibility";
+import { CLIENT_HIDDEN_STATUS_TAGS } from "@/lib/leads/status-from-tags";
+import { CLIENT_LABEL_TEXT, tagKey } from "@/lib/portal/visibility";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -54,6 +57,7 @@ export function AdminLeadDrawer({
   onNoteChange,
   onPatch,
   onAddNote,
+  onApprove,
   onClose,
   returnFocusTo,
 }: {
@@ -64,6 +68,8 @@ export function AdminLeadDrawer({
   onNoteChange: (v: string) => void;
   onPatch: (body: Record<string, unknown>) => void;
   onAddNote: (e: React.FormEvent) => void;
+  /** "Approve for client" — AdminLeadActions posts to the approve route. */
+  onApprove: () => void;
   onClose: () => void;
   returnFocusTo: RefObject<HTMLElement | null>;
 }) {
@@ -153,6 +159,7 @@ export function AdminLeadDrawer({
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
+          <ClientSection lead={lead} busy={busy} onApprove={onApprove} />
           <Field
             id={`status-${lead.id}`}
             label="Status"
@@ -325,5 +332,47 @@ function OverrideField({
         ) : null}
       </p>
     </div>
+  );
+}
+
+/** CallRail's spelling of each negative tag, by its tagKey. */
+const NEGATIVE_TAG_NAME = new Map(CLIENT_HIDDEN_STATUS_TAGS.map((t) => [tagKey(t), t]));
+const tagNames = (keys: readonly string[]) => keys.map((k) => NEGATIVE_TAG_NAME.get(k) ?? k).join(", ");
+
+/**
+ * What the client sees of this lead, and why — the portal's own rule
+ * (clientVisibility). Held back for a negative tag or as Opportunity only,
+ * it offers "Approve for client".
+ */
+function ClientSection({ lead, busy, onApprove }: { lead: AdminLeadRow; busy: boolean; onApprove: () => void }) {
+  const v = adminClientVisibility(lead);
+  let text: string;
+  let canApprove = false;
+  if (v.visible) {
+    text = `Shown to the client as ${CLIENT_LABEL_TEXT[v.label]}`;
+    if (v.approved && lead.clientApprovedAt) {
+      text += ` · approved${lead.clientApprovedBy ? ` by ${lead.clientApprovedBy}` : ""} on ${formatEasternDateTime(lead.clientApprovedAt)}`;
+    }
+  } else if (v.reason === "negative_tag") {
+    text = `Hidden from the client: negative tag (${tagNames(v.negativeTags)}). Needs review.`;
+    if (v.approvedEarlier) text += " An earlier approval does not cover every tag it carries now.";
+    canApprove = true;
+  } else if (v.reason === "opportunity_only") {
+    text = "Not shown to the client: Opportunity only.";
+    canApprove = true;
+  } else {
+    text = "Hidden from the client while it is under review.";
+  }
+  return (
+    <section aria-label="Client visibility" className="space-y-2 rounded-lg border p-3">
+      <p className="text-sm" data-client-visibility={v.visible ? "shown" : v.reason}>
+        {text}
+      </p>
+      {canApprove ? (
+        <SaveButton disabled={busy} onClick={onApprove}>
+          Approve for client
+        </SaveButton>
+      ) : null}
+    </section>
   );
 }

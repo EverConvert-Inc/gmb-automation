@@ -85,6 +85,10 @@ const row = (over: Partial<AdminLeadRow>): AdminLeadRow => ({
   parseFailed: false,
   parseError: null,
   possibleDuplicateOf: null,
+  rawTags: [],
+  clientApprovedAt: null,
+  clientApprovedBy: null,
+  clientApprovedNegativeTags: [],
   latestNote: null,
   ...over,
 });

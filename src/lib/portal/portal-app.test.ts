@@ -76,7 +76,11 @@ function leadRow(firm: string, id: string, name: string, over: Record<string, un
     effective_opportunity: true,
     needs_review: false,
     has_status_override: false,
-    status_tag_matched: "SECRET-STATUS-TAG-MATCHED",
+    // A Pending tag: the new rule shows Pending or Signed only (visibility.ts).
+    status_tag_matched: "Pending",
+    negative_tags: "",
+    client_approved_at: null as Date | null,
+    client_approved_negative_tags: "",
     name,
     name_is_override: false,
     phone: "+15551234567",
@@ -346,7 +350,9 @@ describe("the leads page", () => {
     expect(html).toContain("Alice Alpha");
     expect(html).toContain("(555) 123-4567");
     expect(html).toContain("Oct 10, 2026");
-    expect(html).toContain("Opportunity");
+    expect(html).toContain("Pending");
+    // Clients see two labels only: no Opportunity label, card or filter option.
+    expect(html).not.toContain("Opportunity");
     expect(html).toContain("October 2026");
     // No internal navigation.
     expect(html).not.toMatch(/href="\/(clients|ppc|lsa|admin|settings|login)/);
@@ -400,12 +406,13 @@ describe("the leads page", () => {
     leadsByFirm[FIRM_A] = [
       leadRow(FIRM_A, LEAD_A, "Signed Person", { effective_status: "signed", status_tag_matched: "Signed", signed_at: new Date("2026-10-11T15:00:00Z") }),
       leadRow(FIRM_A, "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3", "Pending Person", { status_tag_matched: "Pending" }),
-      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "Opportunity Person", { status_tag_matched: null }),
+      // Opportunity only, approved for the client: shown as Pending.
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "Approved Person", { status_tag_matched: null, client_approved_at: new Date("2026-10-12T15:00:00Z") }),
     ];
     const html = await leadsMarkup();
     expect(statusCell(html, "Signed Person")).toBe("Signed");
     expect(statusCell(html, "Pending Person")).toBe("Pending");
-    expect(statusCell(html, "Opportunity Person")).toBe("Opportunity");
+    expect(statusCell(html, "Approved Person")).toBe("Pending");
   });
 
   it("the status cell holds the label only — no date, even for a signed lead with a signed date", async () => {
@@ -435,14 +442,16 @@ describe("the leads page", () => {
       leadRow(FIRM_A, LEAD_A, "S1", { effective_status: "signed", status_tag_matched: "Signed" }),
       leadRow(FIRM_A, "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3", "P1", { status_tag_matched: "Pending" }),
       leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "P2", { status_tag_matched: "Pending" }),
-      leadRow(FIRM_A, "a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5", "O1", { status_tag_matched: null }),
+      leadRow(FIRM_A, "a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5", "A1", { status_tag_matched: null, client_approved_at: new Date() }),
     ];
     const before = calls.length;
     const html = await leadsMarkup();
     const summary = html.slice(html.indexOf("<dl"), html.indexOf("</dl>"));
     const count = (label: string) =>
       summary.slice(summary.indexOf(label)).match(/<dd[^>]*>(\d+)<\/dd>/)?.[1];
-    expect([count("Signed"), count("Pending"), count("Opportunity")]).toEqual(["1", "2", "1"]);
+    // Two cards: Signed and Pending (the approved Opportunity-only lead counts as Pending).
+    expect([count("Signed"), count("Pending")]).toEqual(["1", "3"]);
+    expect(summary).not.toContain("Opportunity");
     expect(html).toContain("4 leads");
     // One membership lookup per render (layout and page share it in a real
     // request via cache()) and one list query — nothing else.
@@ -510,12 +519,12 @@ describe("the leads page", () => {
     leadsByFirm[FIRM_A] = [
       leadRow(FIRM_A, LEAD_A, "S1", { effective_status: "signed", status_tag_matched: "Signed" }),
       leadRow(FIRM_A, "a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3", "P1", { status_tag_matched: "Pending" }),
-      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "O1", { status_tag_matched: null }),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4", "A1", { status_tag_matched: null, client_approved_at: new Date() }),
     ];
     const before = calls.length;
     const html = await leadsMarkup();
     const facet = (s: string) => html.match(new RegExp(`data-facet-count="${s}"[^>]*>(\\d+)<`))?.[1];
-    expect([facet("signed"), facet("pending"), facet("opportunity")]).toEqual(["1", "1", "1"]);
+    expect([facet("signed"), facet("pending"), facet("opportunity")]).toEqual(["1", "2", undefined]);
     expect(calls.slice(before).filter((c) => c.text.includes("from leads l"))).toHaveLength(1);
     expect(html).not.toContain("SECRET");
   });
@@ -978,10 +987,10 @@ describe("the leads page at the lead limit", () => {
     expect(html).toMatch(/role="status"[^>]*>.*?Showing the first 500 leads/);
     expect(html.replace(/<!-- -->/g, "")).toContain(`· ${PORTAL_LEAD_LIMIT}+ leads`);
     const numbers = cardNumbers(html);
-    expect(numbers).toHaveLength(3);
+    expect(numbers).toHaveLength(2);
     for (const n of numbers) expect(n).toMatch(/^\d+\+$/);
     expect(numbers.reduce((sum, n) => sum + parseInt(n, 10), 0)).toBe(PORTAL_LEAD_LIMIT);
-    expect(html.match(/In the first 500 leads/g)).toHaveLength(3);
+    expect(html.match(/In the first 500 leads/g)).toHaveLength(2);
     // The extra row is fetched to detect the cut-off, never shown.
     expect(html).not.toContain(`Lead ${PORTAL_LEAD_LIMIT}<`);
   });
@@ -1026,7 +1035,7 @@ describe("the leads page and unusable names", () => {
     for (const hidden of ["No Name", "5551234567", "Google Local Services Ads"]) expect(html).not.toContain(hidden);
     expect(html).toContain("· 2 leads");
     const cards = [...html.matchAll(/<dd class="mt-1 font-display[^"]*">\s*(\d+)/g)].map((m) => Number(m[1]));
-    expect(cards).toEqual([0, 0, 2]); // signed, pending, opportunity — the signed No Name lead is not counted
+    expect(cards).toEqual([0, 2]); // signed, pending — the signed No Name lead is not counted
     expect(html).not.toContain("Unknown caller");
   });
 });

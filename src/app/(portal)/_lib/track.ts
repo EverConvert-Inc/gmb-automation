@@ -14,7 +14,7 @@
 // Sending can never throw into the UI.
 
 import type { BrowserEvent } from "@/lib/portal/event-schema";
-import type { PortalStatusLabel } from "@/lib/portal/visibility";
+import type { ClientLabel } from "@/lib/portal/visibility";
 
 export const TRACK_ENDPOINT = "/api/portal/events";
 export const TRACK_FLUSH_MS = 10_000;
@@ -26,7 +26,7 @@ export const SEARCH_MIN_INTERVAL_MS = 30_000;
 /** Status filter: logged once changes pause this long. */
 export const FILTER_SETTLE_MS = 1_000;
 
-const STATUSES: readonly PortalStatusLabel[] = ["signed", "pending", "opportunity"];
+const STATUSES: readonly ClientLabel[] = ["signed", "pending"];
 
 // ---------------------------------------------------------------------------
 // Payload builders — pure, and the only place an event's contents are made

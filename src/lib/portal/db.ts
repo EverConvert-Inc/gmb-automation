@@ -13,12 +13,12 @@ import { portalQuery } from "./client";
 import { assertFirmRows, PortalRowError } from "./guards";
 import type { SessionFirmId } from "./types";
 import {
-  HIDDEN_TAGS,
+  clientVisibility,
+  clientVisibleSql,
   inRange,
-  isClientVisible,
   monthAnchor,
-  portalStatusLabel,
-  type PortalStatusLabel,
+  negativeTagsSql,
+  type ClientLabel,
 } from "./visibility";
 import { assertPortalRange, type PortalDateRange } from "./range";
 import { STAFF_NAMED_SQL, hasUsableName, unusableNameSql } from "./usable-name";
@@ -33,7 +33,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // The hidden-tag list is written into the SQL as literals rather than bound as
 // an array, so the query has no array-typed parameter to get wrong. A test
 // checks these literals are exactly HIDDEN_TAGS, so the two cannot drift.
-const HIDDEN_TAGS_SQL = HIDDEN_TAGS.map((t) => `'${t.replace(/'/g, "''")}'`).join(", ");
+/** Pending or Signed with no negative tag, or approved (visibility.ts). */
+const CLIENT_VISIBLE_SQL = clientVisibleSql("l");
+/** The lead's negative tags, for the row re-check — keys only, never the tags. */
+const NEGATIVE_TAGS_SQL = negativeTagsSql("l");
 
 /** A placeholder name (usable-name.ts), over the lead's effective name. */
 const UNUSABLE_NAME_SQL = unusableNameSql("coalesce(l.name_override, l.name_parsed)");
@@ -47,15 +50,7 @@ function visibleTo(sql: Sql, firmId: SessionFirmId) {
   return sql`
         l.firm_id = ${firmId}::uuid
     and l.needs_review = false
-    and (
-          coalesce(l.status_override, l.status_parsed) = 'signed'
-       or coalesce(l.is_opportunity_override, l.is_opportunity_parsed) = true
-    )
-    and (
-          l.status_override is not null
-       or l.status_tag_matched is null
-       or l.status_tag_matched not in (${sql.unsafe(HIDDEN_TAGS_SQL)})
-    )
+    and ${sql.unsafe(CLIENT_VISIBLE_SQL)}
     and (
           ${sql.unsafe(STAFF_NAMED_SQL)}
        or not ${sql.unsafe(UNUSABLE_NAME_SQL)}
@@ -69,8 +64,8 @@ export type PortalLead = {
   /** Always a usable name (usable-name.ts): leads without one are not shown. */
   name: string | null;
   phone: string | null;
-  /** See portalStatusLabel in visibility.ts. */
-  status: PortalStatusLabel;
+  /** Signed or Pending — the only two a client sees (clientVisibility). */
+  status: ClientLabel;
   /** Eastern date the lead was signed, when it is signed and the date is known. */
   signedDate: string | null;
   /**
@@ -120,10 +115,13 @@ async function queryVisibleLeads(
       l.occurred_at                                                   as occurred_at,
       l.signed_at                                                     as signed_at,
       coalesce(l.status_override, l.status_parsed)                    as effective_status,
-      coalesce(l.is_opportunity_override, l.is_opportunity_parsed)    as effective_opportunity,
       l.needs_review                                                  as needs_review,
       (l.status_override is not null)                                 as has_status_override,
       l.status_tag_matched                                            as status_tag_matched,
+      -- Comma-joined text, never an array: this client does not parse arrays (client.ts).
+      array_to_string(${sql.unsafe(NEGATIVE_TAGS_SQL)}, ',')           as negative_tags,
+      l.client_approved_at                                            as client_approved_at,
+      array_to_string(l.client_approved_negative_tags, ',')           as client_approved_negative_tags,
       coalesce(l.name_override, l.name_parsed)                        as name,
       ${sql.unsafe(STAFF_NAMED_SQL)}                                   as name_is_override,
       coalesce(l.phone_override, l.phone_parsed)                      as phone,
@@ -168,10 +166,12 @@ async function queryVisibleLeads(
     occurred_at: "date",
     signed_at: "date?",
     effective_status: "string",
-    effective_opportunity: "boolean",
     needs_review: "boolean",
     has_status_override: "boolean",
     status_tag_matched: "string?",
+    client_approved_at: "date?",
+    negative_tags: "string",
+    client_approved_negative_tags: "string",
     name: "string?",
     name_is_override: "boolean",
     phone: "string?",
@@ -197,14 +197,18 @@ async function queryVisibleLeads(
     const signedAt = (r.signed_at as Date | null) ?? null;
 
     // Second line of defence: re-apply the rules to what Postgres returned.
-    const visible = isClientVisible({
+    const negativeTags = keyList(r.negative_tags as string);
+    const approvedTags = keyList(r.client_approved_negative_tags as string);
+    const visibility = clientVisibility({
       effectiveStatus,
-      effectiveOpportunity: r.effective_opportunity as boolean,
       needsReview: r.needs_review as boolean,
       hasStatusOverride: r.has_status_override as boolean,
       statusTagMatched: (r.status_tag_matched as string | null) ?? null,
+      negativeTags,
+      clientApprovedAt: (r.client_approved_at as Date | null) ?? null,
+      clientApprovedNegativeTags: approvedTags,
     });
-    if (!visible) {
+    if (!visibility.visible) {
       throw new PortalRowError(label, i, "visibility", "returned a lead the rules hide");
     }
     if (!inRange(monthAnchor({ effectiveStatus, signedAt, occurredAt }), range)) {
@@ -217,11 +221,7 @@ async function queryVisibleLeads(
       date: toIsoDateEastern(occurredAt),
       name: (r.name as string | null) ?? null,
       phone: (r.phone as string | null) ?? null,
-      status: portalStatusLabel({
-        effectiveStatus,
-        hasStatusOverride: r.has_status_override as boolean,
-        statusTagMatched: (r.status_tag_matched as string | null) ?? null,
-      }),
+      status: visibility.label,
       signedDate: signed && signedAt ? toIsoDateEastern(signedAt) : null,
       firmNote:
         r.client_note_body === null
@@ -301,4 +301,9 @@ export async function addClientNote(
     ok: true,
     note: { id: rows[0].id as string, leadId: rows[0].lead_id as string, createdAt: rows[0].created_at as Date },
   };
+}
+
+/** Negative tag keys, comma-joined by the SQL (keys never contain a comma). */
+function keyList(csv: string): string[] {
+  return csv === "" ? [] : csv.split(",");
 }

@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Phone, Search, SearchX, X } from "lucide-react";
 import type { PortalLead } from "@/lib/portal/db";
-import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
+import { CLIENT_LABEL_TEXT, type ClientLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
 import { FILTER_STATUSES, filterLeads, isFiltered, statusFacets } from "../_lib/filter";
 import { paginate } from "../_lib/paginate";
@@ -17,7 +17,7 @@ import { portalButton, portalInput } from "./ui";
 // The filter shows the same badges as the table's Status column.
 const STATUS_OPTIONS = FILTER_STATUSES.map((s) => ({
   value: s,
-  label: PORTAL_STATUS_TEXT[s],
+  label: CLIENT_LABEL_TEXT[s],
   badge: <StatusBadge status={s} />,
 }));
 
@@ -36,7 +36,7 @@ export function LeadsView({
   monthLabel: string;
   noteMaxLength: number;
 }) {
-  const [statuses, setStatuses] = useState<Set<PortalStatusLabel>>(() => new Set());
+  const [statuses, setStatuses] = useState<Set<ClientLabel>>(() => new Set());
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const listTop = useRef<HTMLDivElement>(null);
@@ -54,7 +54,7 @@ export function LeadsView({
     listTop.current?.scrollIntoView({ block: "start" });
   }
 
-  function changeStatuses(next: Set<PortalStatusLabel>) {
+  function changeStatuses(next: Set<ClientLabel>) {
     setStatuses(next);
     setPage(1);
     trackStatusFilter(next); // the ticked labels only

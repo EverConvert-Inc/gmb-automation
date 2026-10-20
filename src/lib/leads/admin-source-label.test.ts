@@ -34,6 +34,10 @@ function row(source: string, callrailId: string): AdminLeadRow {
     parseFailed: true,
     parseError: "no_phone",
     possibleDuplicateOf: null,
+    rawTags: [],
+    clientApprovedAt: null,
+    clientApprovedBy: null,
+    clientApprovedNegativeTags: [],
     latestNote: null,
   };
 }

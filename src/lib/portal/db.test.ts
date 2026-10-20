@@ -5,7 +5,7 @@ import { parsePortalRange, presetRange } from "./range";
 import { makeFakeSql, type FakeCall } from "./fake-sql";
 import { PortalRowError } from "./guards";
 import type { SessionFirmId } from "./types";
-import { HIDDEN_TAGS } from "./visibility";
+import { HIDDEN_TAGS, clientVisibleSql } from "./visibility";
 import { STAFF_NAMED_SQL, unusableNameSql } from "./usable-name";
 
 const FIRM = "11111111-1111-1111-1111-111111111111" as SessionFirmId;
@@ -42,6 +42,9 @@ function leadRow(over: Record<string, unknown> = {}) {
     status_tag_matched: "Pending",
     name: "Jane Doe",
     name_is_override: false,
+    negative_tags: "",
+    client_approved_at: null as Date | null,
+    client_approved_negative_tags: "",
     phone: "555-123-4567",
     note_body: null,
     note_created_at: null,
@@ -75,22 +78,23 @@ describe("listVisibleLeads — the query", () => {
     expect(new Set(uuids)).toEqual(new Set([FIRM]));
   });
 
-  it("applies the visibility rule in SQL", async () => {
+  it("applies the client-visibility rule in SQL: the shared fragment, not a copy", async () => {
     answer([]);
     await listVisibleLeads(FIRM, presetRange("current"));
-    const t = calls[0].text;
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    const t = flat(calls[0].text);
     expect(t).toContain("l.needs_review = false");
-    expect(t).toContain("coalesce(l.status_override, l.status_parsed) = 'signed'");
-    expect(t).toContain("coalesce(l.is_opportunity_override, l.is_opportunity_parsed) = true");
-    expect(t).toContain("l.status_override is not null");
+    expect(t).toContain(flat(clientVisibleSql("l")));
+    // Opportunity alone no longer shows anything.
+    expect(t).not.toContain("is_opportunity");
   });
 
-  // The hidden tags are SQL literals; this keeps them identical to HIDDEN_TAGS.
-  it("hides exactly HIDDEN_TAGS in SQL", async () => {
+  // The negative tags are SQL literals; this keeps them identical to the six status tags.
+  it("treats exactly the six outcome tags as negative in SQL", async () => {
     answer([]);
     await listVisibleLeads(FIRM, presetRange("current"));
-    const list = /status_tag_matched not in \(([^)]*)\)/.exec(calls[0].text)?.[1] ?? "";
-    expect(list.split(",").map((s) => s.trim().replace(/^'|'$/g, ""))).toEqual([...HIDDEN_TAGS]);
+    const list = /x\.k in \(([^)]*)\)/.exec(calls[0].text)?.[1] ?? "";
+    expect(list.split(",").map((s) => s.trim().replace(/^'|'$/g, ""))).toEqual(HIDDEN_TAGS.map((t) => t.toLowerCase()));
   });
 
   it("binds half-open Eastern bounds: This month runs to the end of TODAY, never beyond", async () => {
@@ -137,9 +141,13 @@ describe("listVisibleLeads — the query", () => {
   it("never selects the CallRail note, tags, source or channel", async () => {
     answer([]);
     await listVisibleLeads(FIRM, presetRange("current"));
-    for (const col of ["raw_note", "raw_tags", "raw_source_name", "raw_tracker_id", "raw_form_data", "callrail_company_id"]) {
+    for (const col of ["raw_note", "raw_source_name", "raw_tracker_id", "raw_form_data", "callrail_company_id"]) {
       expect(calls[0].text).not.toContain(col);
     }
+    // raw_tags is read ONLY inside the negative-tag test (unnest), never selected:
+    // the row gets just the negative tag keys, never the tags.
+    const text = calls[0].text.replace(/\s+/g, " ");
+    expect(text.match(/raw_tags/g)?.length).toBe(text.match(/unnest\(l\.raw_tags\)/g)?.length);
   });
 });
 
@@ -212,9 +220,18 @@ describe("listVisibleLeads — what it returns", () => {
     expect(lead.date).toBe("2026-10-31");
   });
 
-  it("an override beats the hidden-tag rule", async () => {
-    answer([leadRow({ status_tag_matched: "Lost", has_status_override: true })]);
-    await expect(listVisibleLeads(FIRM, presetRange("current"))).resolves.toHaveLength(1);
+  it("an approval covering its negative tags shows it, as Pending or Signed", async () => {
+    answer([
+      leadRow({ status_tag_matched: "Lost", negative_tags: "lost", client_approved_at: new Date(), client_approved_negative_tags: "lost" }),
+    ]);
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
+    expect(lead.status).toBe("pending");
+  });
+
+  it("an approved Opportunity-only lead shows as Pending — the client has only two labels", async () => {
+    answer([leadRow({ status_tag_matched: null, client_approved_at: new Date() })]);
+    const [lead] = await listVisibleLeads(FIRM, presetRange("current"));
+    expect(lead.status).toBe("pending");
   });
 });
 
@@ -226,7 +243,11 @@ describe("listVisibleLeads — throws instead of rendering", () => {
     ["a wrong-keys row", { effective_status: undefined, auth_user_id: USER }],
     ["a crossed row", { name: 1, occurred_at: "2026-10-10" }],
     ["a needs_review lead", { needs_review: true }],
-    ["a pending lead that is not an opportunity", { effective_opportunity: false }],
+    ["an Opportunity-only lead (no Pending tag)", { status_tag_matched: null }],
+    ["a lead the SQL says carries a negative tag", { negative_tags: "no case" }],
+    ["approved, but for fewer negative tags than it carries now", { negative_tags: "lost,no case", client_approved_at: new Date(), client_approved_negative_tags: "no case" }],
+    ["negative_tags that is not text (an array)", { negative_tags: ["no case"] }],
+    ["a staff status override no longer un-hides a negative tag", { negative_tags: "lost", has_status_override: true }],
     ["a hidden-tag lead with no override", { status_tag_matched: "Lost" }],
     ["a lead from outside the month", { occurred_at: new Date("2026-11-01T04:30:00Z") }],
   ])("%s", async (_label, over) => {

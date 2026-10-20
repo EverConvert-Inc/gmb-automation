@@ -15,9 +15,9 @@ import {
 } from "@/app/(portal)/_lib/filter";
 import { LeadsView } from "@/app/(portal)/_components/leads-view";
 import type { PortalLead } from "./db";
-import type { PortalStatusLabel } from "./visibility";
+import type { ClientLabel } from "./visibility";
 
-const lead = (name: string | null, phone: string | null, status: PortalStatusLabel): FilterableLead => ({
+const lead = (name: string | null, phone: string | null, status: ClientLabel): FilterableLead => ({
   name,
   phone,
   status,
@@ -26,12 +26,12 @@ const lead = (name: string | null, phone: string | null, status: PortalStatusLab
 const LEADS = [
   lead("Alice Adams", "+15551234567", "signed"),
   lead("Bob Brown", "(555) 987-6543", "pending"),
-  lead("Carol Clark", "555.222.3333", "opportunity"),
+  lead("Carol Clark", "555.222.3333", "signed"),
   lead("Dan Adams", null, "pending"),
-  lead(null, "5554440000", "opportunity"),
+  lead(null, "5554440000", "signed"),
 ];
 const names = (rows: FilterableLead[]) => rows.map((r) => r.name);
-const none = new Set<PortalStatusLabel>();
+const none = new Set<ClientLabel>();
 
 describe("search (name or phone)", () => {
   it.each([
@@ -62,8 +62,8 @@ describe("search (name or phone)", () => {
 
 describe("status filter", () => {
   it("multiple statuses match with OR", () => {
-    const rows = filterLeads(LEADS, { statuses: new Set(["signed", "opportunity"]), query: "" });
-    expect(rows.map((r) => r.status)).toEqual(["signed", "opportunity", "opportunity"]);
+    const rows = filterLeads(LEADS, { statuses: new Set(["signed", "pending"]), query: "" });
+    expect(rows.map((r) => r.status)).toEqual(["signed", "pending", "signed", "pending", "signed"]);
   });
 
   it("combines with the search using AND", () => {
@@ -82,18 +82,18 @@ describe("status filter", () => {
 
 describe("live counts", () => {
   it("count every loaded lead by status when nothing is searched", () => {
-    expect(statusFacets(LEADS, "")).toEqual({ signed: 1, pending: 2, opportunity: 2 });
+    expect(statusFacets(LEADS, "")).toEqual({ signed: 3, pending: 2 });
   });
 
   it("follow the search, but not the status filter itself (shadcn's faceting rule)", () => {
-    expect(statusFacets(LEADS, "adams")).toEqual({ signed: 1, pending: 1, opportunity: 0 });
+    expect(statusFacets(LEADS, "adams")).toEqual({ signed: 1, pending: 1 });
   });
 });
 
 // ---------------------------------------------------------------------------
 // Rendered markup
 // ---------------------------------------------------------------------------
-const portalLead = (id: string, name: string, status: PortalStatusLabel, extra: Record<string, unknown> = {}): PortalLead =>
+const portalLead = (id: string, name: string, status: ClientLabel, extra: Record<string, unknown> = {}): PortalLead =>
   ({
     id,
     date: "2026-10-10",
@@ -117,7 +117,7 @@ describe("the filter in the page", () => {
     portalLead("11111111-1111-4111-8111-111111111111", "Sam Signed", "signed"),
     portalLead("22222222-2222-4222-8222-222222222222", "Pat Pending", "pending"),
     portalLead("33333333-3333-4333-8333-333333333333", "Pia Pending", "pending"),
-    portalLead("44444444-4444-4444-8444-444444444444", "Oli Opportunity", "opportunity"),
+    portalLead("44444444-4444-4444-8444-444444444444", "Sid Signed", "signed"),
   ];
 
   it("renders the search box, the Status trigger and a closed popover", () => {
@@ -134,15 +134,17 @@ describe("the filter in the page", () => {
   it("each option shows its live count over the loaded rows", () => {
     const html = render(leads);
     const count = (s: string) => html.match(new RegExp(`data-facet-count="${s}"[^>]*>(\\d+)<`))?.[1];
-    expect([count("signed"), count("pending"), count("opportunity")]).toEqual(["1", "2", "1"]);
+    expect([count("signed"), count("pending"), count("opportunity")]).toEqual(["2", "2", undefined]);
     expect(html).toMatch(/role="listbox" aria-multiselectable="true"/);
-    expect((html.match(/role="option" aria-selected="false"/g) ?? []).length).toBe(3);
+    // Two options only: clients have no Opportunity label any more.
+    expect((html.match(/role="option" aria-selected="false"/g) ?? []).length).toBe(2);
   });
 
   it("each option uses the same status badge as the table", () => {
     const html = render(leads);
     const list = html.slice(html.indexOf('role="listbox"'), html.indexOf("</ul>", html.indexOf('role="listbox"')));
-    for (const s of ["signed", "pending", "opportunity"]) {
+    expect(list).not.toContain("portal-status-opportunity");
+    for (const s of ["signed", "pending"]) {
       expect(list).toContain(`class="portal-status portal-status-${s}"`);
     }
   });

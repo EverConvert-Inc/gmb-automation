@@ -149,19 +149,25 @@ export type QueueReason =
   | "parse_failure"
   | "unassigned"
   | "possible_duplicate"
-  | "stale_routing";
+  | "stale_routing"
+  | "negative_tag";
 
 export function queueReason(row: {
   parseFailed: boolean;
   firmId: string | null;
   needsReview: boolean;
   possibleDuplicateOf: string | null;
+  /** Carries a negative tag no client approval covers (portal visibility.ts). */
+  negativeNeedsReview?: boolean;
 }): QueueReason | null {
   if (row.parseFailed) return "parse_failure";
   if (row.firmId === null) return "unassigned";
   // Firm set, note parsed, still hidden: the only remaining cause is stale
   // routing (reconcileLeadRows' flag on a surplus row someone had touched).
   if (row.needsReview) return "stale_routing";
+  // Hidden from the client until staff approve it — before duplicates, which
+  // the client still sees.
+  if (row.negativeNeedsReview) return "negative_tag";
   if (row.possibleDuplicateOf) return "possible_duplicate";
   return null;
 }
@@ -171,4 +177,5 @@ export const QUEUE_REASON_LABELS: Record<QueueReason, string> = {
   unassigned: "No firm matched",
   possible_duplicate: "Possible duplicate",
   stale_routing: "Firm no longer matches routing",
+  negative_tag: "Negative tag - needs review",
 };

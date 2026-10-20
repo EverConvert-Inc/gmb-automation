@@ -12,6 +12,9 @@ import { closeLeadDrawer, openLeadDrawer, useLeadDrawerOpen } from "./admin-lead
 
 type Patch = Record<string, unknown>;
 
+/** "Approve for client" (src/app/api/admin/leads/approve). */
+export const APPROVE_URL = "/api/admin/leads/approve";
+
 export function AdminLeadActions({ lead }: { lead: AdminLeadRow }) {
   const router = useRouter();
   // One drawer open at a time, across every table on the page.
@@ -37,6 +40,27 @@ export function AdminLeadActions({ lead }: { lead: AdminLeadRow }) {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? `HTTP ${res.status}`);
+      }
+      startRefresh(() => router.refresh());
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approve() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(APPROVE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: [lead.id] }),
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => ({}))) as { error?: string };
@@ -118,6 +142,7 @@ export function AdminLeadActions({ lead }: { lead: AdminLeadRow }) {
           onNoteChange={setNote}
           onPatch={patch}
           onAddNote={addNote}
+          onApprove={approve}
           onClose={() => closeLeadDrawer(lead.id)}
           returnFocusTo={trigger}
         />

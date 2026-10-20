@@ -51,6 +51,10 @@ const base: AdminLeadRow = {
   parseFailed: false,
   parseError: null,
   possibleDuplicateOf: null,
+  rawTags: [],
+  clientApprovedAt: null,
+  clientApprovedBy: null,
+  clientApprovedNegativeTags: [],
   latestNote: null,
 };
 
@@ -64,6 +68,7 @@ function render(lead: AdminLeadRow = base) {
       onNoteChange: () => {},
       onPatch: () => {},
       onAddNote: () => {},
+      onApprove: () => {},
       onClose: () => {},
       returnFocusTo: { current: null },
     }),

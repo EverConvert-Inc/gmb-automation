@@ -13,6 +13,7 @@ import { monthRangeEastern } from "./admin-dates";
 import { queueReason, type QueueReason } from "./reconcile";
 import { assertRowShape } from "./row-guard";
 import { unusableNameSql } from "@/lib/portal/usable-name";
+import { approvalCovers, negativeNeedsReviewSql, negativeTagsOf } from "@/lib/portal/visibility";
 
 // Checked on the first row only — crosstalk is per RESPONSE, so every row in
 // a crossed result is wrong the same way and walking 500 buys nothing.
@@ -69,6 +70,12 @@ export type AdminLeadRow = {
   parseFailed: boolean;
   parseError: string | null;
   possibleDuplicateOf: string | null;
+  /** CallRail's tags as stored. ADMIN ONLY — the client never sees a tag. */
+  rawTags: string[];
+  /** "Approve for client": when, by whom, and the negative tags it covered. */
+  clientApprovedAt: Date | null;
+  clientApprovedBy: string | null;
+  clientApprovedNegativeTags: string[];
   latestNote: AdminNote | null;
 };
 
@@ -106,6 +113,10 @@ const baseColumns = {
   parseFailed: leads.parseFailed,
   parseError: leads.parseError,
   possibleDuplicateOf: leads.possibleDuplicateOf,
+  rawTags: leads.rawTags,
+  clientApprovedAt: leads.clientApprovedAt,
+  clientApprovedBy: leads.clientApprovedBy,
+  clientApprovedNegativeTags: leads.clientApprovedNegativeTags,
 };
 
 /** The newest note per lead, in one query rather than one per row. */
@@ -199,6 +210,9 @@ export function adminQueueCondition() {
     isNull(leads.firmId),
     eq(leads.parseFailed, true),
     isNotNull(leads.possibleDuplicateOf),
+    // A negative tag no approval covers: hidden from the client until staff
+    // approve it. The portal's own SQL (visibility.ts), over this table.
+    sql.raw(negativeNeedsReviewSql('"leads"')),
   );
 }
 
@@ -224,6 +238,7 @@ export async function listAdminQueue(): Promise<AdminQueueRow[]> {
       firmId: r.firmId,
       needsReview: r.needsReview,
       possibleDuplicateOf: r.possibleDuplicateOf,
+      negativeNeedsReview: negativeNeedsReview(r),
     });
     // The condition above guarantees a reason; skipping is purely defensive.
     if (reason) out.push({ ...r, reason });
@@ -293,4 +308,10 @@ export async function countAdminQueue(): Promise<number> {
     .from(leads)
     .where(adminQueueCondition());
   return row?.n ?? 0;
+}
+
+/** A negative tag no client approval covers — the TypeScript twin of negativeNeedsReviewSql. */
+export function negativeNeedsReview(r: Pick<AdminLeadRow, "rawTags" | "statusTagMatched" | "clientApprovedAt" | "clientApprovedNegativeTags">): boolean {
+  const negatives = negativeTagsOf(r);
+  return negatives.length > 0 && !approvalCovers(r, negatives);
 }

@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { checkAdmin } from "@/lib/leads/admin-auth";
 import { NotAuthorized } from "@/components/leads/not-authorized";
 import { AdminLeadsTable } from "@/components/leads/admin-leads-table";
-import { listAdminQueue } from "@/lib/leads/queries-admin";
+import { BulkApproveForm } from "@/components/leads/bulk-approve-form";
+import { ADMIN_LEAD_LIMIT, countAdminQueue, listAdminQueue } from "@/lib/leads/queries-admin";
 import { QUEUE_REASON_LABELS, type QueueReason } from "@/lib/leads/reconcile";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Lead queue" };
 
 const ORDER: QueueReason[] = [
+  "negative_tag",
   "unassigned",
   "parse_failure",
   "possible_duplicate",
@@ -34,6 +36,8 @@ const BLURB: Record<QueueReason, string> = {
     "The same phone already exists for this firm. A heads-up only: these leads stay visible to the firm. People split from one multi-person note are exempt.",
   stale_routing:
     "Routing no longer sends this lead to this firm, but someone had edited it or written a note, so it was kept rather than removed.",
+  negative_tag:
+    "Tagged Lost, Rejected, No Case, Referred out, No Contact or Declined (in CallRail or a person's note). Hidden from the client until approved: tick and approve here, or use Approve for client in Edit.",
 };
 
 export default async function AdminLeadQueuePage() {
@@ -46,6 +50,9 @@ export default async function AdminLeadQueuePage() {
   }
 
   const rows = await listAdminQueue();
+  // The list stops at ADMIN_LEAD_LIMIT (newest first); say so rather than
+  // dropping the oldest silently. Sequential, never concurrent.
+  const total = rows.length >= ADMIN_LEAD_LIMIT ? await countAdminQueue() : rows.length;
   const byReason = new Map<QueueReason, typeof rows>();
   for (const row of rows) {
     const list = byReason.get(row.reason) ?? [];
@@ -68,6 +75,12 @@ export default async function AdminLeadQueuePage() {
         </Link>
       </div>
 
+      {total > rows.length ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+          Showing the newest {rows.length} of {total} queued leads. Resolve some to see the rest.
+        </p>
+      ) : null}
+
       {rows.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
@@ -87,7 +100,13 @@ export default async function AdminLeadQueuePage() {
                 <CardDescription>{BLURB[reason]}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <AdminLeadsTable rows={group} emptyMessage="" />
+                {reason === "negative_tag" ? (
+                  <BulkApproveForm>
+                    <AdminLeadsTable rows={group} emptyMessage="" selectable />
+                  </BulkApproveForm>
+                ) : (
+                  <AdminLeadsTable rows={group} emptyMessage="" />
+                )}
                 {reason === "parse_failure" ? (
                   <ul className="space-y-1 text-xs text-muted-foreground">
                     {group

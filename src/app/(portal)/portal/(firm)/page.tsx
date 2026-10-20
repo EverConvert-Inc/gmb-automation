@@ -4,7 +4,7 @@ import { CircleAlert, Inbox } from "lucide-react";
 import { NOTE_MAX_LENGTH, PORTAL_LEAD_LIMIT, listVisibleLeadsCapped, type PortalLead } from "@/lib/portal/db";
 import { logPortalEvents } from "@/lib/portal/events";
 import { allowedPortalWindow, presetOf, rangeFromSearchParams } from "@/lib/portal/range";
-import { PORTAL_STATUS_TEXT, type PortalStatusLabel } from "@/lib/portal/visibility";
+import { CLIENT_LABEL_TEXT, type ClientLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
 import { DateRangePicker } from "../../_components/date-range-picker";
 import { formatPortalRange } from "../../_components/format";
@@ -75,12 +75,12 @@ export default async function PortalLeadsPage({
         </p>
       )}
 
-      <dl className="grid grid-cols-3 gap-3 sm:gap-4">
-        {(["signed", "pending", "opportunity"] as const).map((s) => (
+      <dl className="grid grid-cols-2 gap-3 sm:gap-4">
+        {(["signed", "pending"] as const).map((s) => (
           <div key={s} className="rounded-xl border bg-card px-4 py-3 shadow-sm sm:px-5 sm:py-4">
             <dt className="flex items-center gap-2 text-xs font-medium text-muted-foreground sm:text-sm">
               <span aria-hidden className={`portal-summary-dot portal-summary-dot-${s}`} />
-              {PORTAL_STATUS_TEXT[s]}
+              {CLIENT_LABEL_TEXT[s]}
             </dt>
             <dd className="mt-1 font-display text-2xl font-bold tabular-nums sm:text-3xl">
               {counts[s]}
@@ -102,8 +102,8 @@ export default async function PortalLeadsPage({
   );
 }
 
-function countByStatus(leads: readonly PortalLead[]): Record<PortalStatusLabel, number> {
-  const counts: Record<PortalStatusLabel, number> = { signed: 0, pending: 0, opportunity: 0 };
+function countByStatus(leads: readonly PortalLead[]): Record<ClientLabel, number> {
+  const counts: Record<ClientLabel, number> = { signed: 0, pending: 0 };
   for (const lead of leads) counts[lead.status] += 1;
   return counts;
 }

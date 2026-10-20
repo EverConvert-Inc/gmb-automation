@@ -5,21 +5,21 @@
 // combines with AND, and each status's count is taken after the search is
 // applied but before the status filter itself.
 
-import type { PortalStatusLabel } from "@/lib/portal/visibility";
+import type { ClientLabel } from "@/lib/portal/visibility";
 
 /** The fields filtering may read: what the table already shows, nothing more. */
 export type FilterableLead = {
   name: string | null;
   phone: string | null;
-  status: PortalStatusLabel;
+  status: ClientLabel;
 };
 
 export type LeadFilter = {
-  statuses: ReadonlySet<PortalStatusLabel>;
+  statuses: ReadonlySet<ClientLabel>;
   query: string;
 };
 
-export const FILTER_STATUSES: readonly PortalStatusLabel[] = ["signed", "pending", "opportunity"];
+export const FILTER_STATUSES: readonly ClientLabel[] = ["signed", "pending"];
 
 const digitsOf = (s: string) => s.replace(/\D/g, "");
 
@@ -55,8 +55,8 @@ export function filterLeads<T extends FilterableLead>(leads: readonly T[], filte
 export function statusFacets(
   leads: readonly FilterableLead[],
   query: string,
-): Record<PortalStatusLabel, number> {
-  const counts: Record<PortalStatusLabel, number> = { signed: 0, pending: 0, opportunity: 0 };
+): Record<ClientLabel, number> {
+  const counts: Record<ClientLabel, number> = { signed: 0, pending: 0 };
   for (const lead of leads) if (matchesSearch(lead, query)) counts[lead.status] += 1;
   return counts;
 }

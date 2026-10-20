@@ -147,3 +147,128 @@ export function portalStatusLabel(v: StatusLabelInput): PortalStatusLabel {
   }
   return "opportunity";
 }
+
+// ---------------------------------------------------------------------------
+// Who the client sees: Pending or Signed with no negative tag, or approved
+// ---------------------------------------------------------------------------
+//
+// THE rule, for the portal (its SQL via negativeTagsSql, its row re-check via
+// clientVisibility) and for every admin count, badge and queue reason. A lead
+// is shown to its firm when it is not under review and EITHER
+//   - staff approved it for the client ("Approve for client"), and every
+//     negative tag it carries now was already there at approval; OR
+//   - it carries no negative tag, and its status is Signed or Pending
+//     (portalStatusLabel: Pending only from a Pending tag, a person's own
+//     Pending note status, or a staff override to pending).
+// Opportunity-only leads and leads carrying any negative tag wait for
+// approval; the latter are in the admin queue as "Negative tag - needs
+// review". A Signed lead with a negative tag waits too.
+
+/** ASCII whitespace only, so the TypeScript and SQL forms cannot disagree by locale. */
+const WS_RUN = /[ \t\n\r\f]+/g;
+
+/** A tag as compared: trimmed, lower case, inner whitespace collapsed. */
+export function tagKey(tag: string): string {
+  // Spaces only at the ends, exactly as Postgres btrim() does.
+  return tag.replace(WS_RUN, " ").replace(/^ +| +$/g, "").toLowerCase();
+}
+
+/** Lost, Rejected, No Case, Referred out, No Contact, Declined — as tagKey()s. */
+export const NEGATIVE_TAG_KEYS: readonly string[] = CLIENT_HIDDEN_STATUS_TAGS.map(tagKey);
+
+/**
+ * The negative tags a lead carries, as sorted unique tagKey()s: any of its
+ * CallRail tags (raw_tags, whatever else it carries) and its matched status
+ * word, which for a person on a multi-person note is that person's own.
+ */
+export function negativeTagsOf(v: { rawTags: readonly string[]; statusTagMatched: string | null }): string[] {
+  const found = new Set<string>();
+  for (const t of [...v.rawTags, ...(v.statusTagMatched === null ? [] : [v.statusTagMatched])]) {
+    const k = tagKey(t);
+    if (NEGATIVE_TAG_KEYS.includes(k)) found.add(k);
+  }
+  return [...found].sort();
+}
+
+const NEGATIVE_KEYS_SQL = NEGATIVE_TAG_KEYS.map((k) => `'${k.replace(/'/g, "''")}'`).join(", ");
+
+/**
+ * negativeTagsOf as SQL: a sorted text[] for the lead aliased `alias` ("l"
+ * in the portal, "leads" in admin queries). Fixed SQL, no user input.
+ */
+export function negativeTagsSql(alias: string): string {
+  const key = (expr: string) => `lower(btrim(regexp_replace(${expr}, E'[ \\t\\n\\r\\f]+', ' ', 'g')))`;
+  return `(select coalesce(array_agg(distinct x.k order by x.k), '{}') from (
+      select ${key("t.tag")} as k from unnest(${alias}.raw_tags) as t(tag)
+      union all select ${key(`${alias}.status_tag_matched`)}
+    ) as x where x.k in (${NEGATIVE_KEYS_SQL}))`;
+}
+
+/**
+ * The visibility condition itself as SQL over `alias`, given its negative
+ * tags expression. Shared by the portal's visibleTo — the same shape as
+ * clientVisibility below.
+ */
+export function clientVisibleSql(alias: string): string {
+  const neg = negativeTagsSql(alias);
+  // coalesce(…, false): strictly true or false, never NULL, so nothing built
+  // on this (a NOT, a count) can read an unknown as anything else.
+  return `coalesce((
+       (${alias}.client_approved_at is not null and ${neg} <@ ${alias}.client_approved_negative_tags)
+    or (cardinality(${neg}) = 0 and (
+             coalesce(${alias}.status_override, ${alias}.status_parsed) = 'signed'
+          or ${alias}.status_override = 'pending'
+          or (${alias}.status_override is null and ${alias}.status_tag_matched = 'Pending')
+       ))
+  ), false)`;
+}
+
+/** The SQL for "in the admin queue for a negative tag": carries one, not covered by an approval. */
+export function negativeNeedsReviewSql(alias: string): string {
+  const neg = negativeTagsSql(alias);
+  return `(cardinality(${neg}) > 0 and not (${alias}.client_approved_at is not null and ${neg} <@ ${alias}.client_approved_negative_tags))`;
+}
+
+export type ClientApproval = {
+  clientApprovedAt: Date | null;
+  /** The negative tags (tagKey()s) the lead carried when approved. */
+  clientApprovedNegativeTags: readonly string[];
+};
+
+/** An approval covers the lead while every negative tag it carries now was there at approval. */
+export function approvalCovers(a: ClientApproval, negativeTags: readonly string[]): boolean {
+  return a.clientApprovedAt !== null && negativeTags.every((t) => a.clientApprovedNegativeTags.includes(t));
+}
+
+export type ClientVisibilityInput = StatusLabelInput &
+  ClientApproval & {
+    needsReview: boolean;
+    /** negativeTagsOf(...) — or the SQL's negative_tags column. */
+    negativeTags: readonly string[];
+  };
+
+/** The two labels a client can see. */
+export type ClientLabel = "signed" | "pending";
+
+export type ClientVisibility =
+  | { visible: true; label: ClientLabel; approved: boolean }
+  | { visible: false; reason: "needs_review" }
+  | { visible: false; reason: "negative_tag"; negativeTags: readonly string[]; approvedEarlier: boolean }
+  | { visible: false; reason: "opportunity_only" };
+
+export function clientVisibility(v: ClientVisibilityInput): ClientVisibility {
+  if (v.needsReview) return { visible: false, reason: "needs_review" };
+  const label: ClientLabel = v.effectiveStatus === "signed" ? "signed" : "pending";
+  if (approvalCovers(v, v.negativeTags)) return { visible: true, label, approved: true };
+  if (v.negativeTags.length > 0) {
+    return { visible: false, reason: "negative_tag", negativeTags: v.negativeTags, approvedEarlier: v.clientApprovedAt !== null };
+  }
+  if (portalStatusLabel(v) === "opportunity") return { visible: false, reason: "opportunity_only" };
+  return { visible: true, label, approved: false };
+}
+
+export function isVisibleToClient(v: ClientVisibilityInput): boolean {
+  return clientVisibility(v).visible;
+}
+
+export const CLIENT_LABEL_TEXT: Record<ClientLabel, string> = { signed: "Signed", pending: "Pending" };
