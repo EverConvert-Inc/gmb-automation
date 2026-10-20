@@ -31,7 +31,8 @@ describe("migration 0055_leads_source_text", () => {
 
   it("is the next journal entry after 0054", () => {
     const journal = JSON.parse(readFileSync(join(DIR, "meta", "_journal.json"), "utf8")) as { entries: { tag: string }[] };
-    expect(journal.entries.slice(-2).map((e) => e.tag)).toEqual(["0054_portal_events", "0055_leads_source_text"]);
+    const tags = journal.entries.map((e) => e.tag);
+    expect(tags[tags.indexOf("0055_leads_source_text") - 1]).toBe("0054_portal_events");
   });
 
   it("the schema allows text too, so drizzle-kit sees no further drift", () => {

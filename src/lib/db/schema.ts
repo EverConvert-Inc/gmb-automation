@@ -1517,6 +1517,15 @@ export const leads = pgTable(
     // could not see the multi-person carve-out. No FK either, so a resolved
     // duplicate can be deleted without this pointer blocking it.
     possibleDuplicateOf: uuid("possible_duplicate_of"),
+    // --- client approval ---
+    // "Approve for client" in the admin drawer. A lead the portal would not
+    // show on its own (Opportunity only, or carrying a negative outcome tag)
+    // shows once approved. clientApprovedNegativeTags is the negative tags it
+    // carried when approved: a negative tag that arrives later is not covered,
+    // so the lead goes back to review. Never written by the sync.
+    clientApprovedAt: timestamp("client_approved_at", { withTimezone: true }),
+    clientApprovedBy: text("client_approved_by"),
+    clientApprovedNegativeTags: text("client_approved_negative_tags").array().notNull().default(sql`ARRAY[]::text[]`),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
