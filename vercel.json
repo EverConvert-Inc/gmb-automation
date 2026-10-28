@@ -33,6 +33,10 @@
       "schedule": "20 11 * * *"
     },
     {
+      "path": "/api/cron/reddit-ads-sync",
+      "schedule": "25 11 * * *"
+    },
+    {
       "path": "/api/cron/lsa-email-report",
       "schedule": "35 11 * * *"
     },

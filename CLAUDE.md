@@ -26,6 +26,7 @@ comes from asking the user to run a SQL query and paste the result back.
 | `/ppc`, `/ppc/clients/*` | Google Ads + CallRail PPC reporting |
 | `/lsa`, `/lsa/clients/*` | Local Services Ads reporting (same shape as PPC) |
 | `/call-quality` | Cross-channel (PPC+LSA+GMB+PMax) call-quality view — read-only, no sync of its own |
+| `/reddit`, `/reddit/accounts` | Reddit Ads daily spend report — standalone, never merged into PPC/LSA |
 | `/scans` | Cross-client grid/local-pack scan history |
 | `/takedowns` | Confirmed review takedown alerts, for filing reinstatement requests |
 | `/settings` | Report-recipient management (PPC/LSA/Call Quality/PPC-alert) |
@@ -169,6 +170,31 @@ move again.
 `/ppc`'s own "Phone calls" is expected to equal Call Quality's combined PPC+PMax
 `firstTimeCalls` for the same range (both read the same GMB-excluded channel data);
 GMB's calls are never counted in either, by design.
+
+## Reddit Ads
+
+`/reddit` (`src/lib/queries-reddit.ts`) is a **standalone spend report**: own tables
+(`reddit_clients`, `reddit_ad_accounts`, `reddit_ads_daily`, `reddit_sync_jobs`), own
+sync (`src/lib/reddit-sync.ts`, cron `reddit-ads-sync`), no FK into
+`ppc_clients`/`lsa_clients`, and nothing feeds PPC/LSA totals. A test asserts the
+Reddit data code imports nothing from the PPC/LSA/Google Ads modules.
+
+- **One agency-wide OAuth login** (`oauth_credentials`, provider `reddit_ads`,
+  `account_email` holds the Reddit *username*), connected at `/reddit/accounts`.
+  `src/lib/reddit-ads.ts` is the pure API client; `reddit-ads-token.ts` caches and
+  refreshes the access token.
+- **Discovery must union two endpoints.** `GET /businesses/{id}/ad_accounts` omits
+  partner-shared accounts — confirmed live, it returned only our own account while
+  `POST /businesses/{id}/ad_accounts/query` also returned every shared client account.
+- **Client mapping lives on the account row** (`reddit_client_id`, many accounts → one
+  client), and facts are stored per account, so remapping needs no resync.
+- **Every report is requested in America/New_York**, window bounded at Eastern
+  midnights *and* `time_zone_id` Eastern (which one Reddit uses to cut days was never
+  tested; both agree this way). Stored dates are Eastern dates. The cron re-pulls the
+  last 3 days since Reddit metrics settle for up to 6h; a sync zero-fills its window
+  so a day that dropped to $0 overwrites stale spend.
+- **USD only**: non-USD accounts still sync but are flagged and excluded from every
+  total.
 
 ## Rankings & Scans
 

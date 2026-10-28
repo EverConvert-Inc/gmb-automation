@@ -9,6 +9,7 @@ import {
   Gauge,
   Map,
   Megaphone,
+  MessagesSquare,
   PhoneCall,
   Search,
   Settings,
@@ -25,6 +26,7 @@ const items = [
   { href: "/rankings", label: "Rankings", icon: Search },
   { href: "/ppc", label: "PPC", icon: Megaphone },
   { href: "/lsa", label: "LSA", icon: PhoneCall },
+  { href: "/reddit", label: "Reddit", icon: MessagesSquare },
   // The lead tracker's admin area: firms, every firm's leads, the queue.
   // Active on any /admin page.
   { href: "/admin", label: "Admin", icon: ShieldCheck },

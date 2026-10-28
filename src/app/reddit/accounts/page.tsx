@@ -1,8 +1,14 @@
+import Link from "next/link";
 import type { Metadata } from "next";
-import { KeyRound } from "lucide-react";
+import { asc } from "drizzle-orm";
+import { ArrowLeft, KeyRound, Layers, Users } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
 import { buttonClasses } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
+import { RedditAccountsTable, RedditDiscoverButton } from "@/components/reddit-accounts-table";
+import { RedditClientsList } from "@/components/reddit-clients-list";
+import { db } from "@/lib/db/client";
+import { redditAdAccounts, redditClients } from "@/lib/db/schema";
 import { listRedditCredentials } from "@/lib/reddit-ads-token";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +30,10 @@ function formatWhen(d: Date): string {
   });
 }
 
-// Connection status for the agency-wide Reddit Ads login. Not in the
-// sidebar yet: ad account discovery, client mapping and the spend report
-// itself aren't built, so this page only covers connecting.
+// Connection, discovered ad accounts and their client mapping, and the
+// Reddit client list. Mirrors /ppc/clients + /lsa/clients, but on one page:
+// there's a single agency-wide connection and no per-client settings beyond
+// the name.
 export default async function RedditAccountsPage({
   searchParams,
 }: {
@@ -34,15 +41,34 @@ export default async function RedditAccountsPage({
 }) {
   const { reddit_link, reason, user } = await searchParams;
   const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
-  const credentials = await listRedditCredentials();
+  const [credentials, accounts, clients] = await Promise.all([
+    listRedditCredentials(),
+    db.query.redditAdAccounts.findMany({ orderBy: asc(redditAdAccounts.name) }),
+    db.query.redditClients.findMany({ orderBy: asc(redditClients.name) }),
+  ]);
+
+  const accountCountByClient = new Map<string, number>();
+  for (const a of accounts) {
+    if (a.redditClientId) {
+      accountCountByClient.set(a.redditClientId, (accountCountByClient.get(a.redditClientId) ?? 0) + 1);
+    }
+  }
+  const unmapped = accounts.filter((a) => a.isActive && !a.redditClientId).length;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Reddit Ads</h1>
+        <Link
+          href="/reddit"
+          className="inline-flex items-center text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="mr-1 h-3 w-3" /> Reddit spend report
+        </Link>
+        <h1 className="text-2xl font-semibold">Reddit Ads accounts</h1>
         <p className="text-sm text-muted-foreground">
-          Connect the Reddit login that can see every client ad account, including accounts
-          shared with us by partners.
+          One Reddit login covers every ad account, including accounts partners share with us.
+          Map each account to a client; unmapped spend shows as &ldquo;Unmapped&rdquo; in the
+          report.
         </p>
       </div>
 
@@ -80,7 +106,7 @@ export default async function RedditAccountsPage({
           missingEnv.length === 0 ? (
             // Plain link, not fetch: the OAuth start route answers with a
             // redirect to reddit.com that the browser has to follow.
-            <a href="/api/oauth/reddit-ads/start" className={buttonClasses("default", "sm")}>
+            <a href="/api/oauth/reddit-ads/start" className={buttonClasses("outline", "sm")}>
               {credentials.length > 0 ? "Reconnect Reddit" : "Connect Reddit"}
             </a>
           ) : null
@@ -107,6 +133,43 @@ export default async function RedditAccountsPage({
             ))}
           </ul>
         )}
+      </SectionCard>
+
+      <SectionCard
+        icon={<Layers className="h-4 w-4" />}
+        title="Ad accounts"
+        eyebrow={
+          accounts.length
+            ? `${accounts.length} discovered${unmapped ? ` · ${unmapped} unmapped` : ""}`
+            : undefined
+        }
+        actions={credentials.length > 0 ? <RedditDiscoverButton /> : null}
+      >
+        <RedditAccountsTable
+          accounts={accounts.map((a) => ({
+            id: a.id,
+            name: a.name,
+            redditAdAccountId: a.redditAdAccountId,
+            isShared: a.isShared,
+            currency: a.currency,
+            isActive: a.isActive,
+            redditClientId: a.redditClientId,
+            lastSeenAt: a.lastSeenAt.toISOString(),
+            lastSyncAt: a.lastSyncAt?.toISOString() ?? null,
+            lastSyncError: a.lastSyncError,
+          }))}
+          clients={clients.map((c) => ({ id: c.id, name: c.name }))}
+        />
+      </SectionCard>
+
+      <SectionCard icon={<Users className="h-4 w-4" />} title="Clients">
+        <RedditClientsList
+          clients={clients.map((c) => ({
+            id: c.id,
+            name: c.name,
+            accountCount: accountCountByClient.get(c.id) ?? 0,
+          }))}
+        />
       </SectionCard>
     </div>
   );
