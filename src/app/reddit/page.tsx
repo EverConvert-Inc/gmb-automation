@@ -2,11 +2,12 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import {
   CalendarDays,
+  ChartColumnStacked,
+  ChevronDown,
   CircleDollarSign,
   Layers,
   MessagesSquare,
   Settings as SettingsIcon,
-  Table2,
   Unlink,
   Users,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import { StatTile } from "@/components/ui/stat-tile";
 import { DeltaPill } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { SyncRedditNowButton } from "@/components/sync-reddit-now-button";
+import { RedditDailySpendChart } from "@/components/reddit-daily-spend-chart";
 import { getRedditReport, UNMAPPED_KEY } from "@/lib/queries-reddit";
 import { listRedditCredentials } from "@/lib/reddit-ads-token";
 import { firstOfMonthIsoEastern, todayIsoEastern } from "@/lib/date-utils";
@@ -234,48 +236,57 @@ export default async function RedditReportPage({
         </div>
       </SectionCard>
 
-      <SectionCard icon={<Table2 className="h-4 w-4" />} title="Daily spend" eyebrow="Eastern time, newest first">
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="sticky left-0 bg-muted px-3 py-2 text-left font-medium">Date</th>
-                {report.clients.map((c) => (
-                  <th key={c.key} className="whitespace-nowrap px-3 py-2 text-right font-medium">
-                    {c.name}
-                  </th>
+      <SectionCard icon={<ChartColumnStacked className="h-4 w-4" />} title="Daily spend" eyebrow="Eastern days, by client">
+        <RedditDailySpendChart report={report} />
+        {/* Native <details>: collapsed by default, no client JS. */}
+        <details className="group mt-4 border-t pt-3">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+            <span className="group-open:hidden">Show daily table</span>
+            <span className="hidden group-open:inline">Hide daily table</span>
+          </summary>
+          <div className="mt-3 overflow-x-auto rounded-md border">
+            <table className="w-full text-sm">
+              <thead className="border-b bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="sticky left-0 bg-muted px-3 py-2 text-left font-medium">Date</th>
+                  {report.clients.map((c) => (
+                    <th key={c.key} className="whitespace-nowrap px-3 py-2 text-right font-medium">
+                      {c.name}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 text-right font-medium">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {report.dates.map((d) => (
+                  <tr key={d}>
+                    <td className="sticky left-0 whitespace-nowrap bg-card px-3 py-2">{fmtDay(d)}</td>
+                    {report.clients.map((c) => (
+                      <td key={c.key} className="px-3 py-2 text-right tabular-nums">
+                        {fmtUsd(c.byDate[d] ?? 0n)}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2 text-right font-medium tabular-nums">
+                      {fmtUsd(report.dailyTotals[d] ?? 0n)}
+                    </td>
+                  </tr>
                 ))}
-                <th className="px-3 py-2 text-right font-medium">Total</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {report.dates.map((d) => (
-                <tr key={d}>
-                  <td className="sticky left-0 whitespace-nowrap bg-card px-3 py-2">{fmtDay(d)}</td>
+              </tbody>
+              <tfoot className="border-t bg-muted/40 font-semibold">
+                <tr>
+                  <td className="sticky left-0 bg-muted px-3 py-2">Total</td>
                   {report.clients.map((c) => (
                     <td key={c.key} className="px-3 py-2 text-right tabular-nums">
-                      {fmtUsd(c.byDate[d] ?? 0n)}
+                      {fmtUsd(c.totalMicros)}
                     </td>
                   ))}
-                  <td className="px-3 py-2 text-right font-medium tabular-nums">
-                    {fmtUsd(report.dailyTotals[d] ?? 0n)}
-                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmtUsd(report.totalMicros)}</td>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot className="border-t bg-muted/40 font-semibold">
-              <tr>
-                <td className="sticky left-0 bg-muted px-3 py-2">Total</td>
-                {report.clients.map((c) => (
-                  <td key={c.key} className="px-3 py-2 text-right tabular-nums">
-                    {fmtUsd(c.totalMicros)}
-                  </td>
-                ))}
-                <td className="px-3 py-2 text-right tabular-nums">{fmtUsd(report.totalMicros)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+              </tfoot>
+            </table>
+          </div>
+        </details>
       </SectionCard>
     </div>
   );
