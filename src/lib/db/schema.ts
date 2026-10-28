@@ -1775,3 +1775,114 @@ export const portalEvents = pgTable(
   }),
 ).enableRLS();
 export type PortalEvent = typeof portalEvents.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Reddit Ads spend report
+// ---------------------------------------------------------------------------
+//
+// Standalone from PPC/LSA: its own client list, accounts, facts and sync
+// jobs, with no FK into ppc_clients/lsa_clients (some Reddit clients have no
+// PPC row). One agency-wide Reddit login (oauth_credentials, provider
+// "reddit_ads") sees every account — owned ones via the business list,
+// partner-shared ones only via POST /businesses/{id}/ad_accounts/query.
+//
+// RLS ON with no policies (deny-all to Supabase's anon/authenticated roles),
+// same reasoning as the lead tables above: the app reaches these as the
+// owning role over DATABASE_URL, so only the public Data API is shut out.
+
+export const redditClients = pgTable(
+  "reddit_clients",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    activeIdx: index("reddit_clients_active_idx").on(t.isActive),
+  }),
+).enableRLS();
+
+// One row per Reddit ad account, created by discovery. The client mapping
+// lives here (many accounts -> one client) rather than on the client row,
+// because accounts are discovered first and mapped afterwards.
+export const redditAdAccounts = pgTable(
+  "reddit_ad_accounts",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Reddit's own id, e.g. "a2_jt8fopuljk60".
+    redditAdAccountId: text("reddit_ad_account_id").notNull().unique(),
+    name: text("name").notNull(),
+    // The account's owning business. Differs from the business we listed it
+    // under for partner-shared accounts (is_shared).
+    ownerBusinessId: text("owner_business_id"),
+    isShared: boolean("is_shared").notNull().default(false),
+    // Non-USD accounts still sync but are flagged and excluded from totals.
+    currency: text("currency"),
+    // Reference only — reports are always requested in America/New_York.
+    timeZoneId: text("time_zone_id"),
+    redditClientId: uuid("reddit_client_id").references(() => redditClients.id, {
+      onDelete: "set null",
+    }),
+    oauthCredentialId: uuid("oauth_credential_id").references(() => oauthCredentials.id, {
+      onDelete: "set null",
+    }),
+    isActive: boolean("is_active").notNull().default(true),
+    // Last discovery run that returned this account; a stale value means
+    // the connected login can no longer see it.
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastSyncError: text("last_sync_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    clientIdx: index("reddit_ad_accounts_client_idx").on(t.redditClientId),
+  }),
+).enableRLS();
+
+// Facts are per account, not per client, so remapping an account to a
+// different client needs no resync — the client is joined at query time.
+// `date` is the America/New_York calendar date.
+export const redditAdsDaily = pgTable(
+  "reddit_ads_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => redditAdAccounts.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    // Reddit reports SPEND in micros of the account currency.
+    spendMicros: bigint("spend_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("reddit_ads_daily_unique").on(t.adAccountId, t.date),
+    dateIdx: index("reddit_ads_daily_date_idx").on(t.date),
+  }),
+).enableRLS();
+
+export const redditSyncJobs = pgTable(
+  "reddit_sync_jobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Null for a whole sweep (cron or Sync Now); set for a single account.
+    adAccountId: uuid("ad_account_id").references(() => redditAdAccounts.id, {
+      onDelete: "cascade",
+    }),
+    kind: text("kind").notNull(), // 'spend' | 'discovery'
+    status: text("status").notNull(), // 'running' | 'completed' | 'failed'
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    triggeredBy: text("triggered_by").notNull().default("scheduled"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+).enableRLS();
+
+export type RedditClient = typeof redditClients.$inferSelect;
+export type RedditAdAccount = typeof redditAdAccounts.$inferSelect;

@@ -25,7 +25,8 @@ describe("migration 0056_leads_client_approval", () => {
 
   it("is the next journal entry after 0055", () => {
     const journal = JSON.parse(readFileSync(join(DIR, "meta", "_journal.json"), "utf8")) as { entries: { tag: string }[] };
-    expect(journal.entries.slice(-2).map((e) => e.tag)).toEqual(["0055_leads_source_text", "0056_leads_client_approval"]);
+    const tags = journal.entries.map((e) => e.tag);
+    expect(tags[tags.indexOf("0056_leads_client_approval") - 1]).toBe("0055_leads_source_text");
   });
 
   it("the schema declares the same columns, so drizzle-kit sees no further drift", () => {
