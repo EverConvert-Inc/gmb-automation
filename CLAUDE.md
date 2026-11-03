@@ -29,7 +29,7 @@ comes from asking the user to run a SQL query and paste the result back.
 | `/reddit`, `/reddit/accounts` | Reddit Ads daily spend report — standalone, never merged into PPC/LSA |
 | `/scans` | Cross-client grid/local-pack scan history |
 | `/takedowns` | Confirmed review takedown alerts, for filing reinstatement requests |
-| `/settings` | Report-recipient management (PPC/LSA/Call Quality/PPC-alert) |
+| `/settings` | Report-recipient management (PPC/LSA/Call Quality/PPC-alert/Reddit) |
 | `/login` | Supabase auth, full-bleed (no sidebar) |
 
 Sidebar nav (`src/components/sidebar.tsx`) is the authoritative top-level index — add
@@ -195,6 +195,10 @@ Reddit data code imports nothing from the PPC/LSA/Google Ads modules.
   so a day that dropped to $0 overwrites stale spend.
 - **USD only**: non-USD accounts still sync but are flagged and excluded from every
   total.
+- **Daily email** (`src/lib/reddit-email.ts` + `reddit-pdf.tsx`, cron
+  `reddit-email-report`): month to date through yesterday, own recipient list
+  (`reddit_report_recipients`, managed in `/settings`), sent from
+  `PPC_REPORT_FROM_EMAIL`. Skips sending when the window has $0 spend.
 
 ## Rankings & Scans
 

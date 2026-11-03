@@ -121,6 +121,8 @@ describe("independence from PPC/LSA", () => {
     "src/lib/reddit-ads-token.ts",
     "src/lib/reddit-sync.ts",
     "src/lib/queries-reddit.ts",
+    "src/lib/reddit-email.ts",
+    "src/lib/reddit-pdf.tsx",
   ];
   const walk = (dir: string): string[] =>
     readdirSync(dir).flatMap((f) => {
@@ -130,6 +132,7 @@ describe("independence from PPC/LSA", () => {
   const routeFiles = [
     ...walk(join(process.cwd(), "src/app/api/reddit")),
     join(process.cwd(), "src/app/api/cron/reddit-ads-sync/route.ts"),
+    join(process.cwd(), "src/app/api/cron/reddit-email-report/route.ts"),
   ];
 
   it("Reddit data code never imports PPC/LSA sync, Google Ads or their queries", () => {

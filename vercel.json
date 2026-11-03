@@ -45,6 +45,10 @@
       "schedule": "40 11 * * *"
     },
     {
+      "path": "/api/cron/reddit-email-report",
+      "schedule": "45 11 * * *"
+    },
+    {
       "path": "/api/cron/dataforseo-spend-snapshot",
       "schedule": "5 0 * * *"
     },

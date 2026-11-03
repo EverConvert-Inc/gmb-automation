@@ -1884,5 +1884,14 @@ export const redditSyncJobs = pgTable(
   },
 ).enableRLS();
 
+// Separate distribution list for the daily Reddit spend PDF, same shape as
+// lsaReportRecipients.
+export const redditReportRecipients = pgTable("reddit_report_recipients", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
+
 export type RedditClient = typeof redditClients.$inferSelect;
 export type RedditAdAccount = typeof redditAdAccounts.$inferSelect;
+export type RedditReportRecipient = typeof redditReportRecipients.$inferSelect;

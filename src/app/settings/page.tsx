@@ -6,12 +6,14 @@ import { PpcReportRecipientsCard } from "@/components/ppc-report-recipients-card
 import { LsaReportRecipientsCard } from "@/components/lsa-report-recipients-card";
 import { CallQualityReportRecipientsCard } from "@/components/call-quality-report-recipients-card";
 import { PpcOptimizationAlertRecipientsCard } from "@/components/ppc-optimization-alert-recipients-card";
+import { RedditReportRecipientsCard } from "@/components/reddit-report-recipients-card";
 import { db } from "@/lib/db/client";
 import {
   ppcReportRecipients,
   lsaReportRecipients,
   callQualityReportRecipients,
   ppcOptimizationAlertRecipients,
+  redditReportRecipients,
 } from "@/lib/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -34,6 +36,7 @@ export default async function SettingsPage() {
     lsaRecipients,
     callQualityRecipients,
     optimizationAlertRecipients,
+    redditRecipients,
   ] = await Promise.all([
     db.query.ppcReportRecipients.findMany({
       orderBy: asc(ppcReportRecipients.email),
@@ -49,6 +52,10 @@ export default async function SettingsPage() {
     }),
     db.query.ppcOptimizationAlertRecipients.findMany({
       orderBy: asc(ppcOptimizationAlertRecipients.email),
+      columns: { id: true, email: true },
+    }),
+    db.query.redditReportRecipients.findMany({
+      orderBy: asc(redditReportRecipients.email),
       columns: { id: true, email: true },
     }),
   ]);
@@ -87,6 +94,7 @@ export default async function SettingsPage() {
           <PpcOptimizationAlertRecipientsCard
             initial={optimizationAlertRecipients}
           />
+          <RedditReportRecipientsCard initial={redditRecipients} />
         </div>
       </section>
     </div>
