@@ -5,6 +5,7 @@ import { badgeClasses } from "@/components/ui/badge";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { SyncAdsDashboardNowButton } from "@/components/sync-ads-dashboard-now-button";
 import { COMPARE_MODES, pctChange, type AdsDashboardWindow } from "@/lib/ads-dashboard-compare";
+import { formatImpressionShare } from "@/lib/ads-impression-share";
 import { cn } from "@/lib/utils";
 
 // Shared presentation for the three per-client Ads Dashboard reports.
@@ -32,12 +33,8 @@ export function fmtDay(iso: string): string {
   });
 }
 
-// Google reports any impression share under 10% as 0.0999.
-export function fmtShare(v: number | null): string {
-  if (v === null) return "—";
-  if (v < 0.1) return "<10%";
-  return `${(v * 100).toFixed(0)}%`;
-}
+// Impression share, with Google's 0.0999 floor shown as "<10%".
+export const fmtShare = formatImpressionShare;
 
 // Percent change against the comparison window. `invert` marks metrics
 // where up is bad (cost, cost per conversion).

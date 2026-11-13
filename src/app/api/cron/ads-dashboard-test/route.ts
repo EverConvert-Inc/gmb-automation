@@ -6,6 +6,7 @@ import { decryptString } from "@/lib/crypto";
 import { daysAgoIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
 import { enums } from "google-ads-api";
 import { getCustomer } from "@/lib/google-ads";
+import { formatImpressionShare } from "@/lib/ads-impression-share";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -17,13 +18,20 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
+// Only a real cycle (an object nested inside itself) is replaced. The same
+// object appearing twice in different branches is serialized both times —
+// treating every repeat as circular is what turned nonPrimaryCounted into
+// ["[Circular]"], since its entries are the same objects as
+// countedInConversions.
 function safeStringify(value: unknown): string {
-  const seen = new WeakSet();
-  return JSON.stringify(value, (_k, v) => {
+  const ancestors: object[] = [];
+  return JSON.stringify(value, function (this: unknown, _k, v) {
     if (typeof v === "bigint") return v.toString();
     if (typeof v === "object" && v !== null) {
-      if (seen.has(v)) return "[Circular]";
-      seen.add(v);
+      // `this` is the object holding v: unwind to it, then check the chain.
+      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+      if (ancestors.includes(v)) return "[Circular]";
+      ancestors.push(v);
     }
     return v;
   });
@@ -166,6 +174,7 @@ export async function GET(req: Request) {
             rows: rows.length,
             rowsWithValue: values.length,
             sampleValues: values.slice(0, 3),
+            sampleDisplay: values.slice(0, 3).map((v) => formatImpressionShare(Number(v))),
           };
         } catch (err) {
           const described = describeError(err) as {

@@ -467,11 +467,11 @@ function enumName(name: string, raw: unknown): string {
 // whole query if any one selected metric is incompatible with the FROM
 // resource, so each report selects only its own list.
 //
-// Evidence so far: selecting all five on keyword_view was rejected on three
-// live accounts, the error naming only search_budget_lost_impression_share
-// (budget is a campaign-level concept). The per-field matrix from the
-// ads-dashboard-test diagnostic is the authority — update these lists to
-// match it if it disagrees.
+// Confirmed live (per-field matrix, one query per field x resource): the
+// first four work on keyword_view, campaign and ad_group;
+// search_budget_lost_impression_share works on campaign only (budget is a
+// campaign-level concept) and is rejected elsewhere with
+// PROHIBITED_METRIC_IN_SELECT_OR_WHERE_CLAUSE.
 export const IMPRESSION_SHARE_FIELDS = {
   keyword_view: [
     "search_impression_share",
