@@ -24,6 +24,7 @@ comes from asking the user to run a SQL query and paste the result back.
 | `/clients`, `/clients/[slug]`, `/clients/[slug]/locations/[locationId]` | GBP/geo-grid product: client roster, per-client dashboard (reviews, rankings, heat map, scans), per-location detail |
 | `/rankings` | Cross-client organic SERP rankings overview |
 | `/ppc`, `/ppc/clients/*` | Google Ads + CallRail PPC reporting |
+| `/ads`, `/ads/[id]/{conversions,search-terms,keywords}` | Ads Dashboard: per-PPC-client conversion-action audit, search terms and keyword reports (Search campaigns only) |
 | `/lsa`, `/lsa/clients/*` | Local Services Ads reporting (same shape as PPC) |
 | `/call-quality` | Cross-channel (PPC+LSA+GMB+PMax) call-quality view — read-only, no sync of its own |
 | `/reddit`, `/reddit/accounts` | Reddit Ads daily spend report — standalone, never merged into PPC/LSA |
@@ -145,6 +146,35 @@ classification. A non-match falls back to tracker-name classification.
   `undefined`, which Drizzle's `.set({ field: undefined })` silently treats as "no
   fields to update" and throws a masking error that hides the real cause. This was a
   real production incident.
+
+## Ads Dashboard
+
+`/ads` (`src/lib/queries-ads-dashboard.ts`) is keyed by `ppc_clients.id` and covers
+**Search campaigns only** — no Performance Max, no auction insights.
+
+- **Stored** (`src/lib/ppc-search-terms-sync.ts`, cron `ppc-search-terms-sync`):
+  `ppc_keywords_daily`, `ppc_search_terms_daily` (terms with a click only) and
+  `ppc_search_campaigns_daily`. Each run *replaces* the trailing 30 days per client in
+  one transaction, because Google credits conversions back to the click date. Older
+  windows (needed for MoM/YoY) exist only once pulled: the page's sync button or the
+  cron's `?days=` backfill.
+- **The three tables are subtracted from each other**, so they must come from the same
+  run: campaign − keyword totals = traffic no keyword triggered; keyword totals − listed
+  keyword-triggered terms = terms Google withholds for privacy. The report shows these
+  as two separate gap rows. Don't reconcile against `ppc_ads_daily` (it mixes in PMax
+  and its conversions are pulled once).
+- **Keyword segments drop search terms no keyword triggered** (live-confirmed), so the
+  pull runs a second, unsegmented query and stores the remainder with an empty keyword.
+- **Live, never stored**: impression share (a ratio — can't be summed from daily rows;
+  which metric is selectable depends on the FROM resource, see
+  `IMPRESSION_SHARE_FIELDS`) and the conversion-action audit.
+- **Conversion audit** (`src/lib/ads-conversion-audit.ts`): `metrics.conversions` is
+  whatever the account is set up to count, tel-click taps included. Verdicts are judged
+  from what an action actually contributed in the window, never from its flags —
+  live accounts showed actions counting with `include_in_conversions_metric` false, and
+  one with `primary_for_goal` false. `all_conversions` is display-only context there.
+- Comparison windows (WoW/MoM/YoY) shift the selected range back 7 days / one month /
+  one year (`src/lib/ads-dashboard-compare.ts`).
 
 ## Call Quality
 

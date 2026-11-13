@@ -14,6 +14,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Target,
   X,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
@@ -25,6 +26,7 @@ const items = [
   { href: "/clients", label: "Clients", icon: Map },
   { href: "/rankings", label: "Rankings", icon: Search },
   { href: "/ppc", label: "PPC", icon: Megaphone },
+  { href: "/ads", label: "Ads Dashboard", icon: Target },
   { href: "/lsa", label: "LSA", icon: PhoneCall },
   { href: "/reddit", label: "Reddit", icon: MessagesSquare },
   // The lead tracker's admin area: firms, every firm's leads, the queue.
