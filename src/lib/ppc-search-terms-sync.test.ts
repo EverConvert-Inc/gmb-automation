@@ -4,7 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./db/client", () => ({ db: {} }));
 
-import { hashSearchTerm, mergeKeywordRows, mergeSearchTermRows } from "./ppc-search-terms-sync";
+import {
+  SYNC_COVERAGE_CAMPAIGN_ID,
+  coverageMarkerRows,
+  hashSearchTerm,
+  mergeKeywordRows,
+  mergeSearchTermRows,
+} from "./ppc-search-terms-sync";
 import { deriveKeywordlessRows, type KeywordDailyRow, type SearchTermDailyRow } from "./google-ads";
 
 const term = (over: Partial<SearchTermDailyRow> = {}): SearchTermDailyRow => ({
@@ -126,5 +132,17 @@ describe("keyword / search-term GAQL", () => {
     expect(wheres.length).toBeGreaterThan(0);
     for (const w of wheres) expect(w).not.toMatch(/status/);
     expect(section).not.toMatch(/AND [a-z_.]*status/);
+  });
+});
+
+describe("coverageMarkerRows", () => {
+  it("writes one all-zero marker per date of the window", () => {
+    const rows = coverageMarkerRows("2026-11-10", "2026-11-12");
+    expect(rows.map((r) => r.date)).toEqual(["2026-11-10", "2026-11-11", "2026-11-12"]);
+    for (const r of rows) {
+      expect(r.campaignId).toBe(SYNC_COVERAGE_CAMPAIGN_ID);
+      expect([r.clicks, r.impressions, r.conversions, r.conversionsValue]).toEqual([0, 0, 0, 0]);
+      expect(r.costMicros).toBe(BigInt(0));
+    }
   });
 });

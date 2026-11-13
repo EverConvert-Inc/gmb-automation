@@ -27,7 +27,7 @@ import {
   type ImpressionShare,
   type KeywordRow,
 } from "@/lib/queries-ads-dashboard";
-import { resolveWindow } from "@/lib/ads-dashboard-compare";
+import { isFullySynced, resolveWindow } from "@/lib/ads-dashboard-compare";
 import { daysAgoIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +43,9 @@ function KeywordTable({
   rows,
   share,
   showShare,
+  comparable,
 }: {
+  comparable: boolean;
   rows: KeywordRow[];
   share: Map<string, ImpressionShare>;
   showShare: boolean;
@@ -84,7 +86,7 @@ function KeywordTable({
                 <td className={TDR}>{fmtInt(r.clicks)}</td>
                 <td className={TDR}>{fmtUsd(r.cost)}</td>
                 <td className={TDR}>
-                  <Change current={r.cost} prior={r.prior?.cost ?? null} invert />
+                  <Change current={r.cost} prior={r.prior?.cost ?? null} invert comparable={comparable} />
                 </td>
                 <td className={TDR}>{fmtConv(r.conversions)}</td>
                 <td className={TDR}>{fmtCostPerConv(r.cost, r.conversions)}</td>
@@ -132,6 +134,7 @@ export default async function KeywordsPage({
   ]);
   const t = report.totals;
   const p = report.priorTotals;
+  const comparable = isFullySynced(report.coverage) && isFullySynced(report.priorCoverage);
   const noKeywordCost = report.campaign.cost - t.cost;
   const eyebrow = `Search campaigns · ${fmtDay(w.from)} – ${fmtDay(w.to)}`;
   const showShare = !share.keywordError;
@@ -141,26 +144,26 @@ export default async function KeywordsPage({
   return (
     <div className="space-y-6">
       <AdsDashboardHeader client={client} tab="keywords" window={w} />
-      <StoredDataBanners hasData={report.hasData} priorHasData={report.priorHasData} window={w} />
+      <StoredDataBanners coverage={report.coverage} priorCoverage={report.priorCoverage} window={w} />
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label="Keyword spend"
           value={fmtUsd(t.cost)}
-          sublabel={<Change current={t.cost} prior={p.cost} invert />}
+          sublabel={<Change current={t.cost} prior={p.cost} invert comparable={comparable} />}
           icon={<CircleDollarSign className="h-4 w-4" />}
           tone="brand"
         />
         <StatTile
           label="Clicks"
           value={fmtInt(t.clicks)}
-          sublabel={<Change current={t.clicks} prior={p.clicks} />}
+          sublabel={<Change current={t.clicks} prior={p.clicks} comparable={comparable} />}
           icon={<MousePointerClick className="h-4 w-4" />}
         />
         <StatTile
           label="Conversions"
           value={fmtConv(t.conversions)}
-          sublabel={<Change current={t.conversions} prior={p.conversions} />}
+          sublabel={<Change current={t.conversions} prior={p.conversions} comparable={comparable} />}
           icon={<Target className="h-4 w-4" />}
         />
         <StatTile
@@ -168,7 +171,7 @@ export default async function KeywordsPage({
           value={fmtCostPerConv(t.cost, t.conversions)}
           sublabel={
             t.conversions > 0 && p.conversions > 0 ? (
-              <Change current={t.cost / t.conversions} prior={p.cost / p.conversions} invert />
+              <Change current={t.cost / t.conversions} prior={p.cost / p.conversions} invert comparable={comparable} />
             ) : (
               "—"
             )
@@ -244,7 +247,7 @@ export default async function KeywordsPage({
             Google Ads rejected the query, so the impression-share columns are hidden: {share.keywordError}
           </Banner>
         )}
-        <KeywordTable rows={top} share={share.byKeyword} showShare={showShare} />
+        <KeywordTable comparable={comparable} rows={top} share={share.byKeyword} showShare={showShare} />
         {rest.length > 0 && (
           <details className="group mt-3">
             <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -253,7 +256,7 @@ export default async function KeywordsPage({
               <span className="hidden group-open:inline">Hide</span>
             </summary>
             <div className="mt-3">
-              <KeywordTable rows={rest} share={share.byKeyword} showShare={showShare} />
+              <KeywordTable comparable={comparable} rows={rest} share={share.byKeyword} showShare={showShare} />
             </div>
           </details>
         )}

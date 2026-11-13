@@ -63,6 +63,46 @@ export function pctChange(current: number, prior: number): number | null {
   return ((current - prior) / prior) * 100;
 }
 
+// What a Change cell should say. A percentage is only printed when the
+// baseline can carry one: a prior of 0 is "new", and a prior so small that
+// the change would be 1,000% or more (179 against 1) is "n/a" — that ratio
+// says nothing beyond "the baseline was almost empty".
+export const MAX_MEANINGFUL_PCT = 1000;
+
+export type ChangeKind =
+  | { kind: "new" }
+  | { kind: "none" }
+  | { kind: "na" }
+  | { kind: "pct"; pct: number };
+
+export function describeChange(current: number, prior: number | null): ChangeKind {
+  if (prior === null) return { kind: "new" };
+  const pct = pctChange(current, prior);
+  if (pct === null) return current === 0 ? { kind: "none" } : { kind: "new" };
+  if (!Number.isFinite(pct)) return { kind: "na" };
+  if (Math.abs(pct) < 0.5) return { kind: "none" };
+  if (Math.abs(pct) >= MAX_MEANINGFUL_PCT) return { kind: "na" };
+  return { kind: "pct", pct };
+}
+
+// Every calendar date in an inclusive ISO range. Pure calendar arithmetic
+// (UTC noon), so no time zone can shift a day.
+export function eachIsoDate(from: string, to: string): string[] {
+  const out: string[] = [];
+  const end = Date.parse(`${to}T12:00:00Z`);
+  for (let t = Date.parse(`${from}T12:00:00Z`); t <= end; t += 86_400_000) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+// How much of a window the search-terms sync has actually pulled.
+export type WindowCoverage = { syncedDays: number; totalDays: number };
+
+export function isFullySynced(c: WindowCoverage): boolean {
+  return c.totalDays > 0 && c.syncedDays >= c.totalDays;
+}
+
 export type AdsDashboardWindow = {
   from: string;
   to: string;

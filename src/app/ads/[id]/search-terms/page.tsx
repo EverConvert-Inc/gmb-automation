@@ -25,7 +25,7 @@ import {
   type SearchTermRow,
   type Totals,
 } from "@/lib/queries-ads-dashboard";
-import { resolveWindow } from "@/lib/ads-dashboard-compare";
+import { isFullySynced, resolveWindow } from "@/lib/ads-dashboard-compare";
 import { daysAgoIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +50,9 @@ function TermCell({ r }: { r: SearchTermRow }) {
   );
 }
 
-function TermTable({ rows, showConversions }: { rows: SearchTermRow[]; showConversions: boolean }) {
+type TermTableProps = { rows: SearchTermRow[]; showConversions: boolean; comparable: boolean };
+
+function TermTable({ rows, showConversions, comparable }: TermTableProps) {
   return (
     <div className="overflow-x-auto rounded-md border">
       <table className="w-full text-sm">
@@ -71,7 +73,7 @@ function TermTable({ rows, showConversions }: { rows: SearchTermRow[]; showConve
               <td className={TDR}>{fmtInt(r.clicks)}</td>
               <td className={TDR}>{fmtUsd(r.cost)}</td>
               <td className={TDR}>
-                <Change current={r.cost} prior={r.prior?.cost ?? null} invert />
+                <Change current={r.cost} prior={r.prior?.cost ?? null} invert comparable={comparable} />
               </td>
               {showConversions && <td className={TDR}>{fmtConv(r.conversions)}</td>}
               {showConversions && <td className={TDR}>{fmtCostPerConv(r.cost, r.conversions)}</td>}
@@ -91,12 +93,12 @@ function TermTable({ rows, showConversions }: { rows: SearchTermRow[]; showConve
 }
 
 // Top N visible, the rest behind a native <details> (no client JS).
-function CollapsedTerms({ rows, showConversions }: { rows: SearchTermRow[]; showConversions: boolean }) {
+function CollapsedTerms({ rows, showConversions, comparable }: TermTableProps) {
   const top = rows.slice(0, TOP_N);
   const rest = rows.slice(TOP_N);
   return (
     <>
-      <TermTable rows={top} showConversions={showConversions} />
+      <TermTable rows={top} showConversions={showConversions} comparable={comparable} />
       {rest.length > 0 && (
         <details className="group mt-3">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -105,7 +107,7 @@ function CollapsedTerms({ rows, showConversions }: { rows: SearchTermRow[]; show
             <span className="hidden group-open:inline">Hide</span>
           </summary>
           <div className="mt-3">
-            <TermTable rows={rest} showConversions={showConversions} />
+            <TermTable rows={rest} showConversions={showConversions} comparable={comparable} />
           </div>
         </details>
       )}
@@ -119,9 +121,11 @@ function ReconRow({
   t,
   prior,
   total,
+  comparable,
   gap = false,
   bold = false,
 }: {
+  comparable: boolean;
   label: string;
   note?: string;
   t: Totals;
@@ -141,7 +145,7 @@ function ReconRow({
       <td className={TDR}>{total.cost > 0 ? `${((t.cost / total.cost) * 100).toFixed(0)}%` : "—"}</td>
       <td className={TDR}>{fmtConv(t.conversions)}</td>
       <td className={TDR}>
-        <Change current={t.cost} prior={prior.cost} invert />
+        <Change current={t.cost} prior={prior.cost} invert comparable={comparable} />
       </td>
     </tr>
   );
@@ -167,6 +171,7 @@ export default async function SearchTermsPage({
   const report = await getSearchTermsReport(id, { from: w.from, to: w.to }, w.prior);
   const rec = report.reconciliation;
   const prior = report.priorReconciliation;
+  const comparable = isFullySynced(report.coverage) && isFullySynced(report.priorCoverage);
   const zeroConv = report.rows.filter((r) => r.conversions === 0);
   const zeroConvCost = zeroConv.reduce((n, r) => n + r.cost, 0);
   const listedCost = rec.listedKeyworded.cost + rec.listedKeywordless.cost;
@@ -175,26 +180,26 @@ export default async function SearchTermsPage({
   return (
     <div className="space-y-6">
       <AdsDashboardHeader client={client} tab="search-terms" window={w} />
-      <StoredDataBanners hasData={report.hasData} priorHasData={report.priorHasData} window={w} />
+      <StoredDataBanners coverage={report.coverage} priorCoverage={report.priorCoverage} window={w} />
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label="Search spend"
           value={fmtUsd(rec.campaign.cost)}
-          sublabel={<Change current={rec.campaign.cost} prior={prior.campaign.cost} invert />}
+          sublabel={<Change current={rec.campaign.cost} prior={prior.campaign.cost} invert comparable={comparable} />}
           icon={<CircleDollarSign className="h-4 w-4" />}
           tone="brand"
         />
         <StatTile
           label="Clicks"
           value={fmtInt(rec.campaign.clicks)}
-          sublabel={<Change current={rec.campaign.clicks} prior={prior.campaign.clicks} />}
+          sublabel={<Change current={rec.campaign.clicks} prior={prior.campaign.clicks} comparable={comparable} />}
           icon={<MousePointerClick className="h-4 w-4" />}
         />
         <StatTile
           label="Conversions"
           value={fmtConv(rec.campaign.conversions)}
-          sublabel={<Change current={rec.campaign.conversions} prior={prior.campaign.conversions} />}
+          sublabel={<Change current={rec.campaign.conversions} prior={prior.campaign.conversions} comparable={comparable} />}
           icon={<Target className="h-4 w-4" />}
         />
         <StatTile
@@ -219,20 +224,20 @@ export default async function SearchTermsPage({
               </tr>
             </thead>
             <tbody className="divide-y">
-              <ReconRow
+              <ReconRow comparable={comparable}
                 label="Listed terms — triggered by a keyword"
                 t={rec.listedKeyworded}
                 prior={prior.listedKeyworded}
                 total={rec.campaign}
               />
-              <ReconRow
+              <ReconRow comparable={comparable}
                 label="Listed terms — no keyword"
                 note="Shown by Google without any keyword of yours triggering them"
                 t={rec.listedKeywordless}
                 prior={prior.listedKeywordless}
                 total={rec.campaign}
               />
-              <ReconRow
+              <ReconRow comparable={comparable}
                 gap
                 label="Gap 1 · Privacy-hidden terms"
                 note="Keyword clicks whose search term Google withholds. Keyword totals minus the listed keyword-triggered terms."
@@ -240,7 +245,7 @@ export default async function SearchTermsPage({
                 prior={prior.privacyHidden}
                 total={rec.campaign}
               />
-              <ReconRow
+              <ReconRow comparable={comparable}
                 gap
                 label="Gap 2 · No-keyword clicks with no term reported"
                 note={`Search campaign totals minus keyword totals (${fmtInt(rec.keywordlessAll.clicks)} clicks, ${fmtUsd(rec.keywordlessAll.cost)} had no keyword), minus the no-keyword terms listed above.`}
@@ -250,7 +255,7 @@ export default async function SearchTermsPage({
               />
             </tbody>
             <tfoot className="border-t">
-              <ReconRow bold label="Search campaign total" t={rec.campaign} prior={prior.campaign} total={rec.campaign} />
+              <ReconRow comparable={comparable} bold label="Search campaign total" t={rec.campaign} prior={prior.campaign} total={rec.campaign} />
             </tfoot>
           </table>
         </div>
@@ -261,7 +266,7 @@ export default async function SearchTermsPage({
       </SectionCard>
 
       <SectionCard icon={<Search className="h-4 w-4" />} title="Top search terms by cost" eyebrow={eyebrow}>
-        <CollapsedTerms rows={report.rows} showConversions />
+        <CollapsedTerms comparable={comparable} rows={report.rows} showConversions />
       </SectionCard>
 
       <SectionCard
@@ -275,7 +280,7 @@ export default async function SearchTermsPage({
           clicks prove little — treat these as candidates to review, not a list to block. Whether a
           “conversion” is a real lead depends on the Conversion audit tab.
         </p>
-        <CollapsedTerms rows={zeroConv} showConversions={false} />
+        <CollapsedTerms comparable={comparable} rows={zeroConv} showConversions={false} />
       </SectionCard>
     </div>
   );

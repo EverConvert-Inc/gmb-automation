@@ -10,6 +10,7 @@ import {
   ppcSyncJobs,
 } from "./db/schema";
 import { decryptString } from "./crypto";
+import { eachIsoDate } from "./ads-dashboard-compare";
 import {
   pullKeywordDaily,
   pullSearchCampaignDaily,
@@ -118,6 +119,29 @@ function sumMetrics(a: Metrics, b: Metrics): Metrics {
     conversions: a.conversions + b.conversions,
     conversionsValue: a.conversionsValue + b.conversionsValue,
   };
+}
+
+// Coverage marker. Google returns no row for a day with no impressions, so
+// stored rows alone cannot tell "synced, nothing happened" from "never
+// synced". Each run therefore also writes one all-zero row per date of its
+// window into ppc_search_campaigns_daily under this campaign id. The markers
+// live in the same table and are replaced by the same delete as the data, so
+// a date carries a marker exactly when its data came from a completed run.
+// Being all zeros they change no sum; the reports count them to decide
+// whether a comparison window is complete enough to show a Change.
+export const SYNC_COVERAGE_CAMPAIGN_ID = "__synced__";
+
+export function coverageMarkerRows(fromDate: string, toDate: string): SearchCampaignDailyRow[] {
+  return eachIsoDate(fromDate, toDate).map((date) => ({
+    date,
+    campaignId: SYNC_COVERAGE_CAMPAIGN_ID,
+    campaignName: "",
+    clicks: 0,
+    impressions: 0,
+    costMicros: BigInt(0),
+    conversions: 0,
+    conversionsValue: 0,
+  }));
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -240,7 +264,11 @@ export async function syncSearchTermsForClient(
             lte(ppcSearchCampaignsDaily.date, opts.toDate),
           ),
         );
-      for (const batch of chunk(campaignRows, INSERT_BATCH)) {
+      const campaignAndMarkers = [
+        ...campaignRows.filter((r) => r.campaignId !== SYNC_COVERAGE_CAMPAIGN_ID),
+        ...coverageMarkerRows(opts.fromDate, opts.toDate),
+      ];
+      for (const batch of chunk(campaignAndMarkers, INSERT_BATCH)) {
         await tx.insert(ppcSearchCampaignsDaily).values(
           batch.map((r) => ({
             ppcClientId,

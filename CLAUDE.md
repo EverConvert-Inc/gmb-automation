@@ -175,6 +175,11 @@ classification. A non-match falls back to tracker-name classification.
   one with `primary_for_goal` false. `all_conversions` is display-only context there.
 - Comparison windows (WoW/MoM/YoY) shift the selected range back 7 days / one month /
   one year (`src/lib/ads-dashboard-compare.ts`).
+- **Coverage markers**: Google returns no row for a zero-impression day, so each sync
+  also writes one all-zero row per date of its window into `ppc_search_campaigns_daily`
+  under campaign id `__synced__`. The stored reports count them and print no Change
+  unless both windows are fully synced. Never list campaigns from that table without
+  excluding the marker id. The conversion audit's comparison is live, so it is not gated.
 
 ## Call Quality
 

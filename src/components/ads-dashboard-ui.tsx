@@ -4,7 +4,13 @@ import { Banner } from "@/components/ui/banner";
 import { badgeClasses } from "@/components/ui/badge";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { SyncAdsDashboardNowButton } from "@/components/sync-ads-dashboard-now-button";
-import { COMPARE_MODES, pctChange, type AdsDashboardWindow } from "@/lib/ads-dashboard-compare";
+import {
+  COMPARE_MODES,
+  describeChange,
+  isFullySynced,
+  type AdsDashboardWindow,
+  type WindowCoverage,
+} from "@/lib/ads-dashboard-compare";
 import { formatImpressionShare } from "@/lib/ads-impression-share";
 import { cn } from "@/lib/utils";
 
@@ -37,37 +43,47 @@ export function fmtDay(iso: string): string {
 export const fmtShare = formatImpressionShare;
 
 // Percent change against the comparison window. `invert` marks metrics
-// where up is bad (cost, cost per conversion).
+// where up is bad (cost, cost per conversion). `comparable={false}` means one
+// of the two windows is not fully synced: the stored figures are incomplete,
+// so no change is printed at all.
 export function Change({
   current,
   prior,
   invert = false,
+  comparable = true,
   className,
 }: {
   current: number;
   prior: number | null;
   invert?: boolean;
+  comparable?: boolean;
   className?: string;
 }) {
-  if (prior === null) {
-    return <span className={cn(badgeClasses("blue", "sm", "rounded-full"), className)}>new</span>;
-  }
-  const pct = pctChange(current, prior);
-  if (pct === null) {
+  const muted = cn("text-[10px] text-muted-foreground", className);
+  if (!comparable) {
     return (
-      <span className={cn("text-[10px] text-muted-foreground", className)}>
-        {current === 0 ? "no change" : "from 0"}
+      <span className={muted} title="One of the two windows is not fully synced, so a change would compare against incomplete data.">
+        partial data
       </span>
     );
   }
-  if (Math.abs(pct) < 0.5) {
-    return <span className={cn("text-[10px] text-muted-foreground", className)}>no change</span>;
+  const change = describeChange(current, prior);
+  if (change.kind === "new") {
+    return <span className={cn(badgeClasses("blue", "sm", "rounded-full"), className)}>new</span>;
   }
-  const good = invert ? pct < 0 : pct > 0;
+  if (change.kind === "none") return <span className={muted}>no change</span>;
+  if (change.kind === "na") {
+    return (
+      <span className={muted} title="The comparison figure is too close to zero for a percentage to mean anything.">
+        n/a
+      </span>
+    );
+  }
+  const good = invert ? change.pct < 0 : change.pct > 0;
   return (
     <span className={cn(badgeClasses(good ? "green" : "amber", "sm", "rounded-full"), className)}>
-      {pct > 0 ? "+" : "−"}
-      {Math.abs(pct) >= 1000 ? ">999" : Math.abs(pct).toFixed(0)}%
+      {change.pct > 0 ? "+" : "−"}
+      {Math.abs(change.pct).toFixed(0)}%
     </span>
   );
 }
@@ -170,26 +186,41 @@ export function AdsDashboardHeader({
 // The daily cron only keeps the trailing 30 days fresh, so an older
 // comparison window is empty until it has been pulled once.
 export function StoredDataBanners({
-  hasData,
-  priorHasData,
+  coverage,
+  priorCoverage,
   window: w,
 }: {
-  hasData: boolean;
-  priorHasData: boolean;
+  coverage: WindowCoverage;
+  priorCoverage: WindowCoverage;
   window: AdsDashboardWindow;
 }) {
+  const days = (c: WindowCoverage) => `${c.syncedDays} of ${c.totalDays} days`;
+  const currentOk = isFullySynced(coverage);
   return (
     <>
-      {!hasData && (
+      {coverage.syncedDays === 0 && (
         <Banner tone="warning" title="No synced data for this date range">
           Nothing is stored for {fmtDay(w.from)} – {fmtDay(w.to)}. Use “Sync both windows” to pull
           it from Google Ads.
         </Banner>
       )}
-      {hasData && !priorHasData && (
-        <Banner tone="info" title="No synced data for the comparison window">
-          Nothing is stored for {fmtDay(w.prior.from)} – {fmtDay(w.prior.to)}, so changes show as
-          “new” or “from 0”. Use “Sync both windows” to pull it.
+      {coverage.syncedDays > 0 && !currentOk && (
+        <Banner tone="warning" title="This date range is only partly synced">
+          {days(coverage)} of {fmtDay(w.from)} – {fmtDay(w.to)} are stored, so the figures below are
+          incomplete and no change is shown. Use “Sync both windows” to pull the rest.
+        </Banner>
+      )}
+      {currentOk && !isFullySynced(priorCoverage) && (
+        <Banner
+          tone="info"
+          title={
+            priorCoverage.syncedDays === 0
+              ? "The comparison window is not synced"
+              : "The comparison window is only partly synced"
+          }
+        >
+          {days(priorCoverage)} of {fmtDay(w.prior.from)} – {fmtDay(w.prior.to)} are stored, so no
+          change is shown. Use “Sync both windows” to pull it.
         </Banner>
       )}
     </>

@@ -12,6 +12,8 @@ import {
 import { decryptString } from "./crypto";
 import { getCustomer } from "./google-ads";
 import { auditConversionActions, type AuditActionInput } from "./ads-conversion-audit";
+import { eachIsoDate, type WindowCoverage } from "./ads-dashboard-compare";
+import { SYNC_COVERAGE_CAMPAIGN_ID } from "./ppc-search-terms-sync";
 
 // Read side of the Ads Dashboard (/ads). Search terms, keywords and Search
 // campaign totals come from the three ppc_*_daily tables written by
@@ -206,21 +208,22 @@ async function keywordTotals(clientId: string, r: Range): Promise<Totals> {
   return row ? toTotals(row) : ZERO;
 }
 
-// Whether ANY stored Search-campaign row exists in a window — used to tell
-// "nothing happened" apart from "this window was never synced".
-async function hasStoredData(clientId: string, r: Range): Promise<boolean> {
+// How many days of a window a completed sync has pulled, counted from the
+// coverage markers the sync writes (see SYNC_COVERAGE_CAMPAIGN_ID). A window
+// synced before the markers existed counts as not synced until its next run.
+async function storedCoverage(clientId: string, r: Range): Promise<WindowCoverage> {
   const [row] = await db
-    .select({ one: sql<number>`1` })
+    .select({ days: sql<string>`count(distinct ${ppcSearchCampaignsDaily.date})` })
     .from(ppcSearchCampaignsDaily)
     .where(
       and(
         eq(ppcSearchCampaignsDaily.ppcClientId, clientId),
+        eq(ppcSearchCampaignsDaily.googleAdsCampaignId, SYNC_COVERAGE_CAMPAIGN_ID),
         gte(ppcSearchCampaignsDaily.date, r.from),
         lte(ppcSearchCampaignsDaily.date, r.to),
       ),
-    )
-    .limit(1);
-  return Boolean(row);
+    );
+  return { syncedDays: Number(row?.days ?? 0), totalDays: eachIsoDate(r.from, r.to).length };
 }
 
 // ---------------------------------------------------------------------------
@@ -285,8 +288,8 @@ export type SearchTermsReport = {
   rows: SearchTermRow[]; // every listed term, cost-descending
   reconciliation: SearchTermsReconciliation;
   priorReconciliation: SearchTermsReconciliation;
-  hasData: boolean;
-  priorHasData: boolean;
+  coverage: WindowCoverage;
+  priorCoverage: WindowCoverage;
 };
 
 function reconcile(
@@ -324,7 +327,7 @@ export async function getSearchTermsReport(
   range: Range,
   prior: Range,
 ): Promise<SearchTermsReport> {
-  const [rows, priorRows, campaign, priorCampaign, keyword, priorKeyword, hasData, priorHasData] =
+  const [rows, priorRows, campaign, priorCampaign, keyword, priorKeyword, coverage, priorCoverage] =
     await Promise.all([
       searchTermRows(clientId, range),
       searchTermRows(clientId, prior),
@@ -332,8 +335,8 @@ export async function getSearchTermsReport(
       campaignTotals(clientId, prior),
       keywordTotals(clientId, range),
       keywordTotals(clientId, prior),
-      hasStoredData(clientId, range),
-      hasStoredData(clientId, prior),
+      storedCoverage(clientId, range),
+      storedCoverage(clientId, prior),
     ]);
   const priorByTerm = new Map(priorRows.map((r) => [r.searchTerm, toTotals(r)]));
   return {
@@ -349,8 +352,8 @@ export async function getSearchTermsReport(
       .sort((a, b) => b.cost - a.cost || b.clicks - a.clicks),
     reconciliation: reconcile(rows, campaign, keyword),
     priorReconciliation: reconcile(priorRows, priorCampaign, priorKeyword),
-    hasData,
-    priorHasData,
+    coverage,
+    priorCoverage,
   };
 }
 
@@ -397,8 +400,8 @@ export type KeywordReport = {
   totals: Totals;
   priorTotals: Totals;
   campaign: Totals; // Search campaign totals, for the no-keyword note
-  hasData: boolean;
-  priorHasData: boolean;
+  coverage: WindowCoverage;
+  priorCoverage: WindowCoverage;
 };
 
 export async function getKeywordReport(
@@ -406,14 +409,14 @@ export async function getKeywordReport(
   range: Range,
   prior: Range,
 ): Promise<KeywordReport> {
-  const [rows, priorRows, totals, priorTotals, campaign, hasData, priorHasData] = await Promise.all([
+  const [rows, priorRows, totals, priorTotals, campaign, coverage, priorCoverage] = await Promise.all([
     keywordRows(clientId, range),
     keywordRows(clientId, prior),
     keywordTotals(clientId, range),
     keywordTotals(clientId, prior),
     campaignTotals(clientId, range),
-    hasStoredData(clientId, range),
-    hasStoredData(clientId, prior),
+    storedCoverage(clientId, range),
+    storedCoverage(clientId, prior),
   ]);
   const priorByKey = new Map(priorRows.map((r) => [`${r.adGroupId}/${r.criterionId}`, toTotals(r)]));
   return {
@@ -434,8 +437,8 @@ export async function getKeywordReport(
     totals,
     priorTotals,
     campaign,
-    hasData,
-    priorHasData,
+    coverage,
+    priorCoverage,
   };
 }
 

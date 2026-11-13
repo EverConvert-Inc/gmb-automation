@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { comparisonRange, isIsoDate, parseCompareMode, pctChange } from "./ads-dashboard-compare";
+import {
+  comparisonRange,
+  describeChange,
+  eachIsoDate,
+  isFullySynced,
+  isIsoDate,
+  parseCompareMode,
+  pctChange,
+} from "./ads-dashboard-compare";
 
 describe("comparisonRange", () => {
   it("WoW moves both ends back 7 days, across month and year ends", () => {
@@ -64,5 +72,48 @@ describe("resolveWindow", () => {
     const w = resolveWindow({ from: "2026-11-10", to: "2026-11-01", compare: "wow" }, defaults);
     expect([w.from, w.to]).toEqual(["2026-11-01", "2026-11-10"]);
     expect(w.prior).toEqual({ from: "2026-10-25", to: "2026-11-03" });
+  });
+});
+
+describe("describeChange", () => {
+  it("never prints an explosive percentage against a near-zero baseline", () => {
+    // McDougall: 179 against 1 is +17,800%.
+    expect(describeChange(179, 1)).toEqual({ kind: "na" });
+    expect(describeChange(11, 1)).toEqual({ kind: "na" });
+    expect(describeChange(10.9, 1)).toEqual({ kind: "pct", pct: expect.closeTo(990, 5) });
+  });
+
+  it("calls a zero or absent baseline new, not a percentage", () => {
+    expect(describeChange(5, 0)).toEqual({ kind: "new" });
+    expect(describeChange(5, null)).toEqual({ kind: "new" });
+    expect(describeChange(0, 0)).toEqual({ kind: "none" });
+  });
+
+  it("keeps ordinary changes, including a drop to zero", () => {
+    expect(describeChange(150, 100)).toEqual({ kind: "pct", pct: 50 });
+    expect(describeChange(0, 100)).toEqual({ kind: "pct", pct: -100 });
+    expect(describeChange(100.2, 100)).toEqual({ kind: "none" });
+    expect(describeChange(5, Number.NaN)).toEqual({ kind: "na" });
+  });
+});
+
+describe("window coverage", () => {
+  it("lists every date of an inclusive range, across a DST change and a year end", () => {
+    expect(eachIsoDate("2026-10-30", "2026-11-02")).toEqual([
+      "2026-10-30",
+      "2026-10-31",
+      "2026-11-01",
+      "2026-11-02",
+    ]);
+    expect(eachIsoDate("2026-12-31", "2027-01-01")).toEqual(["2026-12-31", "2027-01-01"]);
+    expect(eachIsoDate("2026-10-14", "2026-11-12")).toHaveLength(30);
+    expect(eachIsoDate("2026-11-02", "2026-11-01")).toEqual([]);
+  });
+
+  it("is fully synced only when every day carries a marker", () => {
+    expect(isFullySynced({ syncedDays: 30, totalDays: 30 })).toBe(true);
+    expect(isFullySynced({ syncedDays: 29, totalDays: 30 })).toBe(false);
+    expect(isFullySynced({ syncedDays: 0, totalDays: 30 })).toBe(false);
+    expect(isFullySynced({ syncedDays: 0, totalDays: 0 })).toBe(false);
   });
 });
