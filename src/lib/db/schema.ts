@@ -585,7 +585,7 @@ export const ppcSyncJobs = pgTable("ppc_sync_jobs", {
   ppcClientId: uuid("ppc_client_id").references(() => ppcClients.id, {
     onDelete: "cascade",
   }),
-  kind: text("kind").notNull(), // 'google_ads' | 'callrail' | 'google_ads_search_terms'
+  kind: text("kind").notNull(), // 'google_ads' | 'callrail' | 'google_ads_search_terms' | 'google_ads_account_health'
   status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -750,6 +750,62 @@ export const ppcSearchCampaignsDaily = pgTable(
       t.ppcClientId,
       t.date,
     ),
+  }),
+).enableRLS();
+
+// One account-health snapshot per PPC client per day, for the /ads overview.
+// `date` is the Eastern date the snapshot runs through (yesterday when the
+// cron fires); every figure is month to date for the month that date falls
+// in, so a row is self-describing (month_start + days_elapsed) and pacing
+// never mixes two periods. Written by ppc-account-health-sync.ts.
+//
+// Budget and spend cover every campaign type (Performance Max included).
+// The three impression-share columns are Google's ACCOUNT-level search
+// metrics, read straight FROM customer — never rolled up from campaign
+// rows, which was confirmed live to be badly off (22% against a true 51%
+// lost to budget) because Performance Max impressions skew the weighting.
+// Shares, score and the conversion figures are nullable: null means that
+// part of the pull failed or Google returned nothing, never zero.
+export const ppcAccountHealthDaily = pgTable(
+  "ppc_account_health_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    monthStart: date("month_start").notNull(),
+    daysElapsed: integer("days_elapsed").notNull(),
+    // Sum of the DAILY budgets ENABLED campaigns draw on, a shared budget
+    // counted once. Current state — Google keeps no budget history.
+    dailyBudgetMicros: bigint("daily_budget_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    budgetCount: integer("budget_count").notNull().default(0),
+    sharedBudgetCount: integer("shared_budget_count").notNull().default(0),
+    // Budgets left out of daily_budget_micros (not DAILY, or no amount).
+    excludedBudgetCount: integer("excluded_budget_count").notNull().default(0),
+    mtdSpendMicros: bigint("mtd_spend_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    searchImpressionShare: numeric("search_impression_share", { precision: 7, scale: 4 }),
+    searchBudgetLostShare: numeric("search_budget_lost_share", { precision: 7, scale: 4 }),
+    searchRankLostShare: numeric("search_rank_lost_share", { precision: 7, scale: 4 }),
+    optimizationScore: numeric("optimization_score", { precision: 7, scale: 4 }),
+    // metrics.conversions month to date, and how much of it the conversion
+    // audit judged likely junk / needing review (ads-conversion-audit.ts).
+    conversions: numeric("conversions", { precision: 14, scale: 2 }),
+    junkConversions: numeric("junk_conversions", { precision: 14, scale: 2 }),
+    reviewConversions: numeric("review_conversions", { precision: 14, scale: 2 }),
+    // Which optional parts failed on the latest run, if any.
+    pullErrors: text("pull_errors"),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_account_health_daily_unique").on(t.ppcClientId, t.date),
+    dateIdx: index("ppc_account_health_daily_date_idx").on(t.date),
   }),
 ).enableRLS();
 
@@ -1180,7 +1236,7 @@ export const lsaSyncJobs = pgTable("lsa_sync_jobs", {
   lsaClientId: uuid("lsa_client_id").references(() => lsaClients.id, {
     onDelete: "cascade",
   }),
-  kind: text("kind").notNull(), // 'google_ads' | 'callrail' | 'google_ads_search_terms'
+  kind: text("kind").notNull(), // 'google_ads' | 'callrail'
   status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),

@@ -24,7 +24,7 @@ comes from asking the user to run a SQL query and paste the result back.
 | `/clients`, `/clients/[slug]`, `/clients/[slug]/locations/[locationId]` | GBP/geo-grid product: client roster, per-client dashboard (reviews, rankings, heat map, scans), per-location detail |
 | `/rankings` | Cross-client organic SERP rankings overview |
 | `/ppc`, `/ppc/clients/*` | Google Ads + CallRail PPC reporting |
-| `/ads`, `/ads/[id]/{conversions,search-terms,keywords}` | Ads Dashboard: per-PPC-client conversion-action audit, search terms and keyword reports (Search campaigns only) |
+| `/ads`, `/ads/[id]/{conversions,search-terms,keywords}` | Ads Dashboard: all-clients account-health overview, then per-PPC-client conversion-action audit, search terms and keyword reports (Search campaigns only) |
 | `/lsa`, `/lsa/clients/*` | Local Services Ads reporting (same shape as PPC) |
 | `/call-quality` | Cross-channel (PPC+LSA+GMB+PMax) call-quality view — read-only, no sync of its own |
 | `/reddit`, `/reddit/accounts` | Reddit Ads daily spend report — standalone, never merged into PPC/LSA |
@@ -173,6 +173,16 @@ classification. A non-match falls back to tracker-name classification.
   from what an action actually contributed in the window, never from its flags —
   live accounts showed actions counting with `include_in_conversions_metric` false, and
   one with `primary_for_goal` false. `all_conversions` is display-only context there.
+- **Account-health overview** (`/ads`, `src/lib/queries-ads-health.ts`): one row per
+  client, month to date, stored data only. `ppc_account_health_daily` (sync
+  `src/lib/ppc-account-health-sync.ts`, cron `ppc-account-health-sync`) holds budgets,
+  spend, impression share, optimization score and the audit's junk share; signed cases
+  and wasted Search spend are read from the PPC syncs' own tables at query time. Flag
+  rules and thresholds live in `src/lib/ads-account-health.ts`.
+- **Impression share and optimization score are read at account level** (`FROM
+  customer`), never rolled up from campaigns: a weighted roll-up was checked live and
+  was badly off because PMax impressions skew it. Top/absolute-top impression share is
+  rejected at account level. A shared budget is counted once (dedupe by budget id).
 - Comparison windows (WoW/MoM/YoY) shift the selected range back 7 days / one month /
   one year (`src/lib/ads-dashboard-compare.ts`).
 - **Coverage markers**: Google returns no row for a zero-impression day, so each sync

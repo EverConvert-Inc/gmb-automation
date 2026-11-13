@@ -10,7 +10,6 @@ import { formatImpressionShare } from "@/lib/ads-impression-share";
 import {
   pacing,
   rollupBudgets,
-  rollupImpressionShare,
   type BudgetCampaignRow,
 } from "@/lib/ads-account-health";
 
@@ -99,9 +98,9 @@ function enumName(name: string, raw: unknown): string {
 //      queried before, checked before any table or sync is built on them:
 //      campaign budgets (including shared ones) and month-to-date pacing;
 //      whether the impression-share metrics work at account level (FROM
-//      customer) and how that compares with an impression-weighted roll-up
-//      of the campaign rows; and whether optimization score is available
-//      at account level. Returns only this section.
+//      customer); and whether optimization score is available at account
+//      level. Returns only this section. (Answered: both work at account
+//      level and are what the overview stores.)
 //
 // Usage:
 //   /api/cron/ads-dashboard-test?customerId=<digits>&section=health[&days=30]
@@ -288,18 +287,12 @@ async function accountHealthSection(
     };
   }
 
-  // --- Impression share: account level vs weighted campaign roll-up
+  // --- Impression share: account level, with the campaign rows for
+  // reference. (An impression-weighted roll-up of these rows was tried and
+  // dropped: it read 22% lost to budget against the account's true 51%.)
   let campaignRollup: unknown = campaignShare.ok ? null : { error: campaignShare.error };
   if (campaignShare.ok) {
     const withShare = campaignShare.rows.filter((r) => num(r.metrics?.search_impression_share) !== null);
-    const rollup = rollupImpressionShare(
-      campaignShare.rows.map((r) => ({
-        impressions: Number(r.metrics?.impressions ?? 0),
-        impressionShare: num(r.metrics?.search_impression_share),
-        budgetLost: num(r.metrics?.search_budget_lost_impression_share),
-        rankLost: num(r.metrics?.search_rank_lost_impression_share),
-      })),
-    );
     campaignRollup = {
       campaignRows: campaignShare.rows.length,
       // Which campaign types return a search impression share at all.
@@ -308,12 +301,6 @@ async function accountHealthSection(
         acc[c] = (acc[c] ?? 0) + 1;
         return acc;
       }, {}),
-      weighted: {
-        ...rollup,
-        impressionShareDisplay: formatImpressionShare(rollup.impressionShare),
-        budgetLostDisplay: formatImpressionShare(rollup.budgetLost),
-        rankLostDisplay: formatImpressionShare(rollup.rankLost),
-      },
       campaigns: withShare.map((r) => ({
         campaign: r.campaign?.name,
         channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),

@@ -428,6 +428,13 @@
       "when": 1794586715028,
       "tag": "0060_ppc_search_campaigns_daily",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794606203698,
+      "tag": "0061_ppc_account_health_daily",
+      "breakpoints": true
     }
   ]
 }

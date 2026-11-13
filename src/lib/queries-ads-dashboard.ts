@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { enums } from "google-ads-api";
 import { db } from "./db/client";
 import {
@@ -7,7 +7,6 @@ import {
   ppcKeywordsDaily,
   ppcSearchCampaignsDaily,
   ppcSearchTermsDaily,
-  ppcSyncJobs,
 } from "./db/schema";
 import { decryptString } from "./crypto";
 import { getCustomer } from "./google-ads";
@@ -81,74 +80,8 @@ function stringifyError(err: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Client list
+// Client lookup (the all-clients overview lives in queries-ads-health.ts)
 // ---------------------------------------------------------------------------
-
-export type AdsDashboardClient = {
-  id: string;
-  name: string;
-  customerId: string | null;
-  searchCost: number;
-  searchClicks: number;
-  searchConversions: number;
-  lastSyncAt: Date | null;
-  lastSyncFailed: string | null;
-};
-
-export async function listAdsDashboardClients(range: Range): Promise<AdsDashboardClient[]> {
-  const clients = await db.query.ppcClients.findMany({
-    where: and(
-      eq(ppcClients.isActive, true),
-      sql`${ppcClients.googleAdsOauthTokenId} is not null`,
-      sql`${ppcClients.googleAdsCustomerId} is not null`,
-    ),
-    columns: { id: true, name: true, googleAdsCustomerId: true },
-  });
-  const [totals, jobs] = await Promise.all([
-    db
-      .select({
-        ppcClientId: ppcSearchCampaignsDaily.ppcClientId,
-        clicks: sql<string>`sum(${ppcSearchCampaignsDaily.clicks})`,
-        impressions: sql<string>`sum(${ppcSearchCampaignsDaily.impressions})`,
-        costMicros: sql<string>`sum(${ppcSearchCampaignsDaily.costMicros})`,
-        conversions: sql<string>`sum(${ppcSearchCampaignsDaily.conversions})`,
-      })
-      .from(ppcSearchCampaignsDaily)
-      .where(
-        and(gte(ppcSearchCampaignsDaily.date, range.from), lte(ppcSearchCampaignsDaily.date, range.to)),
-      )
-      .groupBy(ppcSearchCampaignsDaily.ppcClientId),
-    // Latest search-terms job per client.
-    db
-      .selectDistinctOn([ppcSyncJobs.ppcClientId], {
-        ppcClientId: ppcSyncJobs.ppcClientId,
-        status: ppcSyncJobs.status,
-        completedAt: ppcSyncJobs.completedAt,
-        errorMessage: ppcSyncJobs.errorMessage,
-      })
-      .from(ppcSyncJobs)
-      .where(eq(ppcSyncJobs.kind, "google_ads_search_terms"))
-      .orderBy(ppcSyncJobs.ppcClientId, desc(ppcSyncJobs.createdAt)),
-  ]);
-  const totalsById = new Map(totals.map((t) => [t.ppcClientId, toTotals(t)]));
-  const jobById = new Map(jobs.map((j) => [j.ppcClientId, j]));
-  return clients
-    .map((c) => {
-      const t = totalsById.get(c.id) ?? ZERO;
-      const job = jobById.get(c.id);
-      return {
-        id: c.id,
-        name: c.name,
-        customerId: c.googleAdsCustomerId,
-        searchCost: t.cost,
-        searchClicks: t.clicks,
-        searchConversions: t.conversions,
-        lastSyncAt: job?.status === "completed" ? job.completedAt : null,
-        lastSyncFailed: job?.status === "failed" ? (job.errorMessage ?? "failed") : null,
-      };
-    })
-    .sort((a, b) => b.searchCost - a.searchCost || a.name.localeCompare(b.name));
-}
 
 export async function getAdsDashboardClient(id: string) {
   // A malformed id would make Postgres throw on the uuid cast.
@@ -592,7 +525,9 @@ export type ConversionAudit =
 export async function getConversionAudit(
   clientId: string,
   range: Range,
-  prior: Range,
+  // Null skips the comparison query (the account-health sync has no use
+  // for it).
+  prior: Range | null,
 ): Promise<ConversionAudit> {
   try {
     const customer = await liveCustomer(clientId);
@@ -610,7 +545,7 @@ export async function getConversionAudit(
                conversion_action.include_in_conversions_metric
         FROM conversion_action`) as Promise<GaqlRow[]>,
       byAction(range),
-      byAction(prior),
+      prior ? byAction(prior) : Promise.resolve([] as GaqlRow[]),
     ]);
 
     const inputs = new Map<string, AuditActionInput>();

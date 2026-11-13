@@ -1,4 +1,5 @@
 import { GoogleAdsApi, enums, type Customer } from "google-ads-api";
+import type { BudgetCampaignRow } from "./ads-account-health";
 
 // Google Ads scope. "adwords" is the only standard scope; permission
 // granularity flows from the connected user's role in Google Ads, not from
@@ -916,4 +917,130 @@ export async function pullSearchCampaignDaily(
       conversionsValue: Number(metrics.conversions_value ?? 0),
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Account health (see ppc-account-health-sync.ts)
+// ---------------------------------------------------------------------------
+
+export type AccountHealthPull = {
+  budgetCampaigns: BudgetCampaignRow[];
+  mtdSpendMicros: bigint;
+  // Account-level search impression share, straight FROM customer. Each is
+  // null when Google returned nothing for it.
+  impressionShare: number | null;
+  budgetLostShare: number | null;
+  rankLostShare: number | null;
+  optimizationScore: number | null;
+  // Optional parts that failed, keyed by part. Budgets and spend are not
+  // optional: if either fails the whole pull throws.
+  errors: Record<string, string>;
+};
+
+function healthError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  const messages = (err as { errors?: Array<{ message?: string }> } | null)?.errors
+    ?.map((e) => e.message)
+    .filter(Boolean);
+  if (messages && messages.length > 0) return messages.join(" · ");
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+// One account's health inputs for a month-to-date window.
+//
+// - Budgets: every campaign with its budget. No date range, so reading the
+//   CURRENT status is correct here (a budget only constrains campaigns that
+//   are running now); the roll-up in ads-account-health.ts keeps ENABLED
+//   campaigns and counts a shared budget once (live-confirmed: 290 against a
+//   naive 440 on an account sharing a 150 budget).
+// - Spend: all campaign types, and — because it spans dates — no status
+//   filter, per the standing rule.
+// - Impression share: account level (FROM customer). budget-lost and
+//   rank-lost are live-confirmed there; top/absolute-top are rejected at
+//   this level and not requested. One query per metric, so a rejection of
+//   one can never take the others down with it.
+// - Optimization score: customer.optimization_score, live-confirmed.
+export async function pullAccountHealth(
+  refreshToken: string,
+  customerId: string,
+  monthStart: string,
+  toDate: string,
+): Promise<AccountHealthPull> {
+  const customer = getCustomer(refreshToken, customerId);
+  type Row = Record<string, Record<string, unknown> | undefined>;
+  const q = (gaql: string) => customer.query(gaql) as Promise<Row[]>;
+  const dateWhere = `segments.date BETWEEN '${monthStart}' AND '${toDate}'`;
+  const errors: Record<string, string> = {};
+  const num = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const share = async (part: string, field: string): Promise<number | null> => {
+    try {
+      const rows = await q(`SELECT customer.id, metrics.${field} FROM customer WHERE ${dateWhere}`);
+      return num(rows[0]?.metrics?.[field]);
+    } catch (err) {
+      errors[part] = healthError(err);
+      return null;
+    }
+  };
+  const score = async (): Promise<number | null> => {
+    try {
+      const rows = await q(`SELECT customer.id, customer.optimization_score FROM customer`);
+      return num(rows[0]?.customer?.optimization_score);
+    } catch (err) {
+      errors.optimizationScore = healthError(err);
+      return null;
+    }
+  };
+
+  const [budgetRows, spendRows, impressionShare, budgetLostShare, rankLostShare, optimizationScore] =
+    await Promise.all([
+      q(`
+        SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+               campaign_budget.id, campaign_budget.amount_micros, campaign_budget.period,
+               campaign_budget.explicitly_shared
+        FROM campaign`),
+      q(`SELECT campaign.id, metrics.cost_micros FROM campaign WHERE ${dateWhere}`),
+      share("impressionShare", "search_impression_share"),
+      share("budgetLostShare", "search_budget_lost_impression_share"),
+      share("rankLostShare", "search_rank_lost_impression_share"),
+      score(),
+    ]);
+
+  let mtdSpendMicros = BigInt(0);
+  for (const r of spendRows) {
+    mtdSpendMicros += BigInt((r.metrics?.cost_micros as number | string | undefined) ?? 0);
+  }
+  return {
+    budgetCampaigns: budgetRows.map((r) => ({
+      campaignId: String(r.campaign?.id ?? ""),
+      campaignName: String(r.campaign?.name ?? ""),
+      status: decodeEnum("CampaignStatus", r.campaign?.status),
+      channel: decodeEnum("AdvertisingChannelType", r.campaign?.advertising_channel_type),
+      budgetId: String(r.campaign_budget?.id ?? ""),
+      amountMicros:
+        r.campaign_budget?.amount_micros === null || r.campaign_budget?.amount_micros === undefined
+          ? null
+          : Number(r.campaign_budget.amount_micros),
+      period: decodeEnum("BudgetPeriod", r.campaign_budget?.period),
+      explicitlyShared:
+        typeof r.campaign_budget?.explicitly_shared === "boolean"
+          ? r.campaign_budget.explicitly_shared
+          : null,
+    })),
+    mtdSpendMicros,
+    impressionShare,
+    budgetLostShare,
+    rankLostShare,
+    optimizationScore,
+    errors,
+  };
 }

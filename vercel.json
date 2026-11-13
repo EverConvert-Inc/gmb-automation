@@ -53,6 +53,10 @@
       "schedule": "50 11 * * *"
     },
     {
+      "path": "/api/cron/ppc-account-health-sync",
+      "schedule": "55 11 * * *"
+    },
+    {
       "path": "/api/cron/dataforseo-spend-snapshot",
       "schedule": "5 0 * * *"
     },
