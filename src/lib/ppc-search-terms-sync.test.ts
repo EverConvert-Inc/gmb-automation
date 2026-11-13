@@ -10,6 +10,8 @@ import {
   hashSearchTerm,
   mergeKeywordRows,
   mergeSearchTermRows,
+  parseClientBatch,
+  sliceClientBatch,
 } from "./ppc-search-terms-sync";
 import { deriveKeywordlessRows, type KeywordDailyRow, type SearchTermDailyRow } from "./google-ads";
 
@@ -143,6 +145,60 @@ describe("coverageMarkerRows", () => {
       expect(r.campaignId).toBe(SYNC_COVERAGE_CAMPAIGN_ID);
       expect([r.clicks, r.impressions, r.conversions, r.conversionsValue]).toEqual([0, 0, 0, 0]);
       expect(r.costMicros).toBe(BigInt(0));
+    }
+  });
+});
+
+describe("batched backfill paging", () => {
+  const clients = Array.from({ length: 20 }, (_, i) => `c${i}`);
+
+  it("walks every client exactly once in groups, then stops", () => {
+    const seen: string[] = [];
+    let offset: number | null = 0;
+    let requests = 0;
+    while (offset !== null) {
+      const page: { selected: string[]; nextOffset: number | null } = sliceClientBatch(clients, {
+        offset,
+        limit: 8,
+      });
+      seen.push(...page.selected);
+      offset = page.nextOffset;
+      requests += 1;
+    }
+    expect(seen).toEqual(clients);
+    expect(requests).toBe(3);
+  });
+
+  it("ends cleanly on an exact multiple and past the end", () => {
+    expect(sliceClientBatch(clients, { offset: 10, limit: 10 })).toEqual({
+      selected: clients.slice(10),
+      nextOffset: null,
+    });
+    expect(sliceClientBatch(clients, { offset: 40, limit: 8 })).toEqual({ selected: [], nextOffset: null });
+  });
+
+  it("syncs everyone when no batch is given (the scheduled run)", () => {
+    expect(sliceClientBatch(clients, undefined)).toEqual({ selected: clients, nextOffset: null });
+    expect(parseClientBatch(null, null)).toEqual({ batch: undefined });
+  });
+
+  it("parses offset and limit, defaulting the missing one", () => {
+    expect(parseClientBatch("16", "8")).toEqual({ batch: { offset: 16, limit: 8 } });
+    expect(parseClientBatch(null, "5")).toEqual({ batch: { offset: 0, limit: 5 } });
+    expect(parseClientBatch("8", null)).toEqual({ batch: { offset: 8, limit: 8 } });
+  });
+
+  it("rejects bad values instead of falling back to everyone", () => {
+    for (const [o, l] of [
+      ["-1", "8"],
+      ["abc", "8"],
+      ["1.5", "8"],
+      ["", "8"],
+      ["0", "0"],
+      ["0", "51"],
+      ["0", "x"],
+    ]) {
+      expect(parseClientBatch(o, l)).toHaveProperty("error");
     }
   });
 });

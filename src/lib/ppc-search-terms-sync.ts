@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   oauthCredentials,
@@ -307,13 +307,61 @@ export async function syncSearchTermsForClient(
   }
 }
 
-// Best-effort sweep across every active, Ads-linked PPC client. Per-client
-// errors are collected, never thrown.
-export async function syncAllSearchTerms(opts: SyncOpts): Promise<{
+// One batch of clients for a batched backfill. The cron route has a
+// 300-second limit, so a long window (days=400) across every client cannot
+// be relied on to finish in one request; the caller walks the client list
+// in groups instead. Pure, so the paging arithmetic is testable.
+export type ClientBatch = { offset: number; limit: number };
+
+export function sliceClientBatch<T>(
+  clients: T[],
+  batch: ClientBatch | undefined,
+): { selected: T[]; nextOffset: number | null } {
+  if (!batch) return { selected: clients, nextOffset: null };
+  const end = batch.offset + batch.limit;
+  return {
+    selected: clients.slice(batch.offset, end),
+    nextOffset: end < clients.length ? end : null,
+  };
+}
+
+// Reads ?offset= / ?limit= for the cron route. Either one switches batching
+// on; a missing offset is 0. Anything that is not a whole number in range is
+// an error rather than a silent default, so a typo can never quietly sync
+// the wrong group (or everyone).
+export const MAX_BATCH_LIMIT = 50;
+export const DEFAULT_BATCH_LIMIT = 8;
+
+export function parseClientBatch(
+  offsetRaw: string | null,
+  limitRaw: string | null,
+): { batch: ClientBatch | undefined } | { error: string } {
+  if (offsetRaw === null && limitRaw === null) return { batch: undefined };
+  const whole = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : Number.NaN);
+  const offset = offsetRaw === null ? 0 : whole(offsetRaw);
+  const limit = limitRaw === null ? DEFAULT_BATCH_LIMIT : whole(limitRaw);
+  if (!Number.isSafeInteger(offset)) return { error: "offset must be a whole number, 0 or more" };
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_BATCH_LIMIT) {
+    return { error: `limit must be a whole number from 1 to ${MAX_BATCH_LIMIT}` };
+  }
+  return { batch: { offset, limit } };
+}
+
+// Best-effort sweep across active, Ads-linked PPC clients: all of them, or
+// one batch. Per-client errors are collected, never thrown. Clients are
+// ordered oldest first (then by id), so offsets stay put between requests
+// and a client added mid-backfill lands at the end instead of shifting a
+// group. Each client is still replaced per window in its own transaction,
+// so re-running a batch is safe.
+export async function syncAllSearchTerms(opts: SyncOpts & { batch?: ClientBatch }): Promise<{
+  totalClients: number;
+  offset: number;
+  nextOffset: number | null;
   synced: number;
   errored: number;
   keywordRows: number;
   searchTermRows: number;
+  clients: Array<{ ppcClientId: string; name: string; seconds: number; ok: boolean }>;
   errors: Array<{ ppcClientId: string; message: string }>;
 }> {
   const candidates = await db.query.ppcClients.findMany({
@@ -322,27 +370,47 @@ export async function syncAllSearchTerms(opts: SyncOpts): Promise<{
       sql`${ppcClients.googleAdsOauthTokenId} is not null`,
       sql`${ppcClients.googleAdsCustomerId} is not null`,
     ),
+    orderBy: [asc(ppcClients.createdAt), asc(ppcClients.id)],
   });
+  const { selected, nextOffset } = sliceClientBatch(candidates, opts.batch);
 
   const result = {
+    totalClients: candidates.length,
+    offset: opts.batch?.offset ?? 0,
+    nextOffset,
     synced: 0,
     errored: 0,
     keywordRows: 0,
     searchTermRows: 0,
+    clients: [] as Array<{ ppcClientId: string; name: string; seconds: number; ok: boolean }>,
     errors: [] as Array<{ ppcClientId: string; message: string }>,
   };
-  const queue = [...candidates];
+  const queue = [...selected];
   await Promise.all(
     Array.from({ length: Math.min(CLIENT_CONCURRENCY, queue.length) }, async () => {
       for (let c = queue.shift(); c; c = queue.shift()) {
+        const started = Date.now();
+        const done = (ok: boolean) =>
+          result.clients.push({
+            ppcClientId: c!.id,
+            name: c!.name,
+            seconds: Math.round((Date.now() - started) / 100) / 10,
+            ok,
+          });
         try {
-          const r = await syncSearchTermsForClient(c.id, opts);
+          const r = await syncSearchTermsForClient(c.id, {
+            fromDate: opts.fromDate,
+            toDate: opts.toDate,
+            triggeredBy: opts.triggeredBy,
+          });
           result.synced += 1;
           result.keywordRows += r.keywordRows;
           result.searchTermRows += r.searchTermRows;
+          done(true);
         } catch (err) {
           result.errored += 1;
           result.errors.push({ ppcClientId: c.id, message: stringifyError(err) });
+          done(false);
         }
       }
     }),
