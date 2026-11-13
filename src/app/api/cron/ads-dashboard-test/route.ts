@@ -7,6 +7,12 @@ import { daysAgoIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
 import { enums } from "google-ads-api";
 import { getCustomer } from "@/lib/google-ads";
 import { formatImpressionShare } from "@/lib/ads-impression-share";
+import {
+  pacing,
+  rollupBudgets,
+  rollupImpressionShare,
+  type BudgetCampaignRow,
+} from "@/lib/ads-account-health";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -89,7 +95,16 @@ function enumName(name: string, raw: unknown): string {
 // rest. Strictly read-only — nothing is written to Google or to the DB.
 // Not registered in vercel.json. Delete once the answers are reported.
 //
+//   C. (?section=health) Account-health fields nothing in the codebase has
+//      queried before, checked before any table or sync is built on them:
+//      campaign budgets (including shared ones) and month-to-date pacing;
+//      whether the impression-share metrics work at account level (FROM
+//      customer) and how that compares with an impression-weighted roll-up
+//      of the campaign rows; and whether optimization score is available
+//      at account level. Returns only this section.
+//
 // Usage:
+//   /api/cron/ads-dashboard-test?customerId=<digits>&section=health[&days=30]
 //   /api/cron/ads-dashboard-test?customerId=<digits>[&days=30]
 //   /api/cron/ads-dashboard-test?client=<name substring>[&days=30]
 const SHARE_FIELDS = [
@@ -105,6 +120,267 @@ const SHARE_RESOURCES = [
   { resource: "campaign", id: "campaign.id" },
   { resource: "ad_group", id: "ad_group.id" },
 ] as const;
+
+// Section C. Every query is isolated, so one rejection is reported with its
+// exact error and never hides the others. Read-only.
+async function accountHealthSection(
+  q: (gaql: string) => Promise<Row[]>,
+  fromDate: string,
+  toDate: string,
+) {
+  type Cell<T> = { ok: true; rows: T } | { ok: false; error: unknown };
+  const attempt = async (gaql: string): Promise<Cell<Row[]>> => {
+    try {
+      return { ok: true, rows: await q(gaql) };
+    } catch (err) {
+      return { ok: false, error: describeError(err) };
+    }
+  };
+  const num = (v: unknown): number | null =>
+    typeof v === "number" ? v : typeof v === "string" && v !== "" && !Number.isNaN(Number(v)) ? Number(v) : null;
+  const usd = (micros: unknown) => Math.round((Number(micros ?? 0) / 1_000_000) * 100) / 100;
+  const dateWhere = `segments.date BETWEEN '${fromDate}' AND '${toDate}'`;
+
+  // Month to date = the month yesterday falls in, through yesterday, so the
+  // 1st of a month still has a full window to pace against.
+  const monthStart = `${toDate.slice(0, 7)}-01`;
+  const daysElapsed = Number(toDate.slice(8, 10));
+  const mtdWhere = `segments.date BETWEEN '${monthStart}' AND '${toDate}'`;
+
+  const [budgetRows, budgetDirect, mtdSpend, customerScore, campaignScores, campaignShare, customerCombined] =
+    await Promise.all([
+      // Budgets as campaigns see them. No date and no status filter: status
+      // is reported, and the roll-up keeps ENABLED campaigns only.
+      attempt(`
+        SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+               campaign_budget.id, campaign_budget.name, campaign_budget.amount_micros,
+               campaign_budget.total_amount_micros, campaign_budget.period,
+               campaign_budget.explicitly_shared, campaign_budget.reference_count,
+               campaign_budget.status, campaign_budget.delivery_method,
+               campaign_budget.has_recommended_budget,
+               campaign_budget.recommended_budget_amount_micros
+        FROM campaign`),
+      // Does the budget resource itself carry spend? (One row per budget
+      // would make shared budgets trivial.)
+      attempt(`
+        SELECT campaign_budget.id, campaign_budget.amount_micros,
+               campaign_budget.explicitly_shared, campaign_budget.reference_count,
+               metrics.cost_micros
+        FROM campaign_budget
+        WHERE ${mtdWhere}`),
+      attempt(`
+        SELECT campaign.id, campaign.advertising_channel_type, metrics.cost_micros
+        FROM campaign
+        WHERE ${mtdWhere}`),
+      attempt(`
+        SELECT customer.id, customer.optimization_score, customer.optimization_score_weight
+        FROM customer`),
+      attempt(`
+        SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+               campaign.optimization_score
+        FROM campaign
+        WHERE campaign.advertising_channel_type != 'LOCAL_SERVICES'`),
+      attempt(`
+        SELECT campaign.id, campaign.name, campaign.advertising_channel_type,
+               metrics.impressions, metrics.search_impression_share,
+               metrics.search_budget_lost_impression_share,
+               metrics.search_rank_lost_impression_share
+        FROM campaign
+        WHERE ${dateWhere}`),
+      attempt(`
+        SELECT customer.id, metrics.impressions,
+               ${SHARE_FIELDS.map((f) => `metrics.${f}`).join(", ")}
+        FROM customer
+        WHERE ${dateWhere}`),
+    ]);
+
+  // One query per impression-share field at account level.
+  const customerShareCells = await Promise.all(
+    SHARE_FIELDS.map(async (field) => {
+      const r = await attempt(
+        `SELECT customer.id, metrics.impressions, metrics.${field} FROM customer WHERE ${dateWhere}`,
+      );
+      if (!r.ok) return { field, result: "rejected" as const, error: r.error };
+      const value = num(r.rows[0]?.metrics?.[field]);
+      return {
+        field,
+        result: "works" as const,
+        rows: r.rows.length,
+        value,
+        display: formatImpressionShare(value),
+        impressions: num(r.rows[0]?.metrics?.impressions),
+      };
+    }),
+  );
+
+  // --- Budgets and pacing
+  let budgets: unknown = budgetRows.ok ? null : { error: budgetRows.error };
+  if (budgetRows.ok) {
+    const rows: BudgetCampaignRow[] = budgetRows.rows.map((r) => ({
+      campaignId: String(r.campaign?.id ?? ""),
+      campaignName: String(r.campaign?.name ?? ""),
+      status: enumName("CampaignStatus", r.campaign?.status),
+      channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),
+      budgetId: String(r.campaign_budget?.id ?? ""),
+      amountMicros: num(r.campaign_budget?.amount_micros),
+      period: enumName("BudgetPeriod", r.campaign_budget?.period),
+      explicitlyShared:
+        typeof r.campaign_budget?.explicitly_shared === "boolean"
+          ? r.campaign_budget.explicitly_shared
+          : null,
+    }));
+    const rollup = rollupBudgets(rows);
+    const spendByChannel: Record<string, number> = {};
+    let spend = 0;
+    if (mtdSpend.ok) {
+      for (const r of mtdSpend.rows) {
+        const channel = enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type);
+        const cost = Number(r.metrics?.cost_micros ?? 0) / 1_000_000;
+        spendByChannel[channel] = Math.round(((spendByChannel[channel] ?? 0) + cost) * 100) / 100;
+        spend += cost;
+      }
+    }
+    const pace = pacing(rollup.dailyBudget, spend, daysElapsed);
+    budgets = {
+      campaignsByStatus: rows.reduce<Record<string, number>>((acc, r) => {
+        acc[r.status] = (acc[r.status] ?? 0) + 1;
+        return acc;
+      }, {}),
+      enabledCampaigns: budgetRows.rows
+        .filter((r) => enumName("CampaignStatus", r.campaign?.status) === "ENABLED")
+        .map((r) => ({
+          campaign: r.campaign?.name,
+          channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),
+          budgetId: String(r.campaign_budget?.id ?? ""),
+          budgetName: r.campaign_budget?.name ?? null,
+          dailyAmount: r.campaign_budget?.amount_micros == null ? null : usd(r.campaign_budget.amount_micros),
+          totalAmount:
+            r.campaign_budget?.total_amount_micros == null ? null : usd(r.campaign_budget.total_amount_micros),
+          period: enumName("BudgetPeriod", r.campaign_budget?.period),
+          explicitlyShared: r.campaign_budget?.explicitly_shared ?? null,
+          referenceCount: r.campaign_budget?.reference_count ?? null,
+          budgetStatus: enumName("BudgetStatus", r.campaign_budget?.status),
+          deliveryMethod: enumName("BudgetDeliveryMethod", r.campaign_budget?.delivery_method),
+          hasRecommendedBudget: r.campaign_budget?.has_recommended_budget ?? null,
+          recommendedDailyAmount:
+            r.campaign_budget?.recommended_budget_amount_micros == null
+              ? null
+              : usd(r.campaign_budget.recommended_budget_amount_micros),
+        })),
+      rollup: {
+        distinctBudgets: rollup.budgets.length,
+        sharedBudgets: rollup.sharedBudgetCount,
+        excludedFromDailyTotal: rollup.excludedBudgetCount,
+        dailyBudget: Math.round(rollup.dailyBudget * 100) / 100,
+        naiveDailyBudgetCountingSharedPerCampaign: Math.round(rollup.naiveDailyBudget * 100) / 100,
+        budgets: rollup.budgets,
+      },
+      pacing: {
+        monthStart,
+        through: toDate,
+        daysElapsed,
+        spend: Math.round(pace.spend * 100) / 100,
+        spendByChannel,
+        expected: Math.round(pace.expected * 100) / 100,
+        ratio: pace.ratio === null ? null : Math.round(pace.ratio * 1000) / 1000,
+        spendError: mtdSpend.ok ? null : mtdSpend.error,
+      },
+    };
+  }
+
+  // --- Impression share: account level vs weighted campaign roll-up
+  let campaignRollup: unknown = campaignShare.ok ? null : { error: campaignShare.error };
+  if (campaignShare.ok) {
+    const withShare = campaignShare.rows.filter((r) => num(r.metrics?.search_impression_share) !== null);
+    const rollup = rollupImpressionShare(
+      campaignShare.rows.map((r) => ({
+        impressions: Number(r.metrics?.impressions ?? 0),
+        impressionShare: num(r.metrics?.search_impression_share),
+        budgetLost: num(r.metrics?.search_budget_lost_impression_share),
+        rankLost: num(r.metrics?.search_rank_lost_impression_share),
+      })),
+    );
+    campaignRollup = {
+      campaignRows: campaignShare.rows.length,
+      // Which campaign types return a search impression share at all.
+      rowsWithShareByChannel: withShare.reduce<Record<string, number>>((acc, r) => {
+        const c = enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type);
+        acc[c] = (acc[c] ?? 0) + 1;
+        return acc;
+      }, {}),
+      weighted: {
+        ...rollup,
+        impressionShareDisplay: formatImpressionShare(rollup.impressionShare),
+        budgetLostDisplay: formatImpressionShare(rollup.budgetLost),
+        rankLostDisplay: formatImpressionShare(rollup.rankLost),
+      },
+      campaigns: withShare.map((r) => ({
+        campaign: r.campaign?.name,
+        channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),
+        impressions: Number(r.metrics?.impressions ?? 0),
+        impressionShare: num(r.metrics?.search_impression_share),
+        budgetLost: num(r.metrics?.search_budget_lost_impression_share),
+        rankLost: num(r.metrics?.search_rank_lost_impression_share),
+      })),
+    };
+  }
+
+  // --- Optimization score
+  const enabledScores = campaignScores.ok
+    ? campaignScores.rows
+        .filter((r) => enumName("CampaignStatus", r.campaign?.status) === "ENABLED")
+        .map((r) => ({
+          campaign: r.campaign?.name,
+          channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),
+          score: num(r.campaign?.optimization_score),
+        }))
+    : [];
+  const scored = enabledScores.filter((c) => c.score !== null);
+
+  return {
+    budgets,
+    budgetResourceDirect: budgetDirect.ok
+      ? {
+          result: "works",
+          rows: budgetDirect.rows.length,
+          sample: budgetDirect.rows.slice(0, 5).map((r) => ({
+            budgetId: String(r.campaign_budget?.id ?? ""),
+            dailyAmount: usd(r.campaign_budget?.amount_micros),
+            explicitlyShared: r.campaign_budget?.explicitly_shared ?? null,
+            referenceCount: r.campaign_budget?.reference_count ?? null,
+            monthToDateSpend: usd(r.metrics?.cost_micros),
+          })),
+        }
+      : { result: "rejected", error: budgetDirect.error },
+    impressionShare: {
+      accountLevelPerField: customerShareCells,
+      accountLevelAllFiveTogether: customerCombined.ok
+        ? { result: "works", rows: customerCombined.rows.length, metrics: customerCombined.rows[0]?.metrics ?? null }
+        : { result: "rejected", error: customerCombined.error },
+      campaignLevel: campaignRollup,
+    },
+    optimizationScore: {
+      accountLevel: customerScore.ok
+        ? {
+            result: "works",
+            score: num(customerScore.rows[0]?.customer?.optimization_score),
+            weight: num(customerScore.rows[0]?.customer?.optimization_score_weight),
+          }
+        : { result: "rejected", error: customerScore.error },
+      campaignLevel: campaignScores.ok
+        ? {
+            enabledCampaigns: enabledScores.length,
+            enabledCampaignsScored: scored.length,
+            plainAverage:
+              scored.length > 0
+                ? Math.round((scored.reduce((n, c) => n + (c.score ?? 0), 0) / scored.length) * 1000) / 1000
+                : null,
+            campaigns: enabledScores,
+          }
+        : { error: campaignScores.error },
+    },
+  };
+}
 
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
@@ -155,6 +431,18 @@ export async function GET(req: Request) {
     }
   }
   const q = async (gaql: string) => (await customer.query(gaql)) as Row[];
+
+  if (url.searchParams.get("section") === "health") {
+    const health = await accountHealthSection(q, fromDate, toDate);
+    return new NextResponse(
+      safeStringify({
+        client: { name: client.name, customerId: client.googleAdsCustomerId },
+        window: { fromDate, toDate, days },
+        ...health,
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  }
 
   // A. One query per field x resource.
   const matrixCells = await Promise.all(
