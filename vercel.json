@@ -49,6 +49,10 @@
       "schedule": "45 11 * * *"
     },
     {
+      "path": "/api/cron/ppc-search-terms-sync",
+      "schedule": "50 11 * * *"
+    },
+    {
       "path": "/api/cron/dataforseo-spend-snapshot",
       "schedule": "5 0 * * *"
     },

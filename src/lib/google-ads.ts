@@ -630,3 +630,174 @@ export async function pullCallViewRows(
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Keyword + search-term reporting (see ppc-search-terms-sync.ts)
+// ---------------------------------------------------------------------------
+
+function decodeEnum(enumName: string, raw: unknown): string {
+  if (typeof raw !== "number") return String(raw ?? "");
+  const enumMap = (enums as Record<string, Record<number, string> | undefined>)[enumName];
+  return enumMap?.[raw] ?? String(raw);
+}
+
+export type KeywordDailyRow = {
+  date: string; // YYYY-MM-DD
+  campaignId: string;
+  campaignName: string;
+  adGroupId: string;
+  adGroupName: string;
+  criterionId: string;
+  keywordText: string;
+  matchType: string;
+  clicks: number;
+  impressions: number;
+  costMicros: bigint;
+  conversions: number;
+  conversionsValue: number;
+};
+
+// Daily keyword metrics from keyword_view. metrics.conversions only (primary
+// conversion actions) — never all_conversions. Deliberately NOT filtered on
+// campaign/ad group/keyword status: those reflect CURRENT status, and
+// filtering on them alongside segments.date drops real historical spend
+// (same bug class as pullDailyMetrics).
+export async function pullKeywordDaily(
+  refreshToken: string,
+  customerId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<KeywordDailyRow[]> {
+  const customer = getCustomer(refreshToken, customerId);
+  const rows = (await customer.query(`
+    SELECT
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      ad_group_criterion.criterion_id,
+      ad_group_criterion.keyword.text,
+      ad_group_criterion.keyword.match_type,
+      segments.date,
+      metrics.clicks,
+      metrics.impressions,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM keyword_view
+    WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+  `)) as Array<Record<string, Record<string, unknown> | undefined>>;
+
+  return rows.map((r) => {
+    const campaign = r.campaign ?? {};
+    const adGroup = r.ad_group ?? {};
+    const criterion = r.ad_group_criterion ?? {};
+    const keyword = (criterion.keyword ?? {}) as Record<string, unknown>;
+    const segments = r.segments ?? {};
+    const metrics = r.metrics ?? {};
+    return {
+      date: String(segments.date ?? ""),
+      campaignId: String(campaign.id ?? ""),
+      campaignName: String(campaign.name ?? ""),
+      adGroupId: String(adGroup.id ?? ""),
+      adGroupName: String(adGroup.name ?? ""),
+      criterionId: String(criterion.criterion_id ?? ""),
+      keywordText: String(keyword.text ?? ""),
+      matchType: decodeEnum("KeywordMatchType", keyword.match_type),
+      clicks: Number(metrics.clicks ?? 0),
+      impressions: Number(metrics.impressions ?? 0),
+      costMicros: BigInt((metrics.cost_micros as number | string | undefined) ?? 0),
+      conversions: Number(metrics.conversions ?? 0),
+      conversionsValue: Number(metrics.conversions_value ?? 0),
+    };
+  });
+}
+
+export type SearchTermDailyRow = {
+  date: string; // YYYY-MM-DD
+  campaignId: string;
+  campaignName: string;
+  adGroupId: string;
+  adGroupName: string;
+  searchTerm: string;
+  keywordText: string;
+  keywordMatchType: string;
+  searchTermMatchType: string;
+  clicks: number;
+  impressions: number;
+  costMicros: bigint;
+  conversions: number;
+  conversionsValue: number;
+};
+
+// Daily search-term metrics from search_term_view (Search campaigns; it
+// excludes Performance Max), limited to terms with a click OR a conversion
+// that day. GAQL has no OR, so this is two queries whose filters can't
+// overlap: clicks > 0, then clicks = 0 with conversions > 0.
+//
+// Same rules as pullKeywordDaily: metrics.conversions only, no status
+// filter of any kind.
+export async function pullSearchTermDaily(
+  refreshToken: string,
+  customerId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<SearchTermDailyRow[]> {
+  const customer = getCustomer(refreshToken, customerId);
+  const select = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      search_term_view.search_term,
+      segments.keyword.info.text,
+      segments.keyword.info.match_type,
+      segments.search_term_match_type,
+      segments.date,
+      metrics.clicks,
+      metrics.impressions,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM search_term_view
+    WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+  `;
+  type Raw = Array<Record<string, Record<string, unknown> | undefined>>;
+  const [clicked, convertedOnly] = (await Promise.all([
+    customer.query(`${select} AND metrics.clicks > 0`),
+    customer.query(`${select} AND metrics.clicks = 0 AND metrics.conversions > 0`),
+  ])) as [Raw, Raw];
+
+  return [...clicked, ...convertedOnly].map((r) => {
+    const campaign = r.campaign ?? {};
+    const adGroup = r.ad_group ?? {};
+    const view = r.search_term_view ?? {};
+    const segments = r.segments ?? {};
+    const keywordInfo = (((segments.keyword ?? {}) as Record<string, unknown>).info ??
+      {}) as Record<string, unknown>;
+    const metrics = r.metrics ?? {};
+    return {
+      date: String(segments.date ?? ""),
+      campaignId: String(campaign.id ?? ""),
+      campaignName: String(campaign.name ?? ""),
+      adGroupId: String(adGroup.id ?? ""),
+      adGroupName: String(adGroup.name ?? ""),
+      searchTerm: String(view.search_term ?? ""),
+      keywordText: String(keywordInfo.text ?? ""),
+      keywordMatchType:
+        keywordInfo.match_type == null
+          ? ""
+          : decodeEnum("KeywordMatchType", keywordInfo.match_type),
+      searchTermMatchType:
+        segments.search_term_match_type == null
+          ? ""
+          : decodeEnum("SearchTermMatchType", segments.search_term_match_type),
+      clicks: Number(metrics.clicks ?? 0),
+      impressions: Number(metrics.impressions ?? 0),
+      costMicros: BigInt((metrics.cost_micros as number | string | undefined) ?? 0),
+      conversions: Number(metrics.conversions ?? 0),
+      conversionsValue: Number(metrics.conversions_value ?? 0),
+    };
+  });
+}

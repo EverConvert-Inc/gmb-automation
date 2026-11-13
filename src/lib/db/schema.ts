@@ -585,7 +585,7 @@ export const ppcSyncJobs = pgTable("ppc_sync_jobs", {
   ppcClientId: uuid("ppc_client_id").references(() => ppcClients.id, {
     onDelete: "cascade",
   }),
-  kind: text("kind").notNull(), // 'google_ads' | 'callrail'
+  kind: text("kind").notNull(), // 'google_ads' | 'callrail' | 'google_ads_search_terms'
   status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -595,6 +595,120 @@ export const ppcSyncJobs = pgTable("ppc_sync_jobs", {
     .notNull()
     .defaultNow(),
 });
+
+// Keyword-level daily facts from Google Ads' keyword_view, one row per
+// keyword (ad group criterion) per Eastern/account-local date. Written by
+// ppc-search-terms-sync.ts, which replaces a trailing 30-day window each run
+// because conversions are credited back to the click date and keep rising
+// for days. Campaign/ad group are stored as Google's own ids + names
+// (denormalized) rather than FK'd to ppc_campaigns, so a row can never be
+// dropped by a missing dimension row. `conversions` is metrics.conversions
+// (primary actions only) — never all_conversions.
+export const ppcKeywordsDaily = pgTable(
+  "ppc_keywords_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    googleAdsCampaignId: text("google_ads_campaign_id").notNull(),
+    campaignName: text("campaign_name").notNull(),
+    adGroupId: text("ad_group_id").notNull(),
+    adGroupName: text("ad_group_name").notNull(),
+    criterionId: text("criterion_id").notNull(),
+    keywordText: text("keyword_text").notNull(),
+    matchType: text("match_type").notNull(), // EXACT | PHRASE | BROAD
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    costMicros: bigint("cost_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    conversions: numeric("conversions", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    conversionsValue: numeric("conversions_value", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_keywords_daily_unique").on(
+      t.ppcClientId,
+      t.adGroupId,
+      t.criterionId,
+      t.date,
+    ),
+    clientDateIdx: index("ppc_keywords_daily_client_date_idx").on(
+      t.ppcClientId,
+      t.date,
+    ),
+  }),
+).enableRLS();
+
+// Search-term daily facts from Google Ads' search_term_view (Search
+// campaigns only — it excludes Performance Max). Only terms with a click or
+// a conversion that day are stored; the impression-only long tail is left
+// out. Google also withholds terms under its privacy threshold, so these
+// rows deliberately sum to LESS than the keyword/campaign totals — the
+// report shows that difference as its own "hidden terms" row.
+//
+// One row per search term x ad group x triggering keyword x how it matched.
+// search_term_hash (md5 of search_term) stands in for the term in the
+// unique key, since a raw search term can be too long for a btree entry.
+export const ppcSearchTermsDaily = pgTable(
+  "ppc_search_terms_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    googleAdsCampaignId: text("google_ads_campaign_id").notNull(),
+    campaignName: text("campaign_name").notNull(),
+    adGroupId: text("ad_group_id").notNull(),
+    adGroupName: text("ad_group_name").notNull(),
+    searchTerm: text("search_term").notNull(),
+    searchTermHash: text("search_term_hash").notNull(),
+    // The keyword that triggered the term (segments.keyword.info). Empty
+    // string when Google reports no keyword for the row.
+    keywordText: text("keyword_text").notNull().default(""),
+    keywordMatchType: text("keyword_match_type").notNull().default(""),
+    // How the term matched: EXACT | NEAR_EXACT | PHRASE | NEAR_PHRASE | BROAD.
+    searchTermMatchType: text("search_term_match_type").notNull().default(""),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    costMicros: bigint("cost_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    conversions: numeric("conversions", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    conversionsValue: numeric("conversions_value", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_search_terms_daily_unique").on(
+      t.ppcClientId,
+      t.date,
+      t.adGroupId,
+      t.searchTermHash,
+      t.keywordText,
+      t.keywordMatchType,
+      t.searchTermMatchType,
+    ),
+    clientDateIdx: index("ppc_search_terms_daily_client_date_idx").on(
+      t.ppcClientId,
+      t.date,
+    ),
+  }),
+).enableRLS();
 
 export type Client = typeof clients.$inferSelect;
 export type Location = typeof locations.$inferSelect;
@@ -1023,7 +1137,7 @@ export const lsaSyncJobs = pgTable("lsa_sync_jobs", {
   lsaClientId: uuid("lsa_client_id").references(() => lsaClients.id, {
     onDelete: "cascade",
   }),
-  kind: text("kind").notNull(), // 'google_ads' | 'callrail'
+  kind: text("kind").notNull(), // 'google_ads' | 'callrail' | 'google_ads_search_terms'
   status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
