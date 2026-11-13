@@ -5,18 +5,21 @@ import {
   oauthCredentials,
   ppcClients,
   ppcKeywordsDaily,
+  ppcSearchCampaignsDaily,
   ppcSearchTermsDaily,
   ppcSyncJobs,
 } from "./db/schema";
 import { decryptString } from "./crypto";
 import {
   pullKeywordDaily,
+  pullSearchCampaignDaily,
   pullSearchTermDaily,
   type KeywordDailyRow,
+  type SearchCampaignDailyRow,
   type SearchTermDailyRow,
 } from "./google-ads";
 
-// Keyword + search-term sync for the Ads Dashboard. Separate from
+// Keyword + search-term + Search-campaign-total sync for the Ads Dashboard. Separate from
 // ppc-sync.ts's campaign-level sync on purpose: its own job kind, its own
 // tables, and a failure here never touches ppc_ads_daily.
 //
@@ -88,6 +91,17 @@ export function mergeSearchTermRows(rows: SearchTermDailyRow[]): SearchTermDaily
   return Array.from(byKey.values());
 }
 
+export function mergeCampaignRows(rows: SearchCampaignDailyRow[]): SearchCampaignDailyRow[] {
+  const byKey = new Map<string, SearchCampaignDailyRow>();
+  for (const r of rows) {
+    if (!r.date || !r.campaignId) continue;
+    const key = [r.campaignId, r.date].join("\u0000");
+    const prev = byKey.get(key);
+    byKey.set(key, prev ? { ...r, ...sumMetrics(prev, r) } : r);
+  }
+  return Array.from(byKey.values());
+}
+
 type Metrics = {
   clicks: number;
   impressions: number;
@@ -115,7 +129,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 export async function syncSearchTermsForClient(
   ppcClientId: string,
   opts: SyncOpts,
-): Promise<{ jobId: string; keywordRows: number; searchTermRows: number }> {
+): Promise<{ jobId: string; keywordRows: number; searchTermRows: number; campaignRows: number }> {
   const [job] = await db
     .insert(ppcSyncJobs)
     .values({
@@ -142,15 +156,17 @@ export async function syncSearchTermsForClient(
     if (!cred) throw new Error("OAuth credential row missing");
     const refreshToken = decryptString(cred.refreshTokenEncrypted);
 
-    // Both pulls must succeed before anything is deleted: the two tables
-    // are compared against each other (the hidden-terms gap), so they
-    // always have to describe the same window as of the same run.
-    const [keywordRaw, searchTermRaw] = await Promise.all([
+    // Every pull must succeed before anything is deleted: the three tables
+    // are subtracted from each other (the two gap rows), so they always
+    // have to describe the same window as of the same run.
+    const [keywordRaw, searchTermRaw, campaignRaw] = await Promise.all([
       pullKeywordDaily(refreshToken, client.googleAdsCustomerId, opts.fromDate, opts.toDate),
       pullSearchTermDaily(refreshToken, client.googleAdsCustomerId, opts.fromDate, opts.toDate),
+      pullSearchCampaignDaily(refreshToken, client.googleAdsCustomerId, opts.fromDate, opts.toDate),
     ]);
     const keywordRows = mergeKeywordRows(keywordRaw);
     const searchTermRows = mergeSearchTermRows(searchTermRaw);
+    const campaignRows = mergeCampaignRows(campaignRaw);
 
     await db.transaction(async (tx) => {
       await tx
@@ -214,13 +230,43 @@ export async function syncSearchTermsForClient(
           })),
         );
       }
+
+      await tx
+        .delete(ppcSearchCampaignsDaily)
+        .where(
+          and(
+            eq(ppcSearchCampaignsDaily.ppcClientId, ppcClientId),
+            gte(ppcSearchCampaignsDaily.date, opts.fromDate),
+            lte(ppcSearchCampaignsDaily.date, opts.toDate),
+          ),
+        );
+      for (const batch of chunk(campaignRows, INSERT_BATCH)) {
+        await tx.insert(ppcSearchCampaignsDaily).values(
+          batch.map((r) => ({
+            ppcClientId,
+            date: r.date,
+            googleAdsCampaignId: r.campaignId,
+            campaignName: r.campaignName,
+            clicks: r.clicks,
+            impressions: r.impressions,
+            costMicros: r.costMicros,
+            conversions: r.conversions.toFixed(2),
+            conversionsValue: r.conversionsValue.toFixed(2),
+          })),
+        );
+      }
     });
 
     await db
       .update(ppcSyncJobs)
       .set({ status: "completed", completedAt: new Date(), errorMessage: null })
       .where(eq(ppcSyncJobs.id, jobId));
-    return { jobId, keywordRows: keywordRows.length, searchTermRows: searchTermRows.length };
+    return {
+      jobId,
+      keywordRows: keywordRows.length,
+      searchTermRows: searchTermRows.length,
+      campaignRows: campaignRows.length,
+    };
   } catch (err) {
     const msg = stringifyError(err);
     // Deliberately does not write ppc_clients.lastSyncError — that field

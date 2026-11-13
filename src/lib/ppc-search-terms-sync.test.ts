@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./db/client", () => ({ db: {} }));
 
 import { hashSearchTerm, mergeKeywordRows, mergeSearchTermRows } from "./ppc-search-terms-sync";
-import type { KeywordDailyRow, SearchTermDailyRow } from "./google-ads";
+import { deriveKeywordlessRows, type KeywordDailyRow, type SearchTermDailyRow } from "./google-ads";
 
 const term = (over: Partial<SearchTermDailyRow> = {}): SearchTermDailyRow => ({
   date: "2026-11-01",
@@ -57,6 +57,43 @@ describe("mergeSearchTermRows", () => {
 
   it("drops rows with no date, ad group or term", () => {
     expect(mergeSearchTermRows([term({ date: "" }), term({ searchTerm: "" }), term({ adGroupId: "" })])).toEqual([]);
+  });
+});
+
+describe("deriveKeywordlessRows", () => {
+  it("returns only what the unsegmented query has beyond the keyworded rows", () => {
+    const keyworded = [
+      term({ clicks: 2, impressions: 4, costMicros: 5_000_000n, conversions: 1 }),
+      term({ searchTermMatchType: "EXACT", clicks: 1, impressions: 1, costMicros: 1_000_000n, conversions: 0 }),
+    ];
+    const all = [
+      // Same term: 5 clicks in total, 3 of them explained by keywords above.
+      term({ keywordText: "", keywordMatchType: "", searchTermMatchType: "", clicks: 5, impressions: 9, costMicros: 10_000_000n, conversions: 1.5 }),
+      // Fully explained elsewhere -> no row.
+      term({ searchTerm: "other", clicks: 1 }),
+      // Never matched a keyword at all.
+      term({ searchTerm: "no keyword term", clicks: 4, costMicros: 8_000_000n }),
+    ];
+    const out = deriveKeywordlessRows([...keyworded, term({ searchTerm: "other", clicks: 1 })], all);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      searchTerm: "car accident lawyer",
+      keywordText: "",
+      keywordMatchType: "",
+      clicks: 2,
+      impressions: 4,
+      costMicros: 4_000_000n,
+      conversions: 0.5,
+    });
+    expect(out[1]).toMatchObject({ searchTerm: "no keyword term", clicks: 4, keywordText: "" });
+  });
+
+  it("never goes negative when keyworded rows exceed the unsegmented total", () => {
+    const out = deriveKeywordlessRows(
+      [term({ clicks: 1, conversions: 1, costMicros: 9_000_000n })],
+      [term({ clicks: 2, conversions: 0.99, costMicros: 8_000_000n, impressions: 1 })],
+    );
+    expect(out[0]).toMatchObject({ clicks: 1, conversions: 0, costMicros: 0n, impressions: 0 });
   });
 });
 

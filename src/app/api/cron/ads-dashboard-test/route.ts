@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, gte, ilike, isNotNull, sql } from "drizzle-orm";
+import { and, eq, ilike, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { oauthCredentials, ppcAdsDaily, ppcClients } from "@/lib/db/schema";
+import { oauthCredentials, ppcClients } from "@/lib/db/schema";
 import { decryptString } from "@/lib/crypto";
 import { daysAgoIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
 import { enums } from "google-ads-api";
@@ -59,59 +59,45 @@ function enumName(name: string, raw: unknown): string {
   return map?.[raw] ?? String(raw);
 }
 
-function totals(rows: Row[]) {
-  let clicks = 0;
-  let impressions = 0;
-  let costMicros = 0;
-  let conversions = 0;
-  let conversionsValue = 0;
-  for (const r of rows) {
-    const m = r.metrics ?? {};
-    clicks += Number(m.clicks ?? 0);
-    impressions += Number(m.impressions ?? 0);
-    costMicros += Number(m.cost_micros ?? 0);
-    conversions += Number(m.conversions ?? 0);
-    conversionsValue += Number(m.conversions_value ?? 0);
-  }
-  return {
-    rows: rows.length,
-    clicks,
-    impressions,
-    cost: Math.round(costMicros / 10_000) / 100,
-    conversions: Math.round(conversions * 100) / 100,
-    conversionsValue: Math.round(conversionsValue * 100) / 100,
-  };
-}
-
-// Temporary read-only diagnostic for the Ads Dashboard (search terms +
-// keywords + conversion-action audit). Verifies, against ONE real PPC
-// client per call, the assumptions ppc-search-terms-sync.ts and the report
-// pages are built on:
-//   1. keyword_view: daily row count for the window, and that the selected
-//      fields come back populated
-//   2. search_term_view: daily row counts for every term vs clicks > 0 vs
-//      conversions-only — i.e. how much the "clicks or conversions" storage
-//      rule actually saves — plus the longest search term seen
-//   3. whether adding the keyword segments changes search-term totals
-//      (if it drops rows, the sync's query is losing data)
-//   4. the hidden-terms gap: search-term totals vs keyword totals vs
-//      Search-campaign totals for the same window
-//   5. impression-share fields on keyword_view over a date range (no
-//      segments.date) — how many keywords carry a value at all
-//   6. every conversion action with primary_for_goal /
-//      include_in_conversions_metric, and what each contributed to
-//      metrics.conversions vs metrics.all_conversions
-//   7. each campaign's goal config level (account default vs its own goals)
+// Temporary read-only diagnostic for the Ads Dashboard, round 2. Round 1
+// (row counts, field availability, conversion-action list) is answered;
+// this run settles two remaining data-truth questions against ONE real PPC
+// client per call:
 //
-// Each query runs in its own try/catch so one rejected field can't hide the
+//   A. Impression-share matrix. Each of five impression-share metrics is
+//      queried on its own against keyword_view, campaign and ad_group, so a
+//      rejection names exactly one field x resource pair. Round 1 only
+//      proved that the five selected TOGETHER on keyword_view are rejected.
+//
+//   B. Which conversion actions land in metrics.conversions, and why. For
+//      every campaign x conversion action with conversions in the window it
+//      reports the action's primary_for_goal next to the campaign's goal
+//      setup: whether it uses the account's goals or its own, whether the
+//      action's category/origin goal is biddable at each level, and whether
+//      a custom goal lists the action. That is what explains a non-primary
+//      action showing up in metrics.conversions.
+//
+// Each query runs in its own try/catch so one rejection can't hide the
 // rest. Strictly read-only — nothing is written to Google or to the DB.
-// Not registered in vercel.json. Delete once the numbers are reported.
+// Not registered in vercel.json. Delete once the answers are reported.
 //
 // Usage:
-//   /api/cron/ads-dashboard-test                      → lists Ads-linked PPC
-//       clients ranked by last-30-day spend, to pick the large ones
 //   /api/cron/ads-dashboard-test?customerId=<digits>[&days=30]
 //   /api/cron/ads-dashboard-test?client=<name substring>[&days=30]
+const SHARE_FIELDS = [
+  "search_impression_share",
+  "search_rank_lost_impression_share",
+  "search_top_impression_share",
+  "search_absolute_top_impression_share",
+  "search_budget_lost_impression_share",
+] as const;
+
+const SHARE_RESOURCES = [
+  { resource: "keyword_view", id: "ad_group_criterion.criterion_id" },
+  { resource: "campaign", id: "campaign.id" },
+  { resource: "ad_group", id: "ad_group.id" },
+] as const;
+
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -123,48 +109,18 @@ export async function GET(req: Request) {
   const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? "30") || 30, 1), 90);
   const fromDate = daysAgoIsoEastern(days);
   const toDate = yesterdayIsoEastern();
-
   if (!clientName && !customerIdParam) {
-    const ranked = await db
-      .select({
-        name: ppcClients.name,
-        customerId: ppcClients.googleAdsCustomerId,
-        isActive: ppcClients.isActive,
-        costMicros: sql<string>`coalesce(sum(${ppcAdsDaily.costMicros}), 0)`,
-        clicks: sql<string>`coalesce(sum(${ppcAdsDaily.clicks}), 0)`,
-      })
-      .from(ppcClients)
-      .leftJoin(
-        ppcAdsDaily,
-        and(eq(ppcAdsDaily.ppcClientId, ppcClients.id), gte(ppcAdsDaily.date, fromDate)),
-      )
-      .where(
-        and(isNotNull(ppcClients.googleAdsCustomerId), isNotNull(ppcClients.googleAdsOauthTokenId)),
-      )
-      .groupBy(ppcClients.id)
-      .orderBy(desc(sql`coalesce(sum(${ppcAdsDaily.costMicros}), 0)`));
-    return NextResponse.json({
-      window: { fromDate, toDate },
-      adsLinkedClients: ranked.length,
-      activeAdsLinkedClients: ranked.filter((r) => r.isActive).length,
-      clients: ranked.map((r) => ({
-        name: r.name,
-        customerId: r.customerId,
-        isActive: r.isActive,
-        cost: Math.round(Number(r.costMicros) / 10_000) / 100,
-        clicks: Number(r.clicks),
-      })),
-    });
+    return NextResponse.json({ error: "pass ?customerId= or ?client=" }, { status: 400 });
   }
 
   // Prefer ?customerId= — name matching is ambiguous when one client's name
-  // is a substring of another's.
+  // is a substring of another's. Stored ids may or may not carry dashes.
   const client = await db.query.ppcClients.findFirst({
     where: and(
       isNotNull(ppcClients.googleAdsCustomerId),
       isNotNull(ppcClients.googleAdsOauthTokenId),
       customerIdParam
-        ? eq(ppcClients.googleAdsCustomerId, customerIdParam)
+        ? sql`replace(${ppcClients.googleAdsCustomerId}, '-', '') = ${customerIdParam.replace(/-/g, "")}`
         : ilike(ppcClients.name, `%${clientName}%`),
     ),
   });
@@ -192,244 +148,274 @@ export async function GET(req: Request) {
   }
   const q = async (gaql: string) => (await customer.query(gaql)) as Row[];
 
-  const [keywords, searchTerms, searchTermsNoKeyword, campaigns, impressionShare, conversionActions, conversionsByAction, goalConfig] =
-    await Promise.all([
-      // 1. keyword_view, exactly the sync's query.
-      run(async () => {
-        const rows = await q(`
-          SELECT campaign.id, campaign.name, ad_group.id, ad_group.name,
-                 ad_group_criterion.criterion_id, ad_group_criterion.keyword.text,
-                 ad_group_criterion.keyword.match_type, ad_group_criterion.status,
-                 ad_group_criterion.negative, segments.date,
-                 metrics.clicks, metrics.impressions, metrics.cost_micros,
-                 metrics.conversions, metrics.conversions_value
-          FROM keyword_view WHERE ${dateWhere}`);
-        const distinct = new Set<string>();
-        const statusCounts: Record<string, number> = {};
-        let missingText = 0;
-        let negative = 0;
-        for (const r of rows) {
-          const c = r.ad_group_criterion ?? {};
-          const key = `${r.ad_group?.id}/${c.criterion_id}`;
-          if (!distinct.has(key)) {
-            distinct.add(key);
-            const s = enumName("AdGroupCriterionStatus", c.status);
-            statusCounts[s] = (statusCounts[s] ?? 0) + 1;
-          }
-          if (!(c.keyword as Record<string, unknown> | undefined)?.text) missingText += 1;
-          if (c.negative === true) negative += 1;
-        }
-        return {
-          dailyRows: totals(rows),
-          distinctKeywords: distinct.size,
-          distinctKeywordsByCurrentStatus: statusCounts,
-          rowsMissingKeywordText: missingText,
-          negativeRows: negative,
-          sampleRow: rows[0] ?? null,
-        };
-      }),
-
-      // 2 + 3. search_term_view with the sync's keyword segments, unfiltered
-      // (every term with an impression), bucketed here the way the sync's
-      // two filtered queries would split it.
-      run(async () => {
-        const rows = await q(`
-          SELECT campaign.id, ad_group.id, search_term_view.search_term,
-                 search_term_view.status, segments.keyword.info.text,
-                 segments.keyword.info.match_type, segments.search_term_match_type,
-                 segments.date, metrics.clicks, metrics.impressions,
-                 metrics.cost_micros, metrics.conversions, metrics.conversions_value
-          FROM search_term_view WHERE ${dateWhere}`);
-        const clicked = rows.filter((r) => Number(r.metrics?.clicks ?? 0) > 0);
-        const convertedOnly = rows.filter(
-          (r) => Number(r.metrics?.clicks ?? 0) === 0 && Number(r.metrics?.conversions ?? 0) > 0,
-        );
-        let maxLen = 0;
-        let emptyKeyword = 0;
-        const keys = new Set<string>();
-        let duplicateKeys = 0;
-        const distinctTerms = new Set<string>();
-        for (const r of rows) {
-          const term = String(r.search_term_view?.search_term ?? "");
-          distinctTerms.add(term);
-          maxLen = Math.max(maxLen, Buffer.byteLength(term));
-          const info = ((r.segments?.keyword ?? {}) as Record<string, unknown>).info as
-            | Record<string, unknown>
-            | undefined;
-          if (!info?.text) emptyKeyword += 1;
-          const key = [r.segments?.date, r.ad_group?.id, term, info?.text, info?.match_type, r.segments?.search_term_match_type].join("|");
-          if (keys.has(key)) duplicateKeys += 1;
-          keys.add(key);
-        }
-        return {
-          allTermsDailyRows: totals(rows),
-          clicksGt0: totals(clicked),
-          conversionsOnlyNoClick: totals(convertedOnly),
-          wouldStoreRows: clicked.length + convertedOnly.length,
-          distinctSearchTerms: distinctTerms.size,
-          longestSearchTermBytes: maxLen,
-          rowsWithEmptyKeywordSegment: emptyKeyword,
-          duplicateUniqueKeys: duplicateKeys,
-          sampleRow: clicked[0] ?? rows[0] ?? null,
-        };
-      }),
-
-      // 3. Same view WITHOUT keyword segments — if these totals are higher
-      // than the segmented ones above, the keyword segments drop rows.
-      run(async () =>
-        totals(
-          await q(`
-            SELECT search_term_view.search_term, segments.date, metrics.clicks,
-                   metrics.impressions, metrics.cost_micros, metrics.conversions,
-                   metrics.conversions_value
-            FROM search_term_view WHERE ${dateWhere}`),
-        ),
-      ),
-
-      // 4. Campaign totals by channel type, the reference for the gap.
-      run(async () => {
-        const rows = await q(`
-          SELECT campaign.id, campaign.advertising_channel_type, segments.date,
-                 metrics.clicks, metrics.impressions, metrics.cost_micros,
-                 metrics.conversions, metrics.conversions_value
-          FROM campaign WHERE ${dateWhere}`);
-        const byType = new Map<string, Row[]>();
-        for (const r of rows) {
-          const t = enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type);
-          byType.set(t, [...(byType.get(t) ?? []), r]);
-        }
-        return Object.fromEntries(
-          Array.from(byType.entries()).map(([t, rs]) => [
-            t,
-            { ...totals(rs), campaigns: new Set(rs.map((r) => String(r.campaign?.id))).size },
-          ]),
-        );
-      }),
-
-      // 5. Impression share over the whole range (ratios can't be summed
-      // from daily rows, so the report will query this live).
-      run(async () => {
-        const rows = await q(`
-          SELECT ad_group.id, ad_group_criterion.criterion_id,
-                 ad_group_criterion.keyword.text,
-                 ad_group_criterion.quality_info.quality_score,
-                 metrics.impressions, metrics.search_impression_share,
-                 metrics.search_rank_lost_impression_share,
-                 metrics.search_budget_lost_impression_share,
-                 metrics.search_top_impression_share,
-                 metrics.search_absolute_top_impression_share,
-                 metrics.search_exact_match_impression_share
-          FROM keyword_view WHERE ${dateWhere}`);
-        const present = (f: string) => rows.filter((r) => r.metrics?.[f] != null).length;
-        return {
-          keywordRows: rows.length,
-          withSearchImpressionShare: present("search_impression_share"),
-          withRankLostShare: present("search_rank_lost_impression_share"),
-          withBudgetLostShare: present("search_budget_lost_impression_share"),
-          withTopShare: present("search_top_impression_share"),
-          withAbsoluteTopShare: present("search_absolute_top_impression_share"),
-          withQualityScore: rows.filter(
-            (r) =>
-              (r.ad_group_criterion?.quality_info as Record<string, unknown> | undefined)
-                ?.quality_score != null,
-          ).length,
-          sampleRows: rows
-            .filter((r) => r.metrics?.search_impression_share != null)
-            .slice(0, 3),
-        };
-      }),
-
-      // 6a. Every conversion action on the account.
-      run(async () => {
-        const rows = await q(`
-          SELECT conversion_action.id, conversion_action.name, conversion_action.status,
-                 conversion_action.type, conversion_action.category,
-                 conversion_action.origin, conversion_action.primary_for_goal,
-                 conversion_action.include_in_conversions_metric,
-                 conversion_action.counting_type
-          FROM conversion_action`);
-        return rows.map((r) => {
-          const a = r.conversion_action ?? {};
+  // A. One query per field x resource.
+  const matrixCells = await Promise.all(
+    SHARE_RESOURCES.flatMap(({ resource, id }) =>
+      SHARE_FIELDS.map(async (field) => {
+        try {
+          const rows = await q(
+            `SELECT ${id}, metrics.impressions, metrics.${field} FROM ${resource} WHERE ${dateWhere}`,
+          );
+          const values = rows
+            .map((r) => r.metrics?.[field])
+            .filter((v): v is number => typeof v === "number");
           return {
-            id: String(a.id ?? ""),
-            name: a.name,
-            status: enumName("ConversionActionStatus", a.status),
-            type: enumName("ConversionActionType", a.type),
-            category: enumName("ConversionActionCategory", a.category),
-            origin: enumName("ConversionOrigin", a.origin),
-            primaryForGoal: a.primary_for_goal ?? null,
-            includeInConversionsMetric: a.include_in_conversions_metric ?? null,
-            countingType: enumName("ConversionActionCountingType", a.counting_type),
+            resource,
+            field,
+            result: "works" as const,
+            rows: rows.length,
+            rowsWithValue: values.length,
+            sampleValues: values.slice(0, 3),
           };
-        });
-      }),
-
-      // 6b. What each action actually contributed in the window.
-      run(async () => {
-        const rows = await q(`
-          SELECT segments.conversion_action, segments.conversion_action_name,
-                 metrics.conversions, metrics.all_conversions
-          FROM campaign WHERE ${dateWhere}`);
-        const byAction = new Map<string, { name: string; conversions: number; allConversions: number }>();
-        for (const r of rows) {
-          const key = String(r.segments?.conversion_action ?? "");
-          const prev = byAction.get(key) ?? {
-            name: String(r.segments?.conversion_action_name ?? ""),
-            conversions: 0,
-            allConversions: 0,
+        } catch (err) {
+          const described = describeError(err) as {
+            errors?: Array<{ error_code?: unknown; message?: string }>;
           };
-          prev.conversions += Number(r.metrics?.conversions ?? 0);
-          prev.allConversions += Number(r.metrics?.all_conversions ?? 0);
-          byAction.set(key, prev);
+          return {
+            resource,
+            field,
+            result: "rejected" as const,
+            errorCodes: described.errors?.map((e) => e.error_code) ?? null,
+            errorMessages: described.errors?.map((e) => e.message) ?? described,
+          };
         }
-        return Array.from(byAction.entries()).map(([resourceName, v]) => ({
-          id: resourceName.split("/").pop(),
-          name: v.name,
-          conversions: Math.round(v.conversions * 100) / 100,
-          allConversions: Math.round(v.allConversions * 100) / 100,
-        }));
       }),
+    ),
+  );
+  const matrix: Record<string, Record<string, string>> = {};
+  for (const c of matrixCells) {
+    (matrix[c.field] ??= {})[c.resource] =
+      c.result === "works" ? `works (${c.rowsWithValue}/${c.rows} rows carry a value)` : "REJECTED";
+  }
 
-      // 7. Does any campaign use its own goals instead of the account's?
+  // The combination each report would actually send, to confirm the fields
+  // that pass individually also pass together.
+  const combined = await Promise.all(
+    SHARE_RESOURCES.map(({ resource, id }) =>
       run(async () => {
-        const rows = await q(`
-          SELECT campaign.id, campaign.name, campaign.status,
-                 campaign.advertising_channel_type,
-                 conversion_goal_campaign_config.goal_config_level,
+        const ok = matrixCells.filter((c) => c.resource === resource && c.result === "works");
+        if (ok.length === 0) return { resource, skipped: "no field works" };
+        const rows = await q(
+          `SELECT ${id}, ${ok.map((c) => `metrics.${c.field}`).join(", ")} FROM ${resource} WHERE ${dateWhere}`,
+        );
+        return { resource, fields: ok.map((c) => c.field), result: "works", rows: rows.length };
+      }),
+    ),
+  );
+
+  // B. Goal membership.
+  const [actions, customerGoals, campaignGoals, goalConfigs, customGoals, byCampaignAction] =
+    await Promise.all([
+      run(() =>
+        q(`
+          SELECT conversion_action.id, conversion_action.name, conversion_action.status,
+                 conversion_action.type, conversion_action.category, conversion_action.origin,
+                 conversion_action.primary_for_goal,
+                 conversion_action.include_in_conversions_metric,
+                 conversion_action.owner_customer
+          FROM conversion_action`),
+      ),
+      run(() =>
+        q(`
+          SELECT customer_conversion_goal.category, customer_conversion_goal.origin,
+                 customer_conversion_goal.biddable
+          FROM customer_conversion_goal`),
+      ),
+      run(() =>
+        q(`
+          SELECT campaign.id, campaign_conversion_goal.category,
+                 campaign_conversion_goal.origin, campaign_conversion_goal.biddable
+          FROM campaign_conversion_goal`),
+      ),
+      run(() =>
+        q(`
+          SELECT campaign.id, conversion_goal_campaign_config.goal_config_level,
                  conversion_goal_campaign_config.custom_conversion_goal
-          FROM conversion_goal_campaign_config`);
-        const counts: Record<string, number> = {};
-        const nonDefault: unknown[] = [];
-        for (const r of rows) {
-          const cfg = r.conversion_goal_campaign_config ?? {};
-          const level = enumName("GoalConfigLevel", cfg.goal_config_level);
-          counts[level] = (counts[level] ?? 0) + 1;
-          if (level !== "CUSTOMER" || cfg.custom_conversion_goal) {
-            nonDefault.push({
-              campaign: r.campaign?.name,
-              status: enumName("CampaignStatus", r.campaign?.status),
-              channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),
-              level,
-              customGoal: cfg.custom_conversion_goal ?? null,
-            });
-          }
-        }
-        return { campaignsByGoalConfigLevel: counts, nonDefault: nonDefault.slice(0, 25) };
-      }),
+          FROM conversion_goal_campaign_config`),
+      ),
+      run(() =>
+        q(`
+          SELECT custom_conversion_goal.id, custom_conversion_goal.name,
+                 custom_conversion_goal.status, custom_conversion_goal.conversion_actions
+          FROM custom_conversion_goal`),
+      ),
+      run(() =>
+        q(`
+          SELECT campaign.id, campaign.name, campaign.status,
+                 campaign.advertising_channel_type, segments.conversion_action,
+                 segments.conversion_action_name, segments.date,
+                 metrics.conversions, metrics.all_conversions
+          FROM campaign WHERE ${dateWhere}`),
+      ),
     ]);
+
+  const isErr = (v: unknown): v is { error: unknown } =>
+    !Array.isArray(v) && typeof v === "object" && v !== null && "error" in v;
+
+  type ActionInfo = {
+    id: string;
+    name: unknown;
+    status: string;
+    type: string;
+    category: string;
+    origin: string;
+    primaryForGoal: unknown;
+    includeInConversionsMetric: unknown;
+    ownerCustomer: unknown;
+  };
+  const actionById = new Map<string, ActionInfo>();
+  if (!isErr(actions)) {
+    for (const r of actions) {
+      const a = r.conversion_action ?? {};
+      actionById.set(String(a.id), {
+        id: String(a.id),
+        name: a.name,
+        status: enumName("ConversionActionStatus", a.status),
+        type: enumName("ConversionActionType", a.type),
+        category: enumName("ConversionActionCategory", a.category),
+        origin: enumName("ConversionOrigin", a.origin),
+        primaryForGoal: a.primary_for_goal ?? null,
+        includeInConversionsMetric: a.include_in_conversions_metric ?? null,
+        ownerCustomer: a.owner_customer ?? null,
+      });
+    }
+  }
+  const goalKey = (category: unknown, origin: unknown) =>
+    `${enumName("ConversionActionCategory", category)}/${enumName("ConversionOrigin", origin)}`;
+
+  const customerBiddable = new Map<string, unknown>();
+  if (!isErr(customerGoals)) {
+    for (const r of customerGoals) {
+      const g = r.customer_conversion_goal ?? {};
+      customerBiddable.set(goalKey(g.category, g.origin), g.biddable ?? null);
+    }
+  }
+  const campaignBiddable = new Map<string, unknown>();
+  if (!isErr(campaignGoals)) {
+    for (const r of campaignGoals) {
+      const g = r.campaign_conversion_goal ?? {};
+      campaignBiddable.set(`${r.campaign?.id}|${goalKey(g.category, g.origin)}`, g.biddable ?? null);
+    }
+  }
+  const configByCampaign = new Map<string, { level: string; customGoal: string | null }>();
+  if (!isErr(goalConfigs)) {
+    for (const r of goalConfigs) {
+      const c = r.conversion_goal_campaign_config ?? {};
+      configByCampaign.set(String(r.campaign?.id), {
+        level: enumName("GoalConfigLevel", c.goal_config_level),
+        customGoal: (c.custom_conversion_goal as string | undefined) ?? null,
+      });
+    }
+  }
+  const customGoalList = isErr(customGoals)
+    ? customGoals
+    : customGoals.map((r) => {
+        const g = r.custom_conversion_goal ?? {};
+        return {
+          resourceName: `customers/${String(client.googleAdsCustomerId).replace(/-/g, "")}/customConversionGoals/${g.id}`,
+          id: String(g.id),
+          name: g.name,
+          status: enumName("CustomConversionGoalStatus", g.status),
+          conversionActionIds: ((g.conversion_actions as string[] | undefined) ?? []).map((n) =>
+            n.split("/").pop(),
+          ),
+        };
+      });
+
+  // Every campaign x action that put anything into metrics.conversions.
+  type Cell = {
+    campaignId: string;
+    campaign: unknown;
+    campaignStatus: string;
+    channel: string;
+    actionId: string;
+    actionName: unknown;
+    conversions: number;
+    allConversions: number;
+    dates: string[];
+  };
+  const cells = new Map<string, Cell>();
+  if (!isErr(byCampaignAction)) {
+    for (const r of byCampaignAction) {
+      const conv = Number(r.metrics?.conversions ?? 0);
+      const all = Number(r.metrics?.all_conversions ?? 0);
+      if (conv === 0 && all === 0) continue;
+      const actionId = String(r.segments?.conversion_action ?? "").split("/").pop() ?? "";
+      const key = `${r.campaign?.id}|${actionId}`;
+      const cell = cells.get(key) ?? {
+        campaignId: String(r.campaign?.id),
+        campaign: r.campaign?.name,
+        campaignStatus: enumName("CampaignStatus", r.campaign?.status),
+        channel: enumName("AdvertisingChannelType", r.campaign?.advertising_channel_type),
+        actionId,
+        actionName: r.segments?.conversion_action_name,
+        conversions: 0,
+        allConversions: 0,
+        dates: [],
+      };
+      cell.conversions += conv;
+      cell.allConversions += all;
+      if (conv > 0) cell.dates.push(String(r.segments?.date));
+      cells.set(key, cell);
+    }
+  }
+  const explained = Array.from(cells.values())
+    .filter((c) => c.conversions > 0)
+    .map((c) => {
+      const action = actionById.get(c.actionId);
+      const config = configByCampaign.get(c.campaignId) ?? null;
+      const key = action ? `${action.category}/${action.origin}` : null;
+      const customGoal =
+        config?.customGoal && Array.isArray(customGoalList)
+          ? customGoalList.find((g) => g.resourceName === config.customGoal) ?? null
+          : null;
+      return {
+        campaign: c.campaign,
+        campaignId: c.campaignId,
+        campaignStatus: c.campaignStatus,
+        channel: c.channel,
+        actionId: c.actionId,
+        actionName: c.actionName,
+        conversions: Math.round(c.conversions * 100) / 100,
+        allConversions: Math.round(c.allConversions * 100) / 100,
+        conversionDates: c.dates.sort(),
+        actionInConversionActionList: Boolean(action),
+        primaryForGoal: action?.primaryForGoal ?? null,
+        includeInConversionsMetric: action?.includeInConversionsMetric ?? null,
+        actionGoal: key,
+        campaignGoalConfigLevel: config?.level ?? null,
+        campaignCustomGoal: config?.customGoal ?? null,
+        customGoalListsThisAction: customGoal
+          ? customGoal.conversionActionIds.includes(c.actionId)
+          : null,
+        customerGoalBiddable: key ? (customerBiddable.get(key) ?? null) : null,
+        campaignGoalBiddable: key ? (campaignBiddable.get(`${c.campaignId}|${key}`) ?? null) : null,
+      };
+    })
+    .sort((a, b) => Number(a.primaryForGoal === true) - Number(b.primaryForGoal === true));
 
   return new NextResponse(
     safeStringify({
       client: { name: client.name, customerId: client.googleAdsCustomerId },
       window: { fromDate, toDate, days },
-      keywords,
-      searchTerms,
-      searchTermsWithoutKeywordSegments: searchTermsNoKeyword,
-      campaignTotalsByChannelType: campaigns,
-      impressionShare,
-      conversionActions,
-      conversionsByActionInWindow: conversionsByAction,
-      goalConfig,
+      impressionShareMatrix: matrix,
+      impressionShareCells: matrixCells,
+      impressionShareCombined: combined,
+      conversionsExplained: {
+        // Non-primary (or unlisted) actions that still counted come first.
+        countedInConversions: explained,
+        nonPrimaryCounted: explained.filter((e) => e.primaryForGoal !== true),
+        customConversionGoals: customGoalList,
+        customerGoals: isErr(customerGoals)
+          ? customerGoals
+          : Object.fromEntries(customerBiddable.entries()),
+        errors: {
+          actions: isErr(actions) ? actions.error : null,
+          campaignGoals: isErr(campaignGoals) ? campaignGoals.error : null,
+          goalConfigs: isErr(goalConfigs) ? goalConfigs.error : null,
+          byCampaignAction: isErr(byCampaignAction) ? byCampaignAction.error : null,
+        },
+      },
     }),
     { headers: { "content-type": "application/json" } },
   );

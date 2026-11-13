@@ -5,6 +5,8 @@ import { SEARCH_TERMS_TRAILING_DAYS, syncAllSearchTerms } from "@/lib/ppc-search
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+const MAX_BACKFILL_DAYS = 800;
+
 function checkCronAuth(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
   if (!expected) return false;
@@ -12,18 +14,31 @@ function checkCronAuth(req: Request): boolean {
   return header === `Bearer ${expected}`;
 }
 
-// Keyword + search-term sync. Re-pulls the trailing 30 Eastern days through
-// yesterday on every run (not yesterday alone like ppc-google-ads-sync),
-// because conversions are credited back to the click date and keep rising.
+// Keyword + search-term + Search-campaign-total sync. Re-pulls the trailing
+// 30 Eastern days through yesterday on every run (not yesterday alone like
+// ppc-google-ads-sync), because conversions are credited back to the click
+// date and keep rising.
 //
 // Scheduled at 11:50 UTC in vercel.json: 7:50am Eastern under EDT, 6:50am
 // under EST (Vercel cron has no time zone support).
+//
+// One-off backfill (the WoW/MoM/YoY comparisons need history the daily
+// 30-day window never reaches): ?days=<n> widens the window, up to 800.
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const fromDate = daysAgoIsoEastern(SEARCH_TERMS_TRAILING_DAYS);
+  const daysParam = Number(new URL(req.url).searchParams.get("days"));
+  const days =
+    Number.isInteger(daysParam) && daysParam > 0
+      ? Math.min(daysParam, MAX_BACKFILL_DAYS)
+      : SEARCH_TERMS_TRAILING_DAYS;
+  const fromDate = daysAgoIsoEastern(days);
   const toDate = yesterdayIsoEastern();
-  const result = await syncAllSearchTerms({ fromDate, toDate, triggeredBy: "scheduled" });
+  const result = await syncAllSearchTerms({
+    fromDate,
+    toDate,
+    triggeredBy: days === SEARCH_TERMS_TRAILING_DAYS ? "scheduled" : "backfill",
+  });
   return NextResponse.json({ fromDate, toDate, ...result });
 }

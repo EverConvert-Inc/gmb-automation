@@ -421,6 +421,13 @@
       "when": 1794585091680,
       "tag": "0059_ppc_search_terms_keywords",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794586715028,
+      "tag": "0060_ppc_search_campaigns_daily",
+      "breakpoints": true
     }
   ]
 }

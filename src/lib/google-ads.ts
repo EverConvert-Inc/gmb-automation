@@ -731,9 +731,17 @@ export type SearchTermDailyRow = {
 };
 
 // Daily search-term metrics from search_term_view (Search campaigns; it
-// excludes Performance Max), limited to terms with a click OR a conversion
-// that day. GAQL has no OR, so this is two queries whose filters can't
-// overlap: clicks > 0, then clicks = 0 with conversions > 0.
+// excludes Performance Max), limited to terms with a click that day. A live
+// check across three accounts found zero rows with a conversion but no
+// click, and the impression-only tail is ~97% of rows, so clicks > 0 is the
+// whole storage rule.
+//
+// Two queries, because the keyword segments DROP any term that no keyword
+// triggered (live: one account lost 52 of 245 clicks that way). The second
+// query has no keyword segments, so it carries every term; whatever it has
+// beyond the first query's per-term sum is the no-keyword remainder, which
+// is returned as its own row with an empty keyword. See
+// deriveKeywordlessRows.
 //
 // Same rules as pullKeywordDaily: metrics.conversions only, no status
 // filter of any kind.
@@ -744,16 +752,7 @@ export async function pullSearchTermDaily(
   toDate: string,
 ): Promise<SearchTermDailyRow[]> {
   const customer = getCustomer(refreshToken, customerId);
-  const select = `
-    SELECT
-      campaign.id,
-      campaign.name,
-      ad_group.id,
-      ad_group.name,
-      search_term_view.search_term,
-      segments.keyword.info.text,
-      segments.keyword.info.match_type,
-      segments.search_term_match_type,
+  const metricsAndFrom = `
       segments.date,
       metrics.clicks,
       metrics.impressions,
@@ -762,14 +761,26 @@ export async function pullSearchTermDaily(
       metrics.conversions_value
     FROM search_term_view
     WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+      AND metrics.clicks > 0
   `;
+  const dims = `
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      search_term_view.search_term,`;
   type Raw = Array<Record<string, Record<string, unknown> | undefined>>;
-  const [clicked, convertedOnly] = (await Promise.all([
-    customer.query(`${select} AND metrics.clicks > 0`),
-    customer.query(`${select} AND metrics.clicks = 0 AND metrics.conversions > 0`),
+  const [withKeyword, allTerms] = (await Promise.all([
+    customer.query(`
+    SELECT${dims}
+      segments.keyword.info.text,
+      segments.keyword.info.match_type,
+      segments.search_term_match_type,${metricsAndFrom}`),
+    customer.query(`
+    SELECT${dims}${metricsAndFrom}`),
   ])) as [Raw, Raw];
 
-  return [...clicked, ...convertedOnly].map((r) => {
+  const toRow = (r: Raw[number]): SearchTermDailyRow => {
     const campaign = r.campaign ?? {};
     const adGroup = r.ad_group ?? {};
     const view = r.search_term_view ?? {};
@@ -793,6 +804,111 @@ export async function pullSearchTermDaily(
         segments.search_term_match_type == null
           ? ""
           : decodeEnum("SearchTermMatchType", segments.search_term_match_type),
+      clicks: Number(metrics.clicks ?? 0),
+      impressions: Number(metrics.impressions ?? 0),
+      costMicros: BigInt((metrics.cost_micros as number | string | undefined) ?? 0),
+      conversions: Number(metrics.conversions ?? 0),
+      conversionsValue: Number(metrics.conversions_value ?? 0),
+    };
+  };
+
+  const keyworded = withKeyword.map(toRow);
+  return [...keyworded, ...deriveKeywordlessRows(keyworded, allTerms.map(toRow))];
+}
+
+// `allTerms` (no keyword segments) minus the per-term sum of `keyworded`
+// leaves the traffic no keyword triggered. Compared per date + ad group +
+// search term. A remainder only becomes a row when it still has a click;
+// metrics are floored at zero so rounding in fractional conversions can
+// never produce a negative.
+export function deriveKeywordlessRows(
+  keyworded: SearchTermDailyRow[],
+  allTerms: SearchTermDailyRow[],
+): SearchTermDailyRow[] {
+  const keyOf = (r: SearchTermDailyRow) => [r.date, r.adGroupId, r.searchTerm].join("\u0000");
+  const used = new Map<
+    string,
+    { clicks: number; impressions: number; costMicros: bigint; conversions: number; conversionsValue: number }
+  >();
+  for (const r of keyworded) {
+    const u = used.get(keyOf(r)) ?? {
+      clicks: 0,
+      impressions: 0,
+      costMicros: 0n,
+      conversions: 0,
+      conversionsValue: 0,
+    };
+    u.clicks += r.clicks;
+    u.impressions += r.impressions;
+    u.costMicros += r.costMicros;
+    u.conversions += r.conversions;
+    u.conversionsValue += r.conversionsValue;
+    used.set(keyOf(r), u);
+  }
+  const out: SearchTermDailyRow[] = [];
+  for (const r of allTerms) {
+    const u = used.get(keyOf(r));
+    const clicks = r.clicks - (u?.clicks ?? 0);
+    if (clicks <= 0) continue;
+    const cost = r.costMicros - (u?.costMicros ?? 0n);
+    out.push({
+      ...r,
+      keywordText: "",
+      keywordMatchType: "",
+      searchTermMatchType: "",
+      clicks,
+      impressions: Math.max(0, r.impressions - (u?.impressions ?? 0)),
+      costMicros: cost > 0n ? cost : 0n,
+      conversions: Math.max(0, r.conversions - (u?.conversions ?? 0)),
+      conversionsValue: Math.max(0, r.conversionsValue - (u?.conversionsValue ?? 0)),
+    });
+  }
+  return out;
+}
+
+export type SearchCampaignDailyRow = {
+  date: string; // YYYY-MM-DD
+  campaignId: string;
+  campaignName: string;
+  clicks: number;
+  impressions: number;
+  costMicros: bigint;
+  conversions: number;
+  conversionsValue: number;
+};
+
+// Daily totals for SEARCH campaigns only — the reference the search-term
+// and keyword reports reconcile against (their two gap rows). Filtering on
+// advertising_channel_type is safe alongside a date range: a campaign's
+// type never changes. Still no status filter.
+export async function pullSearchCampaignDaily(
+  refreshToken: string,
+  customerId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<SearchCampaignDailyRow[]> {
+  const customer = getCustomer(refreshToken, customerId);
+  const rows = (await customer.query(`
+    SELECT
+      campaign.id,
+      campaign.name,
+      segments.date,
+      metrics.clicks,
+      metrics.impressions,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM campaign
+    WHERE campaign.advertising_channel_type = 'SEARCH'
+      AND segments.date BETWEEN '${fromDate}' AND '${toDate}'
+  `)) as Array<Record<string, Record<string, unknown> | undefined>>;
+  return rows.map((r) => {
+    const campaign = r.campaign ?? {};
+    const metrics = r.metrics ?? {};
+    return {
+      date: String(r.segments?.date ?? ""),
+      campaignId: String(campaign.id ?? ""),
+      campaignName: String(campaign.name ?? ""),
       clicks: Number(metrics.clicks ?? 0),
       impressions: Number(metrics.impressions ?? 0),
       costMicros: BigInt((metrics.cost_micros as number | string | undefined) ?? 0),

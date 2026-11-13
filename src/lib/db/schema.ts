@@ -649,9 +649,8 @@ export const ppcKeywordsDaily = pgTable(
 ).enableRLS();
 
 // Search-term daily facts from Google Ads' search_term_view (Search
-// campaigns only — it excludes Performance Max). Only terms with a click or
-// a conversion that day are stored; the impression-only long tail is left
-// out. Google also withholds terms under its privacy threshold, so these
+// campaigns only — it excludes Performance Max). Only terms with a click
+// that day are stored; the impression-only long tail is left out. Google also withholds terms under its privacy threshold, so these
 // rows deliberately sum to LESS than the keyword/campaign totals — the
 // report shows that difference as its own "hidden terms" row.
 //
@@ -673,7 +672,7 @@ export const ppcSearchTermsDaily = pgTable(
     searchTerm: text("search_term").notNull(),
     searchTermHash: text("search_term_hash").notNull(),
     // The keyword that triggered the term (segments.keyword.info). Empty
-    // string when Google reports no keyword for the row.
+    // string for a term no keyword triggered (keywordless serving).
     keywordText: text("keyword_text").notNull().default(""),
     keywordMatchType: text("keyword_match_type").notNull().default(""),
     // How the term matched: EXACT | NEAR_EXACT | PHRASE | NEAR_PHRASE | BROAD.
@@ -704,6 +703,50 @@ export const ppcSearchTermsDaily = pgTable(
       t.searchTermMatchType,
     ),
     clientDateIdx: index("ppc_search_terms_daily_client_date_idx").on(
+      t.ppcClientId,
+      t.date,
+    ),
+  }),
+).enableRLS();
+
+// Daily totals for SEARCH campaigns only, from the same sync run as the two
+// tables above. This is what the search-term and keyword reports reconcile
+// against: campaign total - keyword total = clicks no keyword triggered,
+// keyword total - listed search terms = terms Google withholds for privacy.
+// ppc_ads_daily can't serve as that reference — it mixes in Performance
+// Max/Display and its conversions are only pulled once, the morning after.
+export const ppcSearchCampaignsDaily = pgTable(
+  "ppc_search_campaigns_daily",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    googleAdsCampaignId: text("google_ads_campaign_id").notNull(),
+    campaignName: text("campaign_name").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    costMicros: bigint("cost_micros", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    conversions: numeric("conversions", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    conversionsValue: numeric("conversions_value", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniq: unique("ppc_search_campaigns_daily_unique").on(
+      t.ppcClientId,
+      t.googleAdsCampaignId,
+      t.date,
+    ),
+    clientDateIdx: index("ppc_search_campaigns_daily_client_date_idx").on(
       t.ppcClientId,
       t.date,
     ),
