@@ -221,10 +221,17 @@ export async function getAccountHealthOverview(through: string): Promise<Account
       const spendSince = spend
         .filter((d) => lastSignedDate === null || d.date > lastSignedDate)
         .reduce((n, d) => n + micros(d.costMicros), 0);
+      // Stored spend may start well inside the lookback for a recently
+      // added account; the copy then names that date instead of claiming
+      // the whole window.
+      const firstSpend = spend.reduce<string | null>((m, d) => (m === null || d.date < m ? d.date : m), null);
+      const historyFrom =
+        firstSpend !== null && daysBetween(signedFrom, firstSpend) > TRIAGE.signedHistorySlack ? firstSpend : null;
       signed = {
         lastSignedDate,
         spendSinceLastSigned: spendSince,
         ownCostPerSigned: total >= TRIAGE.signedOwnMin && spendAll > 0 ? spendAll / total : null,
+        historyFrom,
       };
     }
 

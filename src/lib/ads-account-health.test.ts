@@ -158,7 +158,7 @@ const quiet: TriageInputs = {
   junkConversions: 1,
   junkActions: [],
   pacing: { judged: true, days: 7, from: "2026-11-09", avgDailySpend: 100, dailyBudget: 100, ratio: 1 },
-  signed: { lastSignedDate: "2026-11-02", spendSinceLastSigned: 1500, ownCostPerSigned: 5000 },
+  signed: { lastSignedDate: "2026-11-02", spendSinceLastSigned: 1500, ownCostPerSigned: 5000, historyFrom: null },
   wasted: { dollars: 200, terms: 2, share: 0.1 },
   optimizationScore: 1,
   budgetLost: 0.1,
@@ -232,7 +232,7 @@ describe("triage", () => {
 
   it("treats a signed-case gap as context: it never sets a tier or a rank", () => {
     const signed = (spend: number, own: number | null, last: string | null = "2026-08-03") => ({
-      lastSignedDate: last, spendSinceLastSigned: spend, ownCostPerSigned: own,
+      lastSignedDate: last, spendSinceLastSigned: spend, ownCostPerSigned: own, historyFrom: null as string | null,
     });
     const gap = t({ signed: signed(12400, 4100) });
     expect([gap.tier, gap.primary]).toEqual(["ok", null]);
@@ -241,6 +241,10 @@ describe("triage", () => {
     );
     expect(t({ signed: signed(20000, null, null) }).signedContext).toBe(
       "About $20,000 spent with no signed case in CallRail for 180 days; accounts here average about $4,000 per signed case.",
+    );
+    // Stored spend starts inside the lookback: name that date, never "180 days".
+    expect(t({ signed: { ...signed(20000, null, null), historyFrom: "2026-10-07" } }).signedContext).toBe(
+      "About $20,000 spent with no signed case in CallRail since Oct 7; accounts here average about $4,000 per signed case.",
     );
     expect(t({ signed: signed(5000, 5000) }).signedContext).toBeNull(); // 1x its own average
     expect(t({ signed: null }).signedContext).toBeNull(); // no CallRail
@@ -267,7 +271,7 @@ describe("triage", () => {
   });
 
   it("offers budget-limited as an opportunity only where cases are being signed cheaply", () => {
-    const cheap = { lastSignedDate: "2026-11-10", spendSinceLastSigned: 500, ownCostPerSigned: 2100 };
+    const cheap = { lastSignedDate: "2026-11-10", spendSinceLastSigned: 500, ownCostPerSigned: 2100, historyFrom: null };
     const r = t({ budgetLost: 0.52, signed: cheap });
     expect(r.tier).toBe("ok");
     expect(r.opportunity).toBe(
@@ -299,7 +303,7 @@ describe("triage", () => {
       row("Quiet big", 9000, {}),
       row("No data", 100, { data: "missing" }),
       // A huge signed-case gap: context only, so this account is not raised at all.
-      row("Signed gap", 8000, { signed: { lastSignedDate: "2026-06-01", spendSinceLastSigned: 60000, ownCostPerSigned: 4000 } }),
+      row("Signed gap", 8000, { signed: { lastSignedDate: "2026-06-01", spendSinceLastSigned: 60000, ownCostPerSigned: 4000, historyFrom: null } }),
       row("Overpacing", 9000, { pacing: overpacing }), // ~$18k a month over
       row("Small non-lead", 1000, { mtdSpend: 1000, conversions: 100, junkConversions: 90 }),
       row("Big non-lead", 5000, { mtdSpend: 5000, conversions: 100, junkConversions: 90 }),

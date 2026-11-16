@@ -139,6 +139,7 @@ export const TRIAGE = {
   signedLookbackDays: 180,
   signedOwnMin: 2, // signed cases needed before an account is its own benchmark
   signedContextRatio: 1.5, // spend since the last one, in cost-per-signed terms
+  signedHistorySlack: 7, // days of missing early spend still counted as a full window
   // Wasted Search spend (trailing window)
   wastedWindowDays: 30,
   wastedMinDollars: 500,
@@ -233,6 +234,10 @@ export type TriageInputs = {
     spendSinceLastSigned: number; // whole lookback when there is none
     // Lookback spend / signed cases, when the account has enough of its own.
     ownCostPerSigned: number | null;
+    // First day of stored spend inside the lookback, when the stored history
+    // does not reach back the whole lookback (a recently added account).
+    // Null = the full window exists.
+    historyFrom: string | null;
   } | null;
   // Null = the trailing search-terms window is not fully synced, or the
   // account has no cost per conversion to hold terms against.
@@ -352,7 +357,9 @@ function signedContext(i: TriageInputs, portfolio: Portfolio): string | null {
   if (s.spendSinceLastSigned / benchmark < TRIAGE.signedContextRatio) return null;
   const since = s.lastSignedDate
     ? `since CallRail's last signed case (${shortDay(s.lastSignedDate)})`
-    : `with no signed case in CallRail for ${TRIAGE.signedLookbackDays} days`;
+    : s.historyFrom
+      ? `with no signed case in CallRail since ${shortDay(s.historyFrom)}`
+      : `with no signed case in CallRail for ${TRIAGE.signedLookbackDays} days`;
   const against = own !== null ? `its own average is about ${usd0(own)}` : `accounts here average about ${usd0(benchmark)}`;
   return `About ${usd0(s.spendSinceLastSigned)} spent ${since}; ${against} per signed case.`;
 }
