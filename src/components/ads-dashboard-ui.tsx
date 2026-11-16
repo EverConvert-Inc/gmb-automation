@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Banner } from "@/components/ui/banner";
 import { badgeClasses } from "@/components/ui/badge";
@@ -116,11 +117,13 @@ export function AdsDashboardHeader({
     <>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
         <div className="min-w-0">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            <Link href={`/ads${query(w)}`} className="hover:text-foreground">
-              Ads Dashboard
-            </Link>
-          </div>
+          <Link
+            href={`/ads${query(w)}`}
+            className="mb-1 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            All accounts
+          </Link>
           <h1 className="truncate font-display text-3xl font-bold tracking-tight">{client.name}</h1>
         </div>
         {showSync && (
