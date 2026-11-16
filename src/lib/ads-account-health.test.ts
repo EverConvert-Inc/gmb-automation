@@ -182,8 +182,12 @@ describe("triage", () => {
     });
     expect(r.tier).toBe("act");
     expect(r.primary?.kind).toBe("junk");
+    // Stated as our classification, not as a fact about the account.
     expect(r.primary?.text).toBe(
-      "Website Click to Call: 179 of 187 conversions (+1 more junk action). 98% of conversions are likely junk (183 of 187).",
+      "Website Click to Call: 179 of 187 conversions, an action we class as non-lead (98% non-lead in all).",
+    );
+    expect(t({ conversions: 100, junkConversions: 90 }).primary?.text).toBe(
+      "90 of 100 conversions (90%) come from actions we class as non-lead.",
     );
     expect(r.primary?.dollars).toBeCloseTo(3514.86 * (183 / 186.99), 2);
   });
@@ -203,7 +207,7 @@ describe("triage", () => {
     expect(t({ wasted }).primary?.kind).toBe("wasted");
     const r = t({ ...junky, wasted });
     expect([r.primary?.kind, r.secondary?.kind]).toEqual(["junk", undefined]);
-    expect(r.note).toContain("Wasted spend is not judged");
+    expect(r.note).toBe("Wasted spend is not judged while most conversions are non-lead actions.");
   });
 
   it("flags overpacing only when it is both large and worth real money", () => {
@@ -226,26 +230,21 @@ describe("triage", () => {
     });
   });
 
-  it("judges signed cases by spend since the last one, never by a zero this month", () => {
+  it("treats a signed-case gap as context: it never sets a tier or a rank", () => {
     const signed = (spend: number, own: number | null, last: string | null = "2026-08-03") => ({
       lastSignedDate: last, spendSinceLastSigned: spend, ownCostPerSigned: own,
     });
-    expect(t({ signed: signed(7000, 5000) }).tier).toBe("ok"); // 1.4x its own average
-    expect(t({ signed: signed(8000, 5000) }).tier).toBe("watch"); // 1.6x
-    const act = t({ signed: signed(12400, 4100) });
-    expect(act.tier).toBe("act");
-    expect(act.primary?.text).toBe(
-      "$12,400 spent since the last signed case (Aug 3); this account averages $4,100 per signed case.",
+    const gap = t({ signed: signed(12400, 4100) });
+    expect([gap.tier, gap.primary]).toEqual(["ok", null]);
+    expect(gap.signedContext).toBe(
+      "About $12,400 spent since CallRail's last signed case (Aug 3); its own average is about $4,100 per signed case.",
     );
-    expect(act.primary?.dollars).toBe(8300);
-    // No history of its own: measured against the portfolio, a watch at most.
-    const borrowed = t({ signed: signed(20000, null, null) });
-    expect(borrowed.tier).toBe("watch");
-    expect(borrowed.primary?.text).toBe(
-      "$20,000 spent with no signed case in the last 180 days; the portfolio's typical cost per signed case is $4,000.",
+    expect(t({ signed: signed(20000, null, null) }).signedContext).toBe(
+      "About $20,000 spent with no signed case in CallRail for 180 days; accounts here average about $4,000 per signed case.",
     );
-    expect(t({ signed: null }).tier).toBe("ok"); // no CallRail
-    expect(t({ signed: signed(20000, null, null) }, { ...portfolio, costPerSigned: null }).tier).toBe("ok");
+    expect(t({ signed: signed(5000, 5000) }).signedContext).toBeNull(); // 1x its own average
+    expect(t({ signed: null }).signedContext).toBeNull(); // no CallRail
+    expect(t({ signed: signed(20000, null, null) }, { ...portfolio, costPerSigned: null }).signedContext).toBeNull();
   });
 
   it("flags wasted spend only against the portfolio and above a dollar floor", () => {
@@ -272,7 +271,7 @@ describe("triage", () => {
     const r = t({ budgetLost: 0.52, signed: cheap });
     expect(r.tier).toBe("ok");
     expect(r.opportunity).toBe(
-      "Budget-limited (52% of Search impressions lost to budget) while signing cases at $2,100 each — room to scale.",
+      "Budget-limited (52% of Search impressions lost to budget) while CallRail shows cases signing at about $2,100 each.",
     );
     expect(t({ budgetLost: 0.52 }).opportunity).toBeNull(); // $5,000 a case is above typical
     expect(t({ budgetLost: 0.52, signed: cheap, conversions: 100, junkConversions: 90 }).opportunity).toBeNull();
@@ -291,17 +290,23 @@ describe("triage", () => {
     }
   });
 
-  it("orders accounts by tier, then by the money their primary issue touches", () => {
+  it("ranks on the most trusted signal: a non-lead account outranks a bigger pacing or signed-gap problem", () => {
     const row = (name: string, mtdSpend: number, x: Partial<TriageInputs>) => ({ name, mtdSpend, triage: t(x) });
+    const overpacing: TriageInputs["pacing"] = {
+      judged: true, days: 7, from: "2026-11-09", avgDailySpend: 900, dailyBudget: 300, ratio: 3,
+    };
     const rows = [
       row("Quiet big", 9000, {}),
       row("No data", 100, { data: "missing" }),
-      row("Small junk", 1000, { mtdSpend: 1000, conversions: 100, junkConversions: 90 }),
-      row("Big junk", 5000, { mtdSpend: 5000, conversions: 100, junkConversions: 90 }),
+      // A huge signed-case gap: context only, so this account is not raised at all.
+      row("Signed gap", 8000, { signed: { lastSignedDate: "2026-06-01", spendSinceLastSigned: 60000, ownCostPerSigned: 4000 } }),
+      row("Overpacing", 9000, { pacing: overpacing }), // ~$18k a month over
+      row("Small non-lead", 1000, { mtdSpend: 1000, conversions: 100, junkConversions: 90 }),
+      row("Big non-lead", 5000, { mtdSpend: 5000, conversions: 100, junkConversions: 90 }),
       row("Watch", 2000, { optimizationScore: 0.5 }),
     ];
     expect(rows.sort(compareByTriage).map((r) => r.name)).toEqual([
-      "Big junk", "Small junk", "Watch", "Quiet big", "No data",
+      "Big non-lead", "Small non-lead", "Overpacing", "Watch", "Quiet big", "Signed gap", "No data",
     ]);
   });
 });

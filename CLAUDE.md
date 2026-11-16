@@ -180,8 +180,11 @@ classification. A non-match falls back to tracker-name classification.
   junk action names; signed cases and wasted Search spend are read from the PPC syncs'
   own tables at query time. All triage rules and thresholds live in
   `src/lib/ads-account-health.ts`: each account gets one primary issue, at most one
-  secondary, and a tier (act / watch / ok / no data), ranked by the dollars the issue
-  touches. Things normal for the portfolio raise nothing.
+  secondary, and a tier (act / watch / ok / no data). Issues come only from
+  Google-Ads-direct data and rank by signal trust (non-lead conversions first), then
+  dollars; the CallRail signed-case gap is row context and never sets a tier or rank.
+  "Non-lead" is our classification and the copy says so. Things normal for the
+  portfolio raise nothing.
 - **Pacing is never month-to-date spend against today's budget** — budgets are edited
   mid-month and that reads every cut as overspending. Each snapshot stores the day's
   spend beside the budget in force; pacing averages the most recent run of days at the

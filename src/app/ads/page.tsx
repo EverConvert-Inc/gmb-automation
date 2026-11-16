@@ -32,11 +32,12 @@ function fmtLost(v: number | null): string {
   return pct(v);
 }
 
-// A cell is coloured only when it is the subject of one of the row's two
-// surfaced issues — red for an emergency, amber for a watch.
+// One coloured cell per row at most: the subject of the primary issue, red
+// for an emergency and amber for a watch. Everything else stays quiet, so
+// the colour always points at the single worst thing.
 function tone(r: AccountHealthRow, ...kinds: IssueKind[]): string {
-  const issue = [r.triage.primary, r.triage.secondary].find((i) => i && kinds.includes(i.kind));
-  return issue ? (issue.tier === "act" ? ACT : WATCH) : QUIET;
+  const p = r.triage.primary;
+  return p && kinds.includes(p.kind) ? (p.tier === "act" ? ACT : WATCH) : QUIET;
 }
 
 // Where the evidence for an issue lives.
@@ -47,12 +48,12 @@ function issueHref(id: string, issue: Issue | null): string {
 const DEFINITIONS = {
   spend: "Month-to-date cost across every campaign type in the Google Ads account, Performance Max included. Local Services Ads are a separate product and are not in this figure.",
   pacing: `Average daily spend against the current daily budget, over the most recent days recorded at that same budget (up to ${T.pacingWindowDays}). The daily budget is the sum of the daily budgets enabled campaigns draw on, a shared budget counted once. After a budget edit only the days since are averaged, and nothing is judged until there are ${T.pacingMinDays} — so a mid-month budget change never reads as overspending. Google may spend up to twice a daily budget on one day and evens it out over the month.`,
-  budgetLost: "Search impression share lost to budget: the share of Search auctions the account was eligible for but did not show in because budget ran out. Google's account-level figure, month to date. Search campaigns only — Performance Max is not in it. Google reports anything under 10% as “<10%” and over 90% as “>90%”. Coloured only when well above the portfolio's median.",
-  rankLost: "Search impression share lost to rank: the share of eligible Search auctions lost because Ad Rank (bid × quality) was too low. Google's account-level figure, month to date, Search campaigns only. High values are normal in this vertical, so it is coloured only when well above the portfolio's median and never raises an account on its own.",
+  budgetLost: "Search impression share lost to budget: the share of Search auctions the account was eligible for but did not show in because budget ran out. Google's account-level figure, month to date. Search campaigns only — Performance Max is not in it. Google reports anything under 10% as “<10%” and over 90% as “>90%”.",
+  rankLost: "Search impression share lost to rank: the share of eligible Search auctions lost because Ad Rank (bid × quality) was too low. Google's account-level figure, month to date, Search campaigns only. High values are normal in this vertical, so it never raises an account.",
   score: `Google's account-level optimization score, 0–100%. Google derives it from its own open recommendations, each weighted by the impact Google estimates it would have; applying OR dismissing a recommendation raises it. It measures how many of Google's suggestions are outstanding, not how the account performs — 100% usually means recommendations were applied or dismissed. Shown in colour only under ${pct(T.optimizationScore)}.`,
-  conversions: "Google's “Conversions” (metrics.conversions) month to date, all campaign types: whatever the account is set up to count. The junk share is the part that came from likely-junk actions — an action is likely junk when its category or name describes a tap, visit or engagement rather than a lead: phone-number or contact-link taps (click-to-call), page views, engagements, directions requests, outbound clicks, store visits, downloads, YouTube views, cart and checkout actions. It is judged from what each action actually counted, never from its Primary flag. The Conversion audit page lists every action.",
-  signed: `Signed cases from CallRail (calls and texts tagged Signed), month to date, across every channel except GMB. Beneath it: ad spend since the last signed case, looking back ${T.signedLookbackDays} days. An account is judged on that spend against its own average cost per signed case over the same ${T.signedLookbackDays} days — not on having none yet this month, which is normal.`,
-  wasted: `Search spend over the last ${T.wastedWindowDays} days on search terms that each cost at least the account's own cost per conversion and produced no conversion. A term with a few clicks and no conversion is ordinary and is not counted. Search campaigns only. Not judged when conversions are mostly junk, or until the search-terms sync covers the whole ${T.wastedWindowDays} days.`,
+  conversions: "Google's “Conversions” (metrics.conversions) month to date, all campaign types: whatever the account is set up to count. “Non-lead” is our classification, not Google's: an action whose category or name describes a tap, visit or engagement rather than a lead — phone-number or contact-link taps (click-to-call), page views, engagements, directions requests, outbound clicks, store visits, downloads, YouTube views, cart and checkout actions. The share is what those actions actually counted, whatever their Primary flag. The Conversion audit page lists every action.",
+  signed: `Signed cases from CallRail (calls and texts tagged Signed), month to date, across every channel except GMB. Beneath it: ad spend since the last signed case, looking back ${T.signedLookbackDays} days. Both rest on CallRail tags matched to Google spend, so they are context and never decide where an account ranks.`,
+  wasted: `Search spend over the last ${T.wastedWindowDays} days on search terms that each cost at least the account's own cost per conversion and produced no conversion. A term with a few clicks and no conversion is ordinary and is not counted. Search campaigns only. Not judged while most conversions are non-lead actions, or until the search-terms sync covers the whole ${T.wastedWindowDays} days.`,
 } as const;
 
 function Head({ children, tip, right = false, note }: { children: React.ReactNode; tip: string; right?: boolean; note?: string }) {
@@ -108,6 +109,7 @@ function Row({ r }: { r: AccountHealthRow }) {
           </p>
         )}
         {t.secondary && <p className={cn("mt-1 text-xs", QUIET)}>Also: {t.secondary.text}</p>}
+        {t.signedContext && <p className={cn("mt-1 text-xs", QUIET)}>{t.signedContext}</p>}
         {t.opportunity && (
           <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">{t.opportunity}</p>
         )}
@@ -122,20 +124,20 @@ function Row({ r }: { r: AccountHealthRow }) {
       <td className={TDR}>
         <PacingCell r={r} />
       </td>
-      <td className={cn(TDR, t.marks.budgetLost ? WATCH : QUIET)}>{fmtLost(r.budgetLost)}</td>
-      <td className={cn(TDR, t.marks.rankLost ? WATCH : QUIET)}>{fmtLost(r.rankLost)}</td>
+      <td className={cn(TDR, QUIET)}>{fmtLost(r.budgetLost)}</td>
+      <td className={cn(TDR, QUIET)}>{fmtLost(r.rankLost)}</td>
       <td className={cn(TDR, tone(r, "optimization_score"))}>
         {r.optimizationScore === null ? "—" : pct(r.optimizationScore)}
       </td>
       <td className={TDR}>
         <div className={QUIET}>{r.conversions === null ? "—" : fmtConv(r.conversions)}</div>
         {r.junkShare !== null && r.junkShare > 0 && (
-          <div className={cn("text-[10px]", tone(r, "junk"))}>{pct(r.junkShare)} junk</div>
+          <div className={cn("text-[10px]", tone(r, "junk"))}>{pct(r.junkShare)} non-lead</div>
         )}
       </td>
       <td className={TDR}>
         <div className={QUIET}>{r.signedMtd === null ? "—" : fmtInt(r.signedMtd)}</div>
-        <div className={cn("text-[10px]", r.signedMtd === null ? QUIET : tone(r, "signed"))}>
+        <div className={cn("text-[10px]", QUIET)}>
           {r.signedMtd === null
             ? "no CallRail"
             : r.spendSinceLastSigned === null
@@ -187,7 +189,7 @@ function HealthTable({ rows }: { rows: AccountHealthRow[] }) {
 }
 
 const TIER_LABEL: Record<Tier, { title: string; blurb: string }> = {
-  act: { title: "Act now", blurb: "Something here is costing real money or corrupting the account's own numbers." },
+  act: { title: "Act now", blurb: "Most conversions are non-lead actions, or spend is running well past budget." },
   watch: { title: "Watch", blurb: "Worth a look this week; not an emergency." },
   ok: { title: "On track", blurb: "Nothing outside what is normal for this portfolio." },
   nodata: { title: "No current data", blurb: "Not judged — the account-health sync has nothing current for these." },
@@ -339,11 +341,8 @@ export default async function AdsDashboardOverviewPage() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        An account is raised only for something worth acting on: conversions that are mostly junk,
-        spend running well past the current budget, a long and expensive gap since the last signed
-        case, or unusually high spend on search terms that never convert. Each account shows its
-        most important issue and at most one more. Hover the ⓘ beside a column for its exact
-        definition.
+        Each account shows its most important issue and at most one more. Hover the ⓘ beside a
+        column for its exact definition.
       </p>
     </div>
   );

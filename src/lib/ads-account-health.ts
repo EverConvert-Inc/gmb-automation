@@ -114,7 +114,9 @@ export function daysBetween(a: string, b: string): number {
 // The overview is a triage, not a list of thresholds crossed. Every account
 // gets at most one primary issue and one secondary, a tier, and a dollar
 // figure for what the primary issue touches, so different kinds of problem
-// can be ranked against each other. Things that are normal for this
+// can be ranked against each other. Wording stays at the confidence the data
+// supports: "non-lead" is our classification of a conversion action, and
+// anything built on CallRail's Signed tags is an estimate. Things normal for this
 // portfolio (no signed case yet this month, most search terms never
 // converting, a third of impressions lost to rank) raise nothing.
 
@@ -136,8 +138,7 @@ export const TRIAGE = {
   // Signed cases: spend since the last one, against cost per signed case
   signedLookbackDays: 180,
   signedOwnMin: 2, // signed cases needed before an account is its own benchmark
-  signedActRatio: 2,
-  signedWatchRatio: 1.5,
+  signedContextRatio: 1.5, // spend since the last one, in cost-per-signed terms
   // Wasted Search spend (trailing window)
   wastedWindowDays: 30,
   wastedMinDollars: 500,
@@ -249,7 +250,11 @@ export type Portfolio = {
   rankLostMedian: number | null;
 };
 
-export type IssueKind = "junk" | "pacing_over" | "pacing_under" | "signed" | "wasted" | "optimization_score";
+// Every issue kind is read straight from Google Ads. The signed-case gap is
+// deliberately not one: it comes from joining CallRail tags to Google spend,
+// which is the least certain figure on the page, so it is shown as context
+// on the row and never decides a tier or a rank.
+export type IssueKind = "junk" | "pacing_over" | "pacing_under" | "wasted" | "optimization_score";
 
 export type Issue = {
   kind: IssueKind;
@@ -267,6 +272,8 @@ export type Triage = {
   secondary: Issue | null;
   // Good news worth acting on; never raises the tier.
   opportunity: string | null;
+  // A signed-case gap, as context only.
+  signedContext: string | null;
   // A plain note when a figure was deliberately not judged.
   note: string | null;
   // Cells well above the portfolio's normal, for colouring only.
@@ -291,17 +298,13 @@ function junkIssue(i: TriageInputs): Issue | null {
         ? "watch"
         : null;
   if (!tier) return null;
+  // "Non-lead" is our own classification of an action (a tap, a visit),
+  // not something Google reports, and the wording says so.
   const top = i.junkActions[0];
-  const rest = i.junkActions.length - 1;
-  const named = top
-    ? `${top.name}: ${count(top.conversions)} of ${count(i.conversions)} conversions${rest > 0 ? ` (+${rest} more junk action${rest > 1 ? "s" : ""})` : ""}. `
-    : "";
-  return {
-    kind: "junk",
-    tier,
-    dollars: i.mtdSpend * share,
-    text: `${named}${pct0(share)} of conversions are likely junk (${count(i.junkConversions)} of ${count(i.conversions)}).`,
-  };
+  const text = top
+    ? `${top.name}: ${count(top.conversions)} of ${count(i.conversions)} conversions, an action we class as non-lead (${pct0(share)} non-lead in all).`
+    : `${count(i.junkConversions)} of ${count(i.conversions)} conversions (${pct0(share)}) come from actions we class as non-lead.`;
+  return { kind: "junk", tier, dollars: i.mtdSpend * share, text };
 }
 
 function pacingIssue(i: TriageInputs): Issue | null {
@@ -329,30 +332,20 @@ function pacingIssue(i: TriageInputs): Issue | null {
   return null;
 }
 
-function signedIssue(i: TriageInputs, portfolio: Portfolio): Issue | null {
+// Context only. CallRail's Signed tags set against Google spend: useful to
+// see, too indirect to rank on.
+function signedContext(i: TriageInputs, portfolio: Portfolio): string | null {
   const s = i.signed;
   if (!s) return null;
   const own = s.ownCostPerSigned;
   const benchmark = own ?? portfolio.costPerSigned;
   if (benchmark === null || !(benchmark > 0)) return null;
-  const ratio = s.spendSinceLastSigned / benchmark;
-  if (ratio < TRIAGE.signedWatchRatio) return null;
-  // Judged against other accounts, a dry spell is a reason to look, not an
-  // emergency: this account may simply sign less often.
-  const tier = own !== null && ratio >= TRIAGE.signedActRatio ? "act" : "watch";
+  if (s.spendSinceLastSigned / benchmark < TRIAGE.signedContextRatio) return null;
   const since = s.lastSignedDate
-    ? `since the last signed case (${shortDay(s.lastSignedDate)})`
-    : `with no signed case in the last ${TRIAGE.signedLookbackDays} days`;
-  const against =
-    own !== null
-      ? `this account averages ${usd0(own)} per signed case`
-      : `the portfolio's typical cost per signed case is ${usd0(benchmark)}`;
-  return {
-    kind: "signed",
-    tier,
-    dollars: s.spendSinceLastSigned - benchmark,
-    text: `${usd0(s.spendSinceLastSigned)} spent ${since}; ${against}.`,
-  };
+    ? `since CallRail's last signed case (${shortDay(s.lastSignedDate)})`
+    : `with no signed case in CallRail for ${TRIAGE.signedLookbackDays} days`;
+  const against = own !== null ? `its own average is about ${usd0(own)}` : `accounts here average about ${usd0(benchmark)}`;
+  return `About ${usd0(s.spendSinceLastSigned)} spent ${since}; ${against} per signed case.`;
 }
 
 function wastedIssue(i: TriageInputs, portfolio: Portfolio): Issue | null {
@@ -386,7 +379,7 @@ const NO_DATA_TEXT: Record<Exclude<TriageInputs["data"], "ok">, string> = {
 export function triage(i: TriageInputs, portfolio: Portfolio): Triage {
   const marks = { budgetLost: false, rankLost: false };
   if (i.data !== "ok") {
-    return { tier: "nodata", primary: null, secondary: null, opportunity: null, note: NO_DATA_TEXT[i.data], marks };
+    return { tier: "nodata", primary: null, secondary: null, opportunity: null, signedContext: null, note: NO_DATA_TEXT[i.data], marks };
   }
 
   const junk = junkIssue(i);
@@ -394,21 +387,15 @@ export function triage(i: TriageInputs, portfolio: Portfolio): Triage {
   const issues = [
     junk,
     pacingIssue(i),
-    signedIssue(i, portfolio),
     // When most conversions are junk, "no conversion" says nothing about a
     // search term, so wasted spend is not judged for that account.
     junkEmergency ? null : wastedIssue(i, portfolio),
     scoreIssue(i),
   ].filter((x): x is Issue => x !== null);
 
-  // Emergencies first; among equals junk leads (everything conversion-based
-  // downstream of it is unreliable), then whatever touches the most money.
-  issues.sort(
-    (a, b) =>
-      Number(b.tier === "act") - Number(a.tier === "act") ||
-      Number(b.kind === "junk") - Number(a.kind === "junk") ||
-      b.dollars - a.dollars,
-  );
+  // Emergencies first; among equals, by how directly we can trust the
+  // signal, then by the money it touches.
+  issues.sort(compareIssues);
 
   const above = (v: number | null, m: number | null) => v !== null && m !== null && v >= m + TRIAGE.outlierMargin;
   marks.budgetLost = above(i.budgetLost, portfolio.budgetLostMedian);
@@ -427,11 +414,11 @@ export function triage(i: TriageInputs, portfolio: Portfolio): Triage {
     portfolio.costPerSigned !== null &&
     own <= portfolio.costPerSigned
   ) {
-    opportunity = `Budget-limited (${pct0(i.budgetLost)} of Search impressions lost to budget) while signing cases at ${usd0(own)} each — room to scale.`;
+    opportunity = `Budget-limited (${pct0(i.budgetLost)} of Search impressions lost to budget) while CallRail shows cases signing at about ${usd0(own)} each.`;
   }
 
   let note: string | null = null;
-  if (junkEmergency) note = "Wasted spend is not judged here: with conversions mostly junk, “no conversion” says nothing about a search term.";
+  if (junkEmergency) note = "Wasted spend is not judged while most conversions are non-lead actions.";
   else if (i.pacing && !i.pacing.judged && i.pacing.reason === "too_few_days") {
     note = `Pacing not judged yet: ${i.pacing.days} day${i.pacing.days === 1 ? "" : "s"} recorded at the current budget (needs ${TRIAGE.pacingMinDays}).`;
   }
@@ -442,17 +429,40 @@ export function triage(i: TriageInputs, portfolio: Portfolio): Triage {
     primary,
     secondary: issues[1] ?? null,
     opportunity,
+    signedContext: signedContext(i, portfolio),
     note,
     marks,
   };
 }
 
+// How directly each kind is observed, most direct first. Conversion-action
+// counts and spend against budget come straight from Google Ads; the rest
+// lean on thresholds of ours.
+const KIND_ORDER: Record<IssueKind, number> = {
+  junk: 0,
+  pacing_over: 1,
+  pacing_under: 2,
+  wasted: 3,
+  optimization_score: 4,
+};
+
+function compareIssues(a: Issue, b: Issue): number {
+  return (
+    Number(b.tier === "act") - Number(a.tier === "act") ||
+    KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+    b.dollars - a.dollars
+  );
+}
+
 const TIER_ORDER: Record<Tier, number> = { act: 0, watch: 1, ok: 2, nodata: 3 };
 
-// Tier, then the money the primary issue touches, then spend, then name.
+// Tier, then the kind of the primary issue (most trusted signal first),
+// then the money it touches, then spend, then name.
 export function compareByTriage<T extends { triage: Triage; mtdSpend: number; name: string }>(a: T, b: T): number {
+  const kind = (t: Triage) => (t.primary ? KIND_ORDER[t.primary.kind] : 99);
   return (
     TIER_ORDER[a.triage.tier] - TIER_ORDER[b.triage.tier] ||
+    kind(a.triage) - kind(b.triage) ||
     (b.triage.primary?.dollars ?? 0) - (a.triage.primary?.dollars ?? 0) ||
     b.mtdSpend - a.mtdSpend ||
     a.name.localeCompare(b.name)
