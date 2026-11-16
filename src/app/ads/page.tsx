@@ -141,40 +141,34 @@ function Row({ r, first }: { r: AccountHealthRow; first: boolean }) {
   );
 }
 
-function Stat({ value, label, className }: { value: string; label: string; className?: string }) {
-  return (
-    <div className="px-5 py-4 first:pl-0">
-      <div className={cn("text-2xl font-semibold tabular-nums tracking-tight", className)}>{value}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
 // Account-health overview for Google Ads (PPC): every active account in one
 // table, worst first. Stored data only; the triage rules live in
 // src/lib/ads-account-health.ts and this file only presents them.
 export default async function AdsDashboardOverviewPage() {
   const o = await getAccountHealthOverview(yesterdayIsoEastern());
-  const n = (tier: Tier) => o.rows.filter((r) => r.triage.tier === tier).length;
   const spend = o.rows.reduce((sum, r) => sum + r.mtdSpend, 0);
   const signed = o.rows.reduce((sum, r) => sum + (r.signedMtd ?? 0), 0);
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-        <h1 className="font-display text-3xl font-bold tracking-tight">Ads Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          Google Ads PPC, LSA not included · {fmtDay(o.monthStart)} – {fmtDay(o.through)}
-        </p>
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-x-10 gap-y-4 border-b pb-5">
+        <div>
+          <h1 className="font-display text-3xl font-bold tracking-tight">Ads Dashboard</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Google Ads PPC, LSA not included · {fmtDay(o.monthStart)} – {fmtDay(o.through)}
+          </p>
+        </div>
+        <dl className="flex gap-10 text-right">
+          <div>
+            <dt className="text-xs text-muted-foreground">Spend</dt>
+            <dd className="text-xl font-semibold tabular-nums tracking-tight">{usd0(spend)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Signed cases</dt>
+            <dd className="text-xl font-semibold tabular-nums tracking-tight">{fmtInt(signed)}</dd>
+          </div>
+        </dl>
       </header>
-
-      <div className="flex flex-wrap divide-x border-y">
-        <Stat value={String(n("act"))} label="Act now" className={n("act") > 0 ? TIER_TEXT.act : undefined} />
-        <Stat value={String(n("watch"))} label="Watch" className={n("watch") > 0 ? TIER_TEXT.watch : undefined} />
-        <Stat value={String(n("ok"))} label="On track" />
-        <Stat value={usd0(spend)} label="Spend, month to date" />
-        <Stat value={fmtInt(signed)} label="Signed cases" />
-      </div>
 
       {o.rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No active PPC client has a linked Google Ads account.</p>
