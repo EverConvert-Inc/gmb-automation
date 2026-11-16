@@ -60,10 +60,9 @@ const TH_CLASS = "px-3 py-2.5 text-[11px] font-medium uppercase tracking-wide te
 function Head({ children, tip }: { children: string; tip: string }) {
   return (
     <th className={cn(TH_CLASS, "whitespace-nowrap text-right align-bottom")}>
-      <span className="inline-flex items-center justify-end gap-1">
-        {children}
-        <InfoTooltip aria-label={`Definition: ${children}`}>{tip}</InfoTooltip>
-      </span>
+      <InfoTooltip label={children} aria-label={`Definition: ${children}`}>
+        {tip}
+      </InfoTooltip>
     </th>
   );
 }

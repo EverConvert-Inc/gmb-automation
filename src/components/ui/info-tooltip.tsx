@@ -19,15 +19,19 @@ const VIEWPORT_PADDING = 8;
 export function InfoTooltip({
   children,
   side = "top",
+  label,
   className,
   "aria-label": ariaLabel = "More info",
 }: {
   children: React.ReactNode;
   side?: "top" | "bottom";
+  // Text shown before the icon. Hovering it opens the bubble too, so the
+  // target is the whole label rather than a 14px icon.
+  label?: React.ReactNode;
   className?: string;
   "aria-label"?: string;
 }) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(
     null,
@@ -97,13 +101,16 @@ export function InfoTooltip({
       : null;
 
   return (
-    <span className={cn("inline-flex", className)}>
+    <span
+      ref={triggerRef}
+      onMouseEnter={handleOpen}
+      onMouseLeave={handleClose}
+      className={cn("inline-flex items-center", label != null && "cursor-help gap-1", className)}
+    >
+      {label}
       <button
-        ref={triggerRef}
         type="button"
         aria-label={ariaLabel}
-        onMouseEnter={handleOpen}
-        onMouseLeave={handleClose}
         onFocus={handleOpen}
         onBlur={handleClose}
         className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-muted-foreground/70 hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
