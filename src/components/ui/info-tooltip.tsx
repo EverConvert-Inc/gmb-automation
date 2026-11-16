@@ -71,14 +71,13 @@ export function InfoTooltip({
       window.removeEventListener("scroll", onScrollOrResize, true);
       window.removeEventListener("resize", onScrollOrResize);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useLayoutEffect(() => {
     if (!open) return;
     const h = bubbleRef.current?.offsetHeight ?? null;
     if (h !== height) setHeight(h);
-  });
+  }, [open, height]);
 
   let top: number | null = null;
   if (coords && height !== null) {
