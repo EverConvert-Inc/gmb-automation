@@ -57,14 +57,13 @@ const DEFINITIONS = {
 
 const TH_CLASS = "px-3 py-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
 
-function Head({ children, tip, sub }: { children: string; tip: string; sub?: string }) {
+function Head({ children, tip }: { children: string; tip: string }) {
   return (
-    <th className={cn(TH_CLASS, "text-right align-bottom")}>
+    <th className={cn(TH_CLASS, "whitespace-nowrap text-right align-bottom")}>
       <span className="inline-flex items-center justify-end gap-1">
         {children}
         <InfoTooltip aria-label={`Definition: ${children}`}>{tip}</InfoTooltip>
       </span>
-      {sub && <div className="text-[10px] font-normal normal-case tracking-normal opacity-70">{sub}</div>}
     </th>
   );
 }
@@ -180,13 +179,13 @@ export default async function AdsDashboardOverviewPage() {
                 <th className={cn(TH_CLASS, "pl-3 text-left align-bottom")}>Account</th>
                 <Head tip={DEFINITIONS.spend}>Spend</Head>
                 <Head tip={DEFINITIONS.pacing}>Pacing</Head>
-                <Head tip={DEFINITIONS.budgetLost} sub="Search">Lost to budget</Head>
-                <Head tip={DEFINITIONS.rankLost} sub="Search">Lost to rank</Head>
+                <Head tip={DEFINITIONS.budgetLost}>Lost to budget</Head>
+                <Head tip={DEFINITIONS.rankLost}>Lost to rank</Head>
                 <Head tip={DEFINITIONS.score}>Opt. score</Head>
                 <Head tip={DEFINITIONS.conversions}>Conv.</Head>
                 <Head tip={DEFINITIONS.nonLead}>Non-lead</Head>
                 <Head tip={DEFINITIONS.signed}>Signed</Head>
-                <Head tip={DEFINITIONS.wasted} sub="Search, 30 days">Wasted</Head>
+                <Head tip={DEFINITIONS.wasted}>Wasted</Head>
               </tr>
             </thead>
             <tbody className="divide-y">
