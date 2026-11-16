@@ -4,14 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import {
-  Activity,
   AlertTriangle,
   Gauge,
   Map,
   Megaphone,
   MessagesSquare,
   PhoneCall,
-  Search,
   Settings,
   ShieldCheck,
   Target,
@@ -22,19 +20,24 @@ import { SeoApiSpendIndicator } from "@/components/seo-api-spend-indicator";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
+// Rankings and Scans are intentionally omitted: both depend on DataForSEO
+// SERP credits, which the account may not have. Their routes still exist —
+// they are just unlinked from the nav until credits are topped up.
 const items = [
   { href: "/clients", label: "Clients", icon: Map },
-  { href: "/rankings", label: "Rankings", icon: Search },
   { href: "/ppc", label: "PPC", icon: Megaphone },
   { href: "/ads", label: "Ads Dashboard", icon: Target },
   { href: "/lsa", label: "LSA", icon: PhoneCall },
   { href: "/reddit", label: "Reddit", icon: MessagesSquare },
+  { href: "/call-quality", label: "Call Quality", icon: Gauge },
+  { href: "/takedowns", label: "Takedowns", icon: AlertTriangle },
+] as const;
+
+// Admin and settings sit below a divider at the end of the nav.
+const endItems = [
   // The lead tracker's admin area: firms, every firm's leads, the queue.
   // Active on any /admin page.
   { href: "/admin", label: "Admin", icon: ShieldCheck },
-  { href: "/call-quality", label: "Call Quality", icon: Gauge },
-  { href: "/scans", label: "Scans", icon: Activity },
-  { href: "/takedowns", label: "Takedowns", icon: AlertTriangle },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -53,34 +56,41 @@ export function Sidebar({ mobileOpen, onMobileClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
+  const renderItem = (item: { href: string; label: string; icon: typeof Map }) => {
+    const active =
+      pathname === item.href || pathname.startsWith(item.href + "/");
+    const Icon = item.icon;
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={cn(
+          "group relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+          active
+            ? "bg-brand-dark-foreground/10 text-brand"
+            : "text-brand-dark-foreground/70 hover:bg-brand-dark-foreground/5 hover:text-brand-dark-foreground",
+        )}
+      >
+        {active && (
+          <span
+            aria-hidden
+            className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-brand"
+          />
+        )}
+        <Icon className="h-4 w-4 shrink-0" />
+        <span>{item.label}</span>
+      </Link>
+    );
+  };
+
   const navLinks = (
     <nav className="flex flex-col gap-0.5 px-3 py-4">
-      {items.map((item) => {
-        const active =
-          pathname === item.href || pathname.startsWith(item.href + "/");
-        const Icon = item.icon;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              "group relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
-              active
-                ? "bg-brand-dark-foreground/10 text-brand"
-                : "text-brand-dark-foreground/70 hover:bg-brand-dark-foreground/5 hover:text-brand-dark-foreground",
-            )}
-          >
-            {active && (
-              <span
-                aria-hidden
-                className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-brand"
-              />
-            )}
-            <Icon className="h-4 w-4 shrink-0" />
-            <span>{item.label}</span>
-          </Link>
-        );
-      })}
+      {items.map(renderItem)}
+      <div
+        aria-hidden
+        className="my-2 border-t border-brand-dark-foreground/10"
+      />
+      {endItems.map(renderItem)}
     </nav>
   );
 
