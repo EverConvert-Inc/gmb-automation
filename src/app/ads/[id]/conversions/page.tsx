@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { CircleCheck, ListChecks, ShieldAlert, Sigma } from "lucide-react";
@@ -18,7 +19,7 @@ import {
 } from "@/components/ads-dashboard-ui";
 import { getAdsDashboardClient, getConversionAudit } from "@/lib/queries-ads-dashboard";
 import type { AuditedAction, AuditVerdict } from "@/lib/ads-conversion-audit";
-import { resolveWindow } from "@/lib/ads-dashboard-compare";
+import { resolveWindow, type AdsDashboardWindow } from "@/lib/ads-dashboard-compare";
 import { daysAgoIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
 
 export const dynamic = "force-dynamic";
@@ -109,34 +110,16 @@ function ActionRow({ a }: { a: AuditedAction }) {
   );
 }
 
-// Per-client conversion-action audit. Reads Google Ads live: it shows what
-// the account is configured to count RIGHT NOW and what each action put
-// into the Conversions figure in the window. Nothing here is stored.
-export default async function ConversionAuditPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ from?: string; to?: string; compare?: string }>;
-}) {
-  const { id } = await params;
-  const client = await getAdsDashboardClient(id);
-  if (!client) notFound();
-  const w = resolveWindow(await searchParams, {
-    from: daysAgoIsoEastern(30),
-    to: yesterdayIsoEastern(),
-  });
+// The audit itself: three live Google Ads queries, so it is the slow part
+// of the page. It renders inside a Suspense boundary and streams in after
+// the header, instead of holding the whole navigation until Google answers.
+async function AuditBody({ id, w }: { id: string; w: AdsDashboardWindow }) {
   const result = await getConversionAudit(id, { from: w.from, to: w.to }, w.prior);
-
-  const header = <AdsDashboardHeader client={client} tab="conversions" window={w} showSync={false} />;
   if (!result.ok) {
     return (
-      <div className="space-y-6">
-        {header}
-        <Banner tone="error" title="Google Ads rejected the audit query">
-          {result.error}
-        </Banner>
-      </div>
+      <Banner tone="error" title="Google Ads rejected the audit query">
+        {result.error}
+      </Banner>
     );
   }
 
@@ -146,8 +129,6 @@ export default async function ConversionAuditPage({
 
   return (
     <div className="space-y-6">
-      {header}
-
       {summary.junkConversions > 0 ? (
         <Banner
           tone="error"
@@ -254,6 +235,46 @@ export default async function ConversionAuditPage({
           </p>
         </div>
       </SectionCard>
+    </div>
+  );
+}
+
+function AuditSkeleton() {
+  return (
+    <div className="animate-pulse space-y-6" aria-busy="true" aria-label="Loading the conversion audit from Google Ads">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-24 rounded-lg bg-muted/60" />
+        ))}
+      </div>
+      <div className="h-96 rounded-lg bg-muted/40" />
+    </div>
+  );
+}
+
+// Per-client conversion-action audit. Reads Google Ads live: it shows what
+// the account is configured to count RIGHT NOW and what each action put
+// into the Conversions figure in the window. Nothing here is stored.
+export default async function ConversionAuditPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string; to?: string; compare?: string }>;
+}) {
+  const { id } = await params;
+  const client = await getAdsDashboardClient(id);
+  if (!client) notFound();
+  const w = resolveWindow(await searchParams, {
+    from: daysAgoIsoEastern(30),
+    to: yesterdayIsoEastern(),
+  });
+  return (
+    <div className="space-y-6">
+      <AdsDashboardHeader client={client} tab="conversions" window={w} showSync={false} />
+      <Suspense key={`${w.from}|${w.to}|${w.mode}`} fallback={<AuditSkeleton />}>
+        <AuditBody id={id} w={w} />
+      </Suspense>
     </div>
   );
 }

@@ -1,12 +1,8 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { ArrowRight, ChevronDown, CircleDollarSign, Eye, FileSignature, Siren } from "lucide-react";
-import { Banner } from "@/components/ui/banner";
-import { StatTile } from "@/components/ui/stat-tile";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
-import { badgeClasses } from "@/components/ui/badge";
-import { fmtConv, fmtDay, fmtInt, fmtUsd, TD, TDR, TH, THEAD, THR } from "@/components/ads-dashboard-ui";
-import { TRIAGE as T, type Issue, type IssueKind, type Tier } from "@/lib/ads-account-health";
+import { fmtConv, fmtDay, fmtInt } from "@/components/ads-dashboard-ui";
+import { TRIAGE as T, type IssueKind, type Tier } from "@/lib/ads-account-health";
 import { getAccountHealthOverview, type AccountHealthRow } from "@/lib/queries-ads-health";
 import { yesterdayIsoEastern } from "@/lib/date-utils";
 import { cn } from "@/lib/utils";
@@ -14,10 +10,6 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Ads Dashboard" };
-
-const QUIET = "text-muted-foreground";
-const ACT = "font-semibold text-red-700 dark:text-red-400";
-const WATCH = "font-semibold text-amber-700 dark:text-amber-400";
 
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
 const usd0 = (n: number) =>
@@ -32,318 +24,185 @@ function fmtLost(v: number | null): string {
   return pct(v);
 }
 
-// One coloured cell per row at most: the subject of the primary issue, red
-// for an emergency and amber for a watch. Everything else stays quiet, so
-// the colour always points at the single worst thing.
-function tone(r: AccountHealthRow, ...kinds: IssueKind[]): string {
-  const p = r.triage.primary;
-  return p && kinds.includes(p.kind) ? (p.tier === "act" ? ACT : WATCH) : QUIET;
-}
+const TIER_TEXT: Record<Tier, string> = {
+  act: "text-red-700 dark:text-red-400",
+  watch: "text-amber-700 dark:text-amber-400",
+  ok: "text-foreground",
+  nodata: "text-muted-foreground",
+};
+const TIER_DOT: Record<Tier, string> = {
+  act: "bg-red-500",
+  watch: "bg-amber-500",
+  ok: "bg-transparent",
+  nodata: "bg-transparent",
+};
 
-// Where the evidence for an issue lives.
-function issueHref(id: string, issue: Issue | null): string {
-  return `/ads/${id}/${issue?.kind === "wasted" ? "search-terms" : "conversions"}`;
+// One coloured cell per row at most: the figure behind the primary issue.
+function cell(r: AccountHealthRow, ...kinds: IssueKind[]): string {
+  const p = r.triage.primary;
+  return p && kinds.includes(p.kind) ? cn("font-semibold", TIER_TEXT[p.tier]) : "";
 }
 
 const DEFINITIONS = {
-  spend: "Month-to-date cost across every campaign type in the Google Ads account, Performance Max included. Local Services Ads are a separate product and are not in this figure.",
-  pacing: `Average daily spend against the current daily budget, over the most recent days recorded at that same budget (up to ${T.pacingWindowDays}). The daily budget is the sum of the daily budgets enabled campaigns draw on, a shared budget counted once. After a budget edit only the days since are averaged, and nothing is judged until there are ${T.pacingMinDays} — so a mid-month budget change never reads as overspending. Google may spend up to twice a daily budget on one day and evens it out over the month.`,
-  budgetLost: "Search impression share lost to budget: the share of Search auctions the account was eligible for but did not show in because budget ran out. Google's account-level figure, month to date. Search campaigns only — Performance Max is not in it. Google reports anything under 10% as “<10%” and over 90% as “>90%”.",
-  rankLost: "Search impression share lost to rank: the share of eligible Search auctions lost because Ad Rank (bid × quality) was too low. Google's account-level figure, month to date, Search campaigns only. High values are normal in this vertical, so it never raises an account.",
-  score: `Google's account-level optimization score, 0–100%. Google derives it from its own open recommendations, each weighted by the impact Google estimates it would have; applying OR dismissing a recommendation raises it. It measures how many of Google's suggestions are outstanding, not how the account performs — 100% usually means recommendations were applied or dismissed. Shown in colour only under ${pct(T.optimizationScore)}.`,
-  conversions: "Google's “Conversions” (metrics.conversions) month to date, all campaign types: whatever the account is set up to count. “Non-lead” is our classification, not Google's: an action whose category or name describes a tap, visit or engagement rather than a lead — phone-number or contact-link taps (click-to-call), page views, engagements, directions requests, outbound clicks, store visits, downloads, YouTube views, cart and checkout actions. The share is what those actions actually counted, whatever their Primary flag. The Conversion audit page lists every action.",
-  signed: `Signed cases from CallRail (calls and texts tagged Signed), month to date, across every channel except GMB. Beneath it: ad spend since the last signed case, looking back ${T.signedLookbackDays} days. Both rest on CallRail tags matched to Google spend, so they are context and never decide where an account ranks.`,
-  wasted: `Search spend over the last ${T.wastedWindowDays} days on search terms that each cost at least the account's own cost per conversion and produced no conversion. A term with a few clicks and no conversion is ordinary and is not counted. Search campaigns only. Not judged while most conversions are non-lead actions, or until the search-terms sync covers the whole ${T.wastedWindowDays} days.`,
+  spend: "Month-to-date cost across every campaign type in the Google Ads account, Performance Max included. Local Services Ads are not in this figure.",
+  pacing: `Average daily spend as a share of the current daily budget, over the most recent days recorded at that same budget (up to ${T.pacingWindowDays}). The daily budget is the sum of the daily budgets enabled campaigns draw on, a shared budget counted once. After a budget edit only the days since are averaged, and nothing is shown until there are ${T.pacingMinDays}.`,
+  budgetLost: "Search impression share lost to budget: the share of Search auctions the account was eligible for but did not show in because budget ran out. Google's account-level figure, month to date. Search campaigns only.",
+  rankLost: "Search impression share lost to rank: the share of eligible Search auctions lost because Ad Rank (bid × quality) was too low. Google's account-level figure, month to date. Search campaigns only.",
+  score: "Google's account-level optimization score. Google derives it from its own open recommendations, each weighted by the impact it estimates; applying or dismissing a recommendation raises it. It reflects outstanding suggestions, not performance.",
+  conversions: "Google's “Conversions” month to date, all campaign types: whatever the account is set up to count.",
+  nonLead: "Share of those conversions that came from actions we class as non-lead. This is our classification, not Google's: an action whose category or name describes a tap, visit or engagement rather than a lead — phone-number or contact-link taps (click-to-call), page views, engagements, directions requests, outbound clicks, store visits, downloads. Counted from what each action actually recorded, whatever its Primary flag.",
+  signed: "Signed cases from CallRail (calls and texts tagged Signed), month to date, every channel except GMB. Context only: it never decides where an account ranks.",
+  wasted: `Search spend over the last ${T.wastedWindowDays} days on search terms that each cost at least the account's own cost per conversion and produced none. Search campaigns only. Not shown while most conversions are non-lead actions, or until the search-terms sync covers the whole ${T.wastedWindowDays} days.`,
 } as const;
 
-function Head({ children, tip, right = false, note }: { children: React.ReactNode; tip: string; right?: boolean; note?: string }) {
+const TH_CLASS = "px-3 py-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
+
+function Head({ children, tip, sub }: { children: string; tip: string; sub?: string }) {
   return (
-    <th className={right ? THR : TH}>
-      <span className={cn("inline-flex items-center gap-1", right && "justify-end")}>
+    <th className={cn(TH_CLASS, "text-right align-bottom")}>
+      <span className="inline-flex items-center justify-end gap-1">
         {children}
-        <InfoTooltip aria-label={`Definition: ${String(children)}`}>
-          <span className="normal-case tracking-normal">{tip}</span>
-        </InfoTooltip>
+        <InfoTooltip aria-label={`Definition: ${children}`}>{tip}</InfoTooltip>
       </span>
-      {note && <div className="text-[9px] font-normal normal-case tracking-normal">{note}</div>}
+      {sub && <div className="text-[10px] font-normal normal-case tracking-normal opacity-70">{sub}</div>}
     </th>
   );
 }
 
-function PacingCell({ r }: { r: AccountHealthRow }) {
-  const p = r.pacing;
-  if (!p) return <span className={QUIET}>—</span>;
-  if (!p.judged) {
-    return (
-      <div className={cn("text-xs", QUIET)}>
-        {p.reason === "no_budget" ? "No daily budget" : "Not judged yet"}
-        <div className="text-[10px]">
-          {p.reason === "no_budget"
-            ? "no enabled campaign has one"
-            : `${p.days} of ${T.pacingMinDays} days at ${usd0(r.dailyBudget)}/day`}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <div className={tone(r, "pacing_over", "pacing_under")}>{pct(p.ratio)}</div>
-      <div className={cn("text-[10px]", QUIET)}>
-        {usd0(p.avgDailySpend)}/day vs {usd0(p.dailyBudget)} · {p.days}d
-      </div>
-    </div>
-  );
-}
+const NUM = "px-3 py-3 text-right tabular-nums";
+const DASH = <span className="text-muted-foreground/60">—</span>;
 
-function Row({ r }: { r: AccountHealthRow }) {
+function Row({ r, first }: { r: AccountHealthRow; first: boolean }) {
   const t = r.triage;
+  const has = r.snapshotDate !== null && t.tier !== "nodata";
+  const p = r.pacing;
+  // Everything beyond the one line lives in hover text, not on the row.
+  const more = [t.primary?.text, t.secondary && `Also: ${t.secondary.text}`, t.opportunity, t.note]
+    .filter(Boolean)
+    .join("\n");
+  const wastedShown =
+    r.wasted !== null && r.wasted.dollars > 0 && !(t.primary?.kind === "junk" && t.primary.tier === "act");
   return (
-    <tr className="align-top">
-      <td className={cn(TD, "max-w-md")}>
-        <Link href={issueHref(r.id, t.primary)} className="font-medium hover:underline">
-          {r.name}
-        </Link>
-        {t.primary && (
-          <p className={cn("mt-1 text-xs", t.primary.tier === "act" ? "text-foreground" : QUIET)}>
-            {t.primary.text}
-          </p>
-        )}
-        {t.secondary && <p className={cn("mt-1 text-xs", QUIET)}>Also: {t.secondary.text}</p>}
-        {t.signedContext && <p className={cn("mt-1 text-xs", QUIET)}>{t.signedContext}</p>}
-        {t.opportunity && (
-          <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">{t.opportunity}</p>
-        )}
-        {t.note && <p className={cn("mt-1 text-[11px] italic", QUIET)}>{t.note}</p>}
-        {r.lastSyncFailed && t.tier !== "nodata" && (
-          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400" title={r.lastSyncFailed}>
-            The latest sync failed; figures are from {r.snapshotDate ? fmtDay(r.snapshotDate) : "an earlier run"}.
-          </p>
-        )}
-      </td>
-      <td className={cn(TDR, QUIET)}>{r.snapshotDate ? fmtUsd(r.mtdSpend) : "—"}</td>
-      <td className={TDR}>
-        <PacingCell r={r} />
-      </td>
-      <td className={cn(TDR, QUIET)}>{fmtLost(r.budgetLost)}</td>
-      <td className={cn(TDR, QUIET)}>{fmtLost(r.rankLost)}</td>
-      <td className={cn(TDR, tone(r, "optimization_score"))}>
-        {r.optimizationScore === null ? "—" : pct(r.optimizationScore)}
-      </td>
-      <td className={TDR}>
-        <div className={QUIET}>{r.conversions === null ? "—" : fmtConv(r.conversions)}</div>
-        {r.junkShare !== null && r.junkShare > 0 && (
-          <div className={cn("text-[10px]", tone(r, "junk"))}>{pct(r.junkShare)} non-lead</div>
-        )}
-      </td>
-      <td className={TDR}>
-        <div className={QUIET}>{r.signedMtd === null ? "—" : fmtInt(r.signedMtd)}</div>
-        <div className={cn("text-[10px]", QUIET)}>
-          {r.signedMtd === null
-            ? "no CallRail"
-            : r.spendSinceLastSigned === null
-              ? ""
-              : `${usd0(r.spendSinceLastSigned)} since last`}
+    <tr className={cn("group hover:bg-muted/40", first && "border-t-2 border-t-border")}>
+      <td className="py-3 pl-3 pr-4">
+        <div className="flex items-baseline gap-2.5">
+          <span className={cn("h-2 w-2 shrink-0 translate-y-[-1px] rounded-full", TIER_DOT[t.tier])} />
+          <div className="min-w-0">
+            <Link
+              href={`/ads/${r.id}/${t.primary?.kind === "wasted" ? "search-terms" : "conversions"}`}
+              className={cn("font-medium group-hover:underline", t.tier === "nodata" && "text-muted-foreground")}
+            >
+              {r.name}
+            </Link>
+            {t.primary ? (
+              <div className="truncate text-xs text-muted-foreground" title={more}>
+                {t.primary.short}
+              </div>
+            ) : t.tier === "nodata" ? (
+              <div className="text-xs text-muted-foreground">No current data</div>
+            ) : null}
+          </div>
         </div>
       </td>
-      <td className={TDR}>
-        {r.wasted ? (
-          <>
-            <div className={tone(r, "wasted")}>{usd0(r.wasted.dollars)}</div>
-            <div className={cn("text-[10px]", QUIET)}>
-              {pct(r.wasted.share)} · {r.wasted.terms} term{r.wasted.terms === 1 ? "" : "s"}
-            </div>
-          </>
-        ) : (
-          <span className={cn("text-xs", QUIET)}>{r.wastedPartial ? "partial data" : "—"}</span>
-        )}
+      <td className={NUM}>{has ? usd0(r.mtdSpend) : DASH}</td>
+      <td
+        className={cn(NUM, cell(r, "pacing_over", "pacing_under"))}
+        title={
+          p?.judged
+            ? `${usd0(p.avgDailySpend)}/day against ${usd0(p.dailyBudget)}/day, last ${p.days} days`
+            : p?.reason === "too_few_days"
+              ? `${p.days} of ${T.pacingMinDays} days recorded at ${usd0(r.dailyBudget)}/day`
+              : p
+                ? "No enabled campaign has a daily budget"
+                : undefined
+        }
+      >
+        {has && p?.judged ? pct(p.ratio) : DASH}
+      </td>
+      <td className={NUM}>{has && r.budgetLost !== null ? fmtLost(r.budgetLost) : DASH}</td>
+      <td className={NUM}>{has && r.rankLost !== null ? fmtLost(r.rankLost) : DASH}</td>
+      <td className={cn(NUM, cell(r, "optimization_score"))}>
+        {has && r.optimizationScore !== null ? pct(r.optimizationScore) : DASH}
+      </td>
+      <td className={NUM}>{has && r.conversions !== null ? fmtConv(r.conversions) : DASH}</td>
+      <td className={cn(NUM, cell(r, "junk"))}>
+        {has && r.junkShare !== null && r.junkShare > 0 ? pct(r.junkShare) : DASH}
+      </td>
+      <td className={NUM} title={t.signedContext ?? undefined}>
+        {r.signedMtd === null ? DASH : fmtInt(r.signedMtd)}
+      </td>
+      <td
+        className={cn(NUM, "pr-4", cell(r, "wasted"))}
+        title={wastedShown && r.wasted ? `${pct(r.wasted.share)} of Search spend, ${r.wasted.terms} terms` : undefined}
+      >
+        {wastedShown && r.wasted ? usd0(r.wasted.dollars) : DASH}
       </td>
     </tr>
   );
 }
 
-function HealthTable({ rows }: { rows: AccountHealthRow[] }) {
+function Stat({ value, label, className }: { value: string; label: string; className?: string }) {
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <table className="w-full text-sm">
-        <thead className={THEAD}>
-          <tr>
-            <th className={TH}>Account · what to look at</th>
-            <Head right tip={DEFINITIONS.spend} note="month to date">Spend</Head>
-            <Head right tip={DEFINITIONS.pacing} note="avg/day vs budget">Pacing</Head>
-            <Head right tip={DEFINITIONS.budgetLost} note="Search only">Lost to budget</Head>
-            <Head right tip={DEFINITIONS.rankLost} note="Search only">Lost to rank</Head>
-            <Head right tip={DEFINITIONS.score}>Opt. score</Head>
-            <Head right tip={DEFINITIONS.conversions} note="month to date">Conversions</Head>
-            <Head right tip={DEFINITIONS.signed} note="month to date">Signed</Head>
-            <Head right tip={DEFINITIONS.wasted} note={`Search · ${T.wastedWindowDays} days`}>Wasted spend</Head>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {rows.map((r) => (
-            <Row key={r.id} r={r} />
-          ))}
-        </tbody>
-      </table>
+    <div className="px-5 py-4 first:pl-0">
+      <div className={cn("text-2xl font-semibold tabular-nums tracking-tight", className)}>{value}</div>
+      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
     </div>
   );
 }
 
-const TIER_LABEL: Record<Tier, { title: string; blurb: string }> = {
-  act: { title: "Act now", blurb: "Most conversions are non-lead actions, or spend is running well past budget." },
-  watch: { title: "Watch", blurb: "Worth a look this week; not an emergency." },
-  ok: { title: "On track", blurb: "Nothing outside what is normal for this portfolio." },
-  nodata: { title: "No current data", blurb: "Not judged — the account-health sync has nothing current for these." },
-};
-
-function TierSection({ tier, rows, collapsed = false }: { tier: Tier; rows: AccountHealthRow[]; collapsed?: boolean }) {
-  if (rows.length === 0) return null;
-  const { title, blurb } = TIER_LABEL[tier];
-  const badge = tier === "act" ? "red" : tier === "watch" ? "amber" : "outline";
-  const heading = (
-    <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-1">
-      <span className={badgeClasses(badge, "sm", "rounded-full")}>
-        {title} · {rows.length}
-      </span>
-      <span className="text-xs text-muted-foreground">{blurb}</span>
-    </span>
-  );
-  if (collapsed) {
-    return (
-      <details className="group">
-        <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
-          {heading}
-        </summary>
-        <div className="mt-3">
-          <HealthTable rows={rows} />
-        </div>
-      </details>
-    );
-  }
-  return (
-    <section className="space-y-3">
-      {heading}
-      <HealthTable rows={rows} />
-    </section>
-  );
-}
-
-// Account-health overview for Google Ads (PPC): a triage of every active
-// account, so a short scan says which few to open and why. Stored data only
-// (ppc_account_health_daily + the PPC syncs' tables); the triage rules live
-// in src/lib/ads-account-health.ts.
+// Account-health overview for Google Ads (PPC): every active account in one
+// table, worst first. Stored data only; the triage rules live in
+// src/lib/ads-account-health.ts and this file only presents them.
 export default async function AdsDashboardOverviewPage() {
   const o = await getAccountHealthOverview(yesterdayIsoEastern());
-  const by = (tier: Tier) => o.rows.filter((r) => r.triage.tier === tier);
-  const act = by("act");
-  const watch = by("watch");
-  const ok = by("ok");
-  const nodata = by("nodata");
-  const spend = o.rows.reduce((n, r) => n + r.mtdSpend, 0);
-  const signed = o.rows.reduce((n, r) => n + (r.signedMtd ?? 0), 0);
-  const first = act.slice(0, 3);
+  const n = (tier: Tier) => o.rows.filter((r) => r.triage.tier === tier).length;
+  const spend = o.rows.reduce((sum, r) => sum + r.mtdSpend, 0);
+  const signed = o.rows.reduce((sum, r) => sum + (r.signedMtd ?? 0), 0);
 
   return (
-    <div className="space-y-6">
-      <header>
-        <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          Google Ads · PPC
-        </div>
+    <div className="space-y-8">
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
         <h1 className="font-display text-3xl font-bold tracking-tight">Ads Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Which accounts to open first, and why. Month to date · {fmtDay(o.monthStart)} –{" "}
-          {fmtDay(o.through)}.
-        </p>
-        <p className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs">
-          <span className={badgeClasses("blue", "sm", "rounded-full")}>Google Ads (PPC) only</span>
-          <span className="text-muted-foreground">
-            Search and Performance Max accounts. Local Services Ads are reported separately under LSA
-            and are not included in any figure here.
-          </span>
+        <p className="text-sm text-muted-foreground">
+          Google Ads PPC, LSA not included · {fmtDay(o.monthStart)} – {fmtDay(o.through)}
         </p>
       </header>
 
-      {o.rows.length > 0 && nodata.length === o.rows.length && (
-        <Banner tone="info" title="No account-health data yet">
-          The daily account-health sync has not produced a current snapshot. It runs each morning
-          after the PPC syncs.
-        </Banner>
-      )}
-
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <StatTile
-          label="Act now"
-          value={`${act.length} of ${o.rows.length}`}
-          sublabel="Accounts with an emergency"
-          icon={<Siren className="h-4 w-4" />}
-          tone={act.length > 0 ? "red" : "default"}
-        />
-        <StatTile
-          label="Watch"
-          value={fmtInt(watch.length)}
-          sublabel="Worth a look this week"
-          icon={<Eye className="h-4 w-4" />}
-          tone={watch.length > 0 ? "amber" : "default"}
-        />
-        <StatTile
-          label="Spend"
-          value={fmtUsd(spend)}
-          sublabel="Month to date, all campaign types"
-          icon={<CircleDollarSign className="h-4 w-4" />}
-          tone="brand"
-        />
-        <StatTile
-          label="Signed cases"
-          value={fmtInt(signed)}
-          sublabel="Month to date · CallRail, GMB excluded"
-          icon={<FileSignature className="h-4 w-4" />}
-        />
+      <div className="flex flex-wrap divide-x border-y">
+        <Stat value={String(n("act"))} label="Act now" className={n("act") > 0 ? TIER_TEXT.act : undefined} />
+        <Stat value={String(n("watch"))} label="Watch" className={n("watch") > 0 ? TIER_TEXT.watch : undefined} />
+        <Stat value={String(n("ok"))} label="On track" />
+        <Stat value={usd0(spend)} label="Spend, month to date" />
+        <Stat value={fmtInt(signed)} label="Signed cases" />
       </div>
 
-      {first.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold">Open these first</h2>
-          <div className="grid gap-3 lg:grid-cols-3">
-            {first.map((r, i) => (
-              <Link
-                key={r.id}
-                href={issueHref(r.id, r.triage.primary)}
-                className="group rounded-lg border border-red-500/30 bg-red-500/[0.04] p-4 transition-colors hover:bg-red-500/[0.08]"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="font-semibold">
-                    <span className="mr-1.5 text-muted-foreground">{i + 1}.</span>
-                    {r.name}
-                  </div>
-                  <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                </div>
-                <p className="mt-2 text-sm">{r.triage.primary?.text}</p>
-                {r.triage.secondary && (
-                  <p className="mt-2 text-xs text-muted-foreground">Also: {r.triage.secondary.text}</p>
-                )}
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
-
       {o.rows.length === 0 ? (
-        <Banner tone="info" title="No accounts">
-          No active PPC client has a linked Google Ads account.
-        </Banner>
+        <p className="text-sm text-muted-foreground">No active PPC client has a linked Google Ads account.</p>
       ) : (
-        <div className="space-y-6">
-          <TierSection tier="act" rows={act} />
-          <TierSection tier="watch" rows={watch} />
-          <TierSection tier="ok" rows={ok} collapsed />
-          <TierSection tier="nodata" rows={nodata} collapsed />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className={cn(TH_CLASS, "pl-3 text-left align-bottom")}>Account</th>
+                <Head tip={DEFINITIONS.spend}>Spend</Head>
+                <Head tip={DEFINITIONS.pacing}>Pacing</Head>
+                <Head tip={DEFINITIONS.budgetLost} sub="Search">Lost to budget</Head>
+                <Head tip={DEFINITIONS.rankLost} sub="Search">Lost to rank</Head>
+                <Head tip={DEFINITIONS.score}>Opt. score</Head>
+                <Head tip={DEFINITIONS.conversions}>Conv.</Head>
+                <Head tip={DEFINITIONS.nonLead}>Non-lead</Head>
+                <Head tip={DEFINITIONS.signed}>Signed</Head>
+                <Head tip={DEFINITIONS.wasted} sub="Search, 30 days">Wasted</Head>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {o.rows.map((r, i) => (
+                <Row key={r.id} r={r} first={i > 0 && o.rows[i - 1].triage.tier !== r.triage.tier} />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-
-      <p className="text-xs text-muted-foreground">
-        Each account shows its most important issue and at most one more. Hover the ⓘ beside a
-        column for its exact definition.
-      </p>
     </div>
   );
 }

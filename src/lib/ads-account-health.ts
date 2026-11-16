@@ -261,7 +261,10 @@ export type Issue = {
   tier: "act" | "watch";
   // Dollars the issue touches, for ranking. 0 when it has no dollar reading.
   dollars: number;
+  // The full sentence (hover text) and the few words shown on the row; the
+  // row's own cells carry the figures, so `short` never repeats them.
   text: string;
+  short: string;
 };
 
 export type Tier = "act" | "watch" | "ok" | "nodata";
@@ -304,13 +307,17 @@ function junkIssue(i: TriageInputs): Issue | null {
   const text = top
     ? `${top.name}: ${count(top.conversions)} of ${count(i.conversions)} conversions, an action we class as non-lead (${pct0(share)} non-lead in all).`
     : `${count(i.junkConversions)} of ${count(i.conversions)} conversions (${pct0(share)}) come from actions we class as non-lead.`;
-  return { kind: "junk", tier, dollars: i.mtdSpend * share, text };
+  const short = top
+    ? `${top.name} · ${count(top.conversions)} of ${count(i.conversions)} conversions`
+    : `${count(i.junkConversions)} of ${count(i.conversions)} conversions`;
+  return { kind: "junk", tier, dollars: i.mtdSpend * share, text, short };
 }
 
 function pacingIssue(i: TriageInputs): Issue | null {
   const p = i.pacing;
   if (!p || !p.judged) return null;
   const monthly = (p.avgDailySpend - p.dailyBudget) * TRIAGE.monthDays;
+  const short = `${usd0(p.avgDailySpend)}/day on a ${usd0(p.dailyBudget)}/day budget`;
   const base = `Averaging ${usd0(p.avgDailySpend)}/day against a ${usd0(p.dailyBudget)}/day budget over the last ${p.days} days (${pct0(p.ratio)})`;
   if (p.ratio >= TRIAGE.pacingWatchRatio) {
     const act = p.ratio >= TRIAGE.pacingActRatio && monthly >= TRIAGE.pacingActMonthly;
@@ -319,6 +326,7 @@ function pacingIssue(i: TriageInputs): Issue | null {
       tier: act ? "act" : "watch",
       dollars: monthly,
       text: `${base} — about ${usd0(monthly)} a month over at this rate.`,
+      short,
     };
   }
   if (p.ratio <= TRIAGE.pacingUnderRatio) {
@@ -327,6 +335,7 @@ function pacingIssue(i: TriageInputs): Issue | null {
       tier: "watch",
       dollars: -monthly,
       text: `${base} — about ${usd0(-monthly)} a month of budget unspent at this rate.`,
+      short,
     };
   }
   return null;
@@ -356,6 +365,7 @@ function wastedIssue(i: TriageInputs, portfolio: Portfolio): Issue | null {
     kind: "wasted",
     tier: "watch",
     dollars: w.dollars,
+    short: `${w.terms} search term${w.terms === 1 ? "" : "s"} past a conversion's cost, none converted`,
     text: `${usd0(w.dollars)} (${pct0(w.share)} of Search spend) went to ${w.terms === 1 ? "1 search term that cost" : `${w.terms} search terms that each cost`} more than a conversion and produced none, last ${TRIAGE.wastedWindowDays} days.`,
   };
 }
@@ -367,6 +377,7 @@ function scoreIssue(i: TriageInputs): Issue | null {
     tier: "watch",
     dollars: 0,
     text: `Optimization score is ${pct0(i.optimizationScore)}.`,
+    short: "Low optimization score",
   };
 }
 
