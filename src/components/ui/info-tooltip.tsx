@@ -1,7 +1,7 @@
 "use client";
 
 import { Info } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
@@ -33,9 +33,15 @@ export function InfoTooltip({
 }) {
   const triggerRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(
-    null,
-  );
+  const bubbleRef = useRef<HTMLSpanElement>(null);
+  const [coords, setCoords] = useState<{
+    above: number;
+    below: number;
+    left: number;
+  } | null>(null);
+  // Measured after render: the bubble's height decides whether it fits on the
+  // preferred side or has to flip to stay inside the viewport.
+  const [height, setHeight] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -53,10 +59,7 @@ export function InfoTooltip({
       VIEWPORT_PADDING,
       Math.min(idealLeft, maxLeft),
     );
-    setCoords({
-      top: side === "top" ? r.top : r.bottom,
-      left: clampedLeft,
-    });
+    setCoords({ above: r.top, below: r.bottom, left: clampedLeft });
   };
 
   useEffect(() => {
@@ -71,6 +74,34 @@ export function InfoTooltip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    const h = bubbleRef.current?.offsetHeight ?? null;
+    if (h !== height) setHeight(h);
+  });
+
+  let top: number | null = null;
+  if (coords && height !== null) {
+    const GAP = 8;
+    const above = coords.above - GAP - height;
+    const below = coords.below + GAP;
+    const fitsAbove = above >= VIEWPORT_PADDING;
+    const fitsBelow =
+      below + height <= window.innerHeight - VIEWPORT_PADDING;
+    const placed =
+      side === "top"
+        ? fitsAbove || !fitsBelow
+          ? above
+          : below
+        : fitsBelow || !fitsAbove
+          ? below
+          : above;
+    top = Math.max(
+      VIEWPORT_PADDING,
+      Math.min(placed, window.innerHeight - height - VIEWPORT_PADDING),
+    );
+  }
+
   const handleOpen = () => {
     updatePosition();
     setOpen(true);
@@ -81,16 +112,14 @@ export function InfoTooltip({
     mounted && open && coords
       ? createPortal(
           <span
+            ref={bubbleRef}
             role="tooltip"
             style={{
               position: "fixed",
-              top: coords.top,
+              top: top ?? 0,
               left: coords.left,
               width: BUBBLE_WIDTH,
-              transform:
-                side === "top"
-                  ? "translateY(calc(-100% - 8px))"
-                  : "translateY(8px)",
+              visibility: top === null ? "hidden" : "visible",
             }}
             className="pointer-events-none z-[1000] rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-normal normal-case leading-snug text-slate-50 shadow-lg"
           >
