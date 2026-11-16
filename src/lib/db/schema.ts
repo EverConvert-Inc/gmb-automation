@@ -797,6 +797,16 @@ export const ppcAccountHealthDaily = pgTable(
     conversions: numeric("conversions", { precision: 14, scale: 2 }),
     junkConversions: numeric("junk_conversions", { precision: 14, scale: 2 }),
     reviewConversions: numeric("review_conversions", { precision: 14, scale: 2 }),
+    // The likely-junk actions that counted, biggest first, so the overview
+    // can name what to fix: [{ name, conversions }]. Null with the other
+    // conversion figures when the audit failed.
+    junkActions: jsonb("junk_actions").$type<Array<{ name: string; conversions: number }>>(),
+    // Spend on `date` alone (all campaign types). Paired with
+    // daily_budget_micros on the same row it gives one day's spend against
+    // the budget in force that day, which is what pacing is judged from —
+    // month-to-date spend against today's budget misreads any account whose
+    // budget was edited mid-month. Null on rows written before this column.
+    daySpendMicros: bigint("day_spend_micros", { mode: "bigint" }),
     // Which optional parts failed on the latest run, if any.
     pullErrors: text("pull_errors"),
     ingestedAt: timestamp("ingested_at", { withTimezone: true })

@@ -926,6 +926,9 @@ export async function pullSearchCampaignDaily(
 export type AccountHealthPull = {
   budgetCampaigns: BudgetCampaignRow[];
   mtdSpendMicros: bigint;
+  // Spend on `toDate` alone — one day's spend to set against the budget in
+  // force that day.
+  daySpendMicros: bigint;
   // Account-level search impression share, straight FROM customer. Each is
   // null when Google returned nothing for it.
   impressionShare: number | null;
@@ -1008,7 +1011,7 @@ export async function pullAccountHealth(
                campaign_budget.id, campaign_budget.amount_micros, campaign_budget.period,
                campaign_budget.explicitly_shared
         FROM campaign`),
-      q(`SELECT campaign.id, metrics.cost_micros FROM campaign WHERE ${dateWhere}`),
+      q(`SELECT campaign.id, segments.date, metrics.cost_micros FROM campaign WHERE ${dateWhere}`),
       share("impressionShare", "search_impression_share"),
       share("budgetLostShare", "search_budget_lost_impression_share"),
       share("rankLostShare", "search_rank_lost_impression_share"),
@@ -1016,8 +1019,11 @@ export async function pullAccountHealth(
     ]);
 
   let mtdSpendMicros = BigInt(0);
+  let daySpendMicros = BigInt(0);
   for (const r of spendRows) {
-    mtdSpendMicros += BigInt((r.metrics?.cost_micros as number | string | undefined) ?? 0);
+    const cost = BigInt((r.metrics?.cost_micros as number | string | undefined) ?? 0);
+    mtdSpendMicros += cost;
+    if (String(r.segments?.date ?? "") === toDate) daySpendMicros += cost;
   }
   return {
     budgetCampaigns: budgetRows.map((r) => ({
@@ -1037,6 +1043,7 @@ export async function pullAccountHealth(
           : null,
     })),
     mtdSpendMicros,
+    daySpendMicros,
     impressionShare,
     budgetLostShare,
     rankLostShare,

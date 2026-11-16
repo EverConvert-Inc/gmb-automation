@@ -42,6 +42,18 @@ function stringifyError(err: unknown): string {
 
 const share = (v: number | null) => (v === null ? null : v.toFixed(4));
 
+// The likely-junk actions that actually counted, biggest first. Three is
+// enough to name what to fix; the audit page has the full list.
+export function topJunkActions(
+  actions: Array<{ name: string; verdict: string; conversions: number }>,
+): Array<{ name: string; conversions: number }> {
+  return actions
+    .filter((a) => a.verdict === "junk_counted" && a.conversions > 0)
+    .sort((a, b) => b.conversions - a.conversions)
+    .slice(0, 3)
+    .map((a) => ({ name: a.name || "(unnamed)", conversions: Math.round(a.conversions * 100) / 100 }));
+}
+
 type SyncOpts = { through: string; triggeredBy?: string };
 
 export async function syncAccountHealthForClient(
@@ -93,6 +105,7 @@ export async function syncAccountHealthForClient(
       optional.conversions = s.totalConversions.toFixed(2);
       optional.junkConversions = s.junkConversions.toFixed(2);
       optional.reviewConversions = s.reviewConversions.toFixed(2);
+      optional.junkActions = topJunkActions(audit.audit.actions);
     }
     const required = {
       monthStart: w.monthStart,
@@ -102,6 +115,7 @@ export async function syncAccountHealthForClient(
       sharedBudgetCount: budgets.sharedBudgetCount,
       excludedBudgetCount: budgets.excludedBudgetCount,
       mtdSpendMicros: pull.mtdSpendMicros,
+      daySpendMicros: pull.daySpendMicros,
       pullErrors:
         Object.keys(partErrors).length > 0
           ? Object.entries(partErrors)

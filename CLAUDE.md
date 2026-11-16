@@ -173,12 +173,19 @@ classification. A non-match falls back to tracker-name classification.
   from what an action actually contributed in the window, never from its flags —
   live accounts showed actions counting with `include_in_conversions_metric` false, and
   one with `primary_for_goal` false. `all_conversions` is display-only context there.
-- **Account-health overview** (`/ads`, `src/lib/queries-ads-health.ts`): one row per
-  client, month to date, stored data only. `ppc_account_health_daily` (sync
-  `src/lib/ppc-account-health-sync.ts`, cron `ppc-account-health-sync`) holds budgets,
-  spend, impression share, optimization score and the audit's junk share; signed cases
-  and wasted Search spend are read from the PPC syncs' own tables at query time. Flag
-  rules and thresholds live in `src/lib/ads-account-health.ts`.
+- **Account-health overview** (`/ads`, `src/lib/queries-ads-health.ts`): a triage of
+  every PPC client (LSA is not in it), stored data only. `ppc_account_health_daily`
+  (sync `src/lib/ppc-account-health-sync.ts`, cron `ppc-account-health-sync`) holds
+  budgets, spend, impression share, optimization score and the audit's junk share and
+  junk action names; signed cases and wasted Search spend are read from the PPC syncs'
+  own tables at query time. All triage rules and thresholds live in
+  `src/lib/ads-account-health.ts`: each account gets one primary issue, at most one
+  secondary, and a tier (act / watch / ok / no data), ranked by the dollars the issue
+  touches. Things normal for the portfolio raise nothing.
+- **Pacing is never month-to-date spend against today's budget** — budgets are edited
+  mid-month and that reads every cut as overspending. Each snapshot stores the day's
+  spend beside the budget in force; pacing averages the most recent run of days at the
+  current budget and is not judged until there are enough of them.
 - **Impression share and optimization score are read at account level** (`FROM
   customer`), never rolled up from campaigns: a weighted roll-up was checked live and
   was badly off because PMax impressions skew it. Top/absolute-top impression share is
