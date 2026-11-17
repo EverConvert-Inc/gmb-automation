@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import {
   clients,
@@ -9,7 +9,7 @@ import {
   reviewTakedownAlerts,
   reviews,
 } from "./db/schema";
-import { fetchReviews } from "./gbp";
+import { buildGbpPlaceIndex, fetchReviews, getAccessToken, GbpHttpError, type GbpPlaceIndex } from "./gbp";
 
 // How long a review has to be continuously absent from a full GBP sweep
 // before we treat it as a confirmed takedown (vs. a transient API blip or
@@ -89,6 +89,71 @@ export type ConfirmedTakedown = {
   mapsUrl: string | null;
 };
 
+// One scan of every listing the login can see is enough for a whole cron run:
+// the cron polls locations one after another inside a 60s limit, and the stale
+// ones tend to fail together. Keyed by credential, short-lived.
+const PLACE_INDEX_TTL_MS = 10 * 60_000;
+const placeIndexCache = new Map<string, { at: number; index: Promise<GbpPlaceIndex> }>();
+
+function placeIndexFor(credentialId: string, refreshTokenEncrypted: string): Promise<GbpPlaceIndex> {
+  const hit = placeIndexCache.get(credentialId);
+  if (hit && Date.now() - hit.at < PLACE_INDEX_TTL_MS) return hit.index;
+  const index = getAccessToken(refreshTokenEncrypted).then(buildGbpPlaceIndex);
+  placeIndexCache.set(credentialId, { at: Date.now(), index });
+  index.catch(() => placeIndexCache.delete(credentialId));
+  return index;
+}
+
+// The reviews endpoint answered 404 for the account/location pair we saved at
+// connect time. Google moves listings between accounts and location groups,
+// so look the place up again under the same login. Returns the new pair, or
+// throws an error that says what's actually wrong (it becomes lastPollError).
+async function relinkGbpLocation(
+  location: { id: string; name: string; placeId: string; gbpAccountId: string; gbpLocationId: string },
+  credential: { id: string; refreshTokenEncrypted: string },
+): Promise<{ accountId: string; locationId: string }> {
+  const index = await placeIndexFor(credential.id, credential.refreshTokenEncrypted);
+  const match = index.byPlaceId.get(location.placeId);
+  if (!match) {
+    if (index.failedAccounts.length > 0) {
+      throw new Error(
+        `GBP listing not found (404), and ${index.failedAccounts.length} of the connected login's accounts couldn't be listed to look for it. Try again later.`,
+      );
+    }
+    throw new Error(
+      "GBP listing not found (404): the connected Google login no longer manages this place. Reconnect Google Business Profile with a login that manages it.",
+    );
+  }
+  if (match.accountId === location.gbpAccountId && match.locationId === location.gbpLocationId) {
+    throw new Error(
+      `GBP reviews returned 404 although the connected login still lists this place at accounts/${match.accountId}/locations/${match.locationId}.`,
+    );
+  }
+  const other = await db.query.locations.findFirst({
+    where: and(
+      eq(locations.gbpLocationId, match.locationId),
+      ne(locations.id, location.id),
+      eq(locations.status, "active"),
+    ),
+    columns: { name: true },
+  });
+  if (other) {
+    throw new Error(
+      `GBP listing moved to locations/${match.locationId}, which is already tracked as "${other.name}". This location looks like a duplicate.`,
+    );
+  }
+  await db
+    .update(locations)
+    .set({ gbpAccountId: match.accountId, gbpLocationId: match.locationId })
+    .where(eq(locations.id, location.id));
+  console.info("[reviews] relinked GBP location after 404", {
+    locationId: location.id,
+    from: `${location.gbpAccountId}/${location.gbpLocationId}`,
+    to: `${match.accountId}/${match.locationId}`,
+  });
+  return match;
+}
+
 export async function pollReviewsForLocation(locationId: string): Promise<{
   ingested: number;
   newLowRated: Array<{
@@ -117,21 +182,34 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
     // fetches every review GBP currently returns instead of only what
     // changed since the last poll (see fetchReviews' fullSweep doc). At this
     // scale (~30 locations, typically <50 reviews each) that's still
-    // usually a single API page per location.
-    const { reviews: fresh, pageDiagnostics } = await fetchReviews({
-      accountId: location.gbpAccountId,
-      locationId: location.gbpLocationId,
-      refreshTokenEncrypted: cred.refreshTokenEncrypted,
-      // Always a full sweep — required for takedown detection (a review
-      // that's still there but unchanged would never reappear under an
-      // incremental updatedSince fetch, so we'd never notice it was
-      // seen — see fetchReviews' fullSweep doc). This used to be
-      // opt-in via an `opts.full` param (an incremental-vs-full choice
-      // via updatedSince) for the manual sync routes specifically; now
-      // moot since every poll is unconditionally full, so that param
-      // was removed rather than left as dead weight.
-      fullSweep: true,
-    });
+    // usually a single API page per location. Always a full sweep: an
+    // incremental updatedSince fetch would never resurface a review that's
+    // still there but unchanged, so we'd never notice it was seen.
+    //
+    // A 404 means the account/location pair saved at connect time is stale
+    // (Google moved the listing); relinkGbpLocation finds it again by placeId.
+    let gbpAccountId = location.gbpAccountId;
+    let gbpLocationId = location.gbpLocationId;
+    const sweep = () =>
+      fetchReviews({
+        accountId: gbpAccountId,
+        locationId: gbpLocationId,
+        refreshTokenEncrypted: cred.refreshTokenEncrypted,
+        fullSweep: true,
+      });
+
+    let first: Awaited<ReturnType<typeof fetchReviews>>;
+    try {
+      first = await sweep();
+    } catch (err) {
+      if (!(err instanceof GbpHttpError && err.status === 404)) throw err;
+      ({ accountId: gbpAccountId, locationId: gbpLocationId } = await relinkGbpLocation(
+        { ...location, gbpAccountId, gbpLocationId },
+        cred,
+      ));
+      first = await sweep();
+    }
+    const { reviews: fresh, pageDiagnostics } = first;
 
     // Retry-and-merge: Google's legacy v4 API has shown genuine read
     // inconsistency across separate calls for the same location — two
@@ -152,8 +230,8 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
 
     if (fresh.length < activeCountBefore) {
       const retry = await fetchReviews({
-        accountId: location.gbpAccountId,
-        locationId: location.gbpLocationId,
+        accountId: gbpAccountId,
+        locationId: gbpLocationId,
         refreshTokenEncrypted: cred.refreshTokenEncrypted,
         fullSweep: true,
       });
@@ -177,7 +255,7 @@ export async function pollReviewsForLocation(locationId: string): Promise<{
       await db.insert(gbpFetchDiagnostics).values(
         pageDiagnostics.map((d) => ({
           locationId,
-          gbpAccountId: location.gbpAccountId!,
+          gbpAccountId: gbpAccountId,
           fetchedAt: now,
           pageNumber: d.pageNumber,
           pageReviewCount: d.pageReviewCount,

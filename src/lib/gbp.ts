@@ -195,6 +195,54 @@ export type GbpLocation = {
   metadata?: { placeId?: string };
 };
 
+// Carries the HTTP status so callers can react to a specific one (a 404 from
+// the reviews endpoint means the stored account/location pair is stale).
+export class GbpHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "GbpHttpError";
+  }
+}
+
+export type GbpPlaceIndex = {
+  // placeId -> where that listing lives right now.
+  byPlaceId: Map<string, { accountId: string; locationId: string }>;
+  // Accounts whose locations couldn't be listed. A place missing from
+  // byPlaceId may live in one of them, so "not found" isn't conclusive.
+  failedAccounts: string[];
+};
+
+// Every listing the connected Google login can see, across all its accounts
+// and location groups, keyed by placeId. Google can move a listing to another
+// account or location group, after which the account/location pair we saved
+// at connect time returns 404; this is how we find where it went.
+export async function buildGbpPlaceIndex(accessToken: string): Promise<GbpPlaceIndex> {
+  const byPlaceId: GbpPlaceIndex["byPlaceId"] = new Map();
+  const failedAccounts: string[] = [];
+  for (const account of await listAccounts(accessToken)) {
+    if (!account.name) continue;
+    let gbpLocations: GbpLocation[];
+    try {
+      gbpLocations = await listLocations(accessToken, account.name);
+    } catch {
+      failedAccounts.push(account.name);
+      continue;
+    }
+    for (const loc of gbpLocations) {
+      const placeId = loc.metadata?.placeId;
+      if (!placeId || !loc.name || byPlaceId.has(placeId)) continue;
+      byPlaceId.set(placeId, {
+        accountId: account.name.replace(/^accounts\//, ""),
+        locationId: loc.name.replace(/^locations\//, ""),
+      });
+    }
+  }
+  return { byPlaceId, failedAccounts };
+}
+
 export async function listAccounts(accessToken: string): Promise<GbpAccount[]> {
   const out: GbpAccount[] = [];
   let pageToken: string | undefined;
@@ -291,7 +339,7 @@ export async function fetchReviews({
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      throw new Error(`GBP reviews fetch failed: ${res.status} ${await res.text()}`);
+      throw new GbpHttpError(`GBP reviews fetch failed: ${res.status} ${await res.text()}`, res.status);
     }
     const json = (await res.json()) as {
       reviews?: Array<{
