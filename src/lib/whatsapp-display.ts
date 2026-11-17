@@ -24,6 +24,8 @@ export type ThreadMessage = {
 export type ThreadData = {
   id: string;
   name: string;
+  // When the conversation began: its first message, or when we first stored it.
+  startedAt: string;
   subtitle: string;
   unreadCount: number;
   windowClosesAt: string | null;
@@ -71,5 +73,28 @@ export function fmtDateTime(d: Date | string): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  });
+}
+
+// Eastern calendar day key, for grouping messages under date dividers.
+export function easternDayKey(d: Date | string): string {
+  return new Date(d).toLocaleDateString("en-CA", { timeZone: INBOX_TZ });
+}
+
+// Divider label: "Today", "Yesterday", "Mon, Nov 17", or with the year when
+// it isn't this year.
+export function fmtDayLabel(iso: string, now: Date): string {
+  const key = easternDayKey(iso);
+  if (key === easternDayKey(now)) return "Today";
+  if (key === easternDayKey(new Date(now.getTime() - 86_400_000))) return "Yesterday";
+  const d = new Date(iso);
+  const sameYear = d.toLocaleDateString("en-US", { timeZone: INBOX_TZ, year: "numeric" }) ===
+    now.toLocaleDateString("en-US", { timeZone: INBOX_TZ, year: "numeric" });
+  return d.toLocaleDateString("en-US", {
+    timeZone: INBOX_TZ,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
   });
 }

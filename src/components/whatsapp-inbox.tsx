@@ -2,11 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, ArrowLeft, Check, CheckCheck, Clock, Megaphone, Send, User, XCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, CheckCheck, Clock, Megaphone, MessageSquare, Send, Trash2, User, XCircle } from "lucide-react";
+import { toast } from "sonner";
 import { AdminSelect } from "@/components/leads/admin-select";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import {
+  easternDayKey,
   fmtDateTime,
+  fmtDayLabel,
   fmtListTime,
   INBOX_TZ,
   type ConversationItem,
@@ -68,6 +79,11 @@ export function WhatsappInbox({
   // Conversations opened here, so their unread badge clears immediately
   // instead of on the next list refresh.
   const [readLocally, setReadLocally] = useState<Set<string>>(new Set());
+  // Context menu: which row it was opened on, and the two-step delete.
+  const [menuTarget, setMenuTarget] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  // Deleted here; hidden at once, before the list refresh drops them.
+  const [deleted, setDeleted] = useState<Set<string>>(new Set());
 
   const loadThread = useCallback(async (id: string) => {
     if (inFlight.current.has(id)) return;
@@ -95,6 +111,40 @@ export function WhatsappInbox({
   function open(id: string | null) {
     setLoadError(null);
     window.history.pushState(null, "", href(id));
+  }
+
+  async function deleteChat(id: string) {
+    setDeleted((prev) => new Set(prev).add(id));
+    if (selectedId === id) open(null);
+    try {
+      const res = await fetch(`/api/whatsapp/conversations/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? `HTTP ${res.status}`);
+      }
+      cache.current.delete(id);
+      router.refresh();
+    } catch (err) {
+      setDeleted((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      toast.error(`Couldn't delete the chat: ${(err as Error).message}`);
+    }
+  }
+
+  // The menu is opened on the list; this finds which row it was opened on.
+  function pickTarget(e: React.SyntheticEvent) {
+    const from =
+      e.type === "keydown" ? (document.activeElement as HTMLElement | null) : (e.target as HTMLElement | null);
+    const row = from?.closest<HTMLElement>("[data-conv-id]");
+    if (row?.dataset.convId) {
+      setMenuTarget(row.dataset.convId);
+      setConfirmDelete(false);
+    } else if (e.type === "contextmenu") {
+      e.preventDefault(); // empty space below the list: no menu
+    }
   }
 
   // Fetch (or refresh) whatever is selected, including after back/forward.
@@ -128,6 +178,8 @@ export function WhatsappInbox({
   }, [selectedId, threadUnread]);
 
   const now = new Date(nowIso);
+  const visible = conversations.filter((c) => !deleted.has(c.id));
+  const targetConv = visible.find((c) => c.id === menuTarget) ?? null;
 
   return (
     <div className="grid h-[calc(100dvh-9.5rem)] min-h-[28rem] overflow-hidden rounded-xl border bg-background shadow-sm dark:bg-card dark:shadow-none md:grid-cols-[20rem_1fr]">
@@ -149,65 +201,102 @@ export function WhatsappInbox({
             </AdminSelect>
           </div>
         )}
-        <ul className="flex-1 overflow-y-auto">
-          {conversations.length === 0 && <li className="p-4 text-sm text-muted-foreground">No conversations yet.</li>}
-          {conversations.map((conv) => {
-            const active = conv.id === selectedId;
-            const unread = conv.unreadCount > 0 && !readLocally.has(conv.id) && !active;
-            return (
-              <li key={conv.id}>
-                <a
-                  href={href(conv.id)}
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // new tab etc.
-                    e.preventDefault();
-                    open(conv.id);
-                  }}
-                  onMouseEnter={() => !cache.current.has(conv.id) && loadThread(conv.id)}
-                  onFocus={() => !cache.current.has(conv.id) && loadThread(conv.id)}
-                  className={cn(
-                    "relative flex gap-3 border-b border-border/60 px-4 py-3 text-sm transition-colors",
-                    active ? "bg-brand-muted dark:bg-muted" : "hover:bg-card dark:hover:bg-muted/50",
-                  )}
-                >
-                  {active && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-brand" />}
-                  <Avatar />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className={cn("truncate", unread ? "font-semibold" : "font-medium")}>{conv.name}</span>
-                      <span
-                        className={cn(
-                          "flex-shrink-0 text-[11px]",
-                          unread ? "font-medium text-foreground" : "text-muted-foreground",
-                        )}
-                      >
-                        {fmtListTime(conv.lastMessageAt, now)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 flex items-center justify-between gap-2">
-                      <span className={cn("truncate text-xs", unread ? "text-foreground" : "text-muted-foreground")}>
-                        {conv.preview}
-                      </span>
-                      {unread && (
-                        <span className="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-brand-foreground">
-                          {conv.unreadCount}
-                        </span>
+        <ContextMenu
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setConfirmDelete(false);
+          }}
+        >
+          <ContextMenuTrigger>
+            <ul
+              className="flex-1 overflow-y-auto"
+              onContextMenu={pickTarget}
+              onPointerDown={pickTarget}
+              onKeyDown={pickTarget}
+            >
+              {visible.length === 0 && <li className="p-4 text-sm text-muted-foreground">No conversations yet.</li>}
+              {visible.map((conv) => {
+                const active = conv.id === selectedId;
+                const unread = conv.unreadCount > 0 && !readLocally.has(conv.id) && !active;
+                return (
+                  <li key={conv.id} data-conv-id={conv.id}>
+                    <a
+                      href={href(conv.id)}
+                      onClick={(e) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // new tab etc.
+                        e.preventDefault();
+                        open(conv.id);
+                      }}
+                      onMouseEnter={() => !cache.current.has(conv.id) && loadThread(conv.id)}
+                      onFocus={() => !cache.current.has(conv.id) && loadThread(conv.id)}
+                      className={cn(
+                        "relative flex gap-3 border-b border-border/60 px-4 py-3 text-sm transition-colors",
+                        active ? "bg-brand-muted dark:bg-muted" : "hover:bg-card dark:hover:bg-muted/50",
                       )}
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      {!numberFilter && <span className="truncate">{conv.numberName}</span>}
-                      {conv.isAd && (
-                        <span className="flex-shrink-0 rounded bg-brand-muted px-1 font-medium text-foreground dark:bg-violet-500/[0.15] dark:text-violet-400">
-                          Ad
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
+                    >
+                      {active && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-brand" />}
+                      <Avatar />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className={cn("truncate", unread ? "font-semibold" : "font-medium")}>{conv.name}</span>
+                          <span
+                            className={cn(
+                              "flex-shrink-0 text-[11px]",
+                              unread ? "font-medium text-foreground" : "text-muted-foreground",
+                            )}
+                          >
+                            {fmtListTime(conv.lastMessageAt, now)}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex items-center justify-between gap-2">
+                          <span className={cn("truncate text-xs", unread ? "text-foreground" : "text-muted-foreground")}>
+                            {conv.preview}
+                          </span>
+                          {unread && (
+                            <span className="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-brand-foreground">
+                              {conv.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          {!numberFilter && <span className="truncate">{conv.numberName}</span>}
+                          {conv.isAd && (
+                            <span className="flex-shrink-0 rounded bg-brand-muted px-1 font-medium text-foreground dark:bg-violet-500/[0.15] dark:text-violet-400">
+                              Ad
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </ContextMenuTrigger>
+          <ContextMenuContent ariaLabel="Chat actions" className="w-56">
+            {targetConv && <ContextMenuLabel className="truncate normal-case tracking-normal">{targetConv.name}</ContextMenuLabel>}
+            <ContextMenuItem textValue="Open chat" onSelect={() => menuTarget && open(menuTarget)}>
+              <MessageSquare aria-hidden="true" className="h-4 w-4" />
+              Open chat
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              tone="destructive"
+              textValue="Delete chat"
+              closeOnSelect={confirmDelete}
+              onSelect={() => {
+                if (!menuTarget) return;
+                if (!confirmDelete) {
+                  setConfirmDelete(true);
+                  return;
+                }
+                deleteChat(menuTarget);
+              }}
+            >
+              <Trash2 aria-hidden="true" className="h-4 w-4" />
+              {confirmDelete ? "Click again to delete" : "Delete chat"}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </aside>
 
       {/* Thread */}
@@ -246,6 +335,7 @@ export function WhatsappInbox({
             <WhatsappThread
               conversationId={thread.id}
               messages={thread.messages}
+              startedAt={thread.startedAt}
               nowIso={nowIso}
               disabledReason={thread.disabledReason}
               onSent={() => {
@@ -364,17 +454,30 @@ function Bubble({ m, nowIso, pending }: { m: ThreadMessage; nowIso: string; pend
   );
 }
 
+// Centered date marker in the thread ("Chat started …", "Today", "Nov 17").
+function DateChip({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex justify-center py-1">
+      <span className="rounded-full border border-border bg-background px-3 py-0.5 text-[11px] text-muted-foreground dark:border-transparent dark:bg-muted">
+        {children}
+      </span>
+    </div>
+  );
+}
+
 // A sent reply appears instantly; Meta's send API, the insert and the
 // refresh all run behind it.
 function WhatsappThread({
   conversationId,
   messages,
+  startedAt,
   nowIso,
   disabledReason,
   onSent,
 }: {
   conversationId: string;
   messages: ThreadMessage[];
+  startedAt: string;
   nowIso: string;
   disabledReason: string | null;
   onSent: () => void;
@@ -387,6 +490,29 @@ function WhatsappThread({
 
   const serverIds = new Set(messages.map((m) => m.id));
   const visiblePending = pending.filter((p) => !p.serverId || !serverIds.has(p.serverId));
+
+  // Stored messages, then replies still on their way, in one list so date
+  // dividers fall in the right places.
+  const rows: Array<{ key: string; m: ThreadMessage; pending: boolean }> = [
+    ...messages.map((m) => ({ key: m.id, m, pending: false })),
+    ...visiblePending.map((p) => ({
+      key: p.key,
+      pending: true,
+      m: {
+        id: p.key,
+        direction: "out" as const,
+        type: "text",
+        body: p.body,
+        mediaId: null,
+        mediaFilename: null,
+        referral: null,
+        status: p.serverId ? "sent" : "sending",
+        errorMessage: null,
+        sentByEmail: null,
+        sentAt: p.sentAt,
+      },
+    })),
+  ];
 
   const lastId = messages.at(-1)?.id;
   const pendingCount = visiblePending.length;
@@ -430,29 +556,29 @@ function WhatsappThread({
   return (
     <>
       <div className="flex-1 space-y-1.5 overflow-y-auto bg-card px-4 py-4 dark:bg-muted/20">
-        {messages.map((m) => (
-          <Bubble key={m.id} m={m} nowIso={nowIso} />
-        ))}
-        {visiblePending.map((p) => (
-          <Bubble
-            key={p.key}
-            pending
-            nowIso={nowIso}
-            m={{
-              id: p.key,
-              direction: "out",
-              type: "text",
-              body: p.body,
-              mediaId: null,
-              mediaFilename: null,
-              referral: null,
-              status: p.serverId ? "sent" : "sending",
-              errorMessage: null,
-              sentByEmail: null,
-              sentAt: p.sentAt,
-            }}
-          />
-        ))}
+        <DateChip>
+          Chat started {new Date(startedAt).toLocaleString("en-US", {
+            timeZone: INBOX_TZ,
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </DateChip>
+        {rows.map((row, i) => {
+          const day = easternDayKey(row.m.sentAt);
+          // A divider wherever the day changes; the first day is covered by
+          // the "Chat started" chip unless the chat began on another day.
+          const prevDay = i === 0 ? easternDayKey(startedAt) : easternDayKey(rows[i - 1].m.sentAt);
+          return (
+            <div key={row.key} className="space-y-1.5">
+              {day !== prevDay && <DateChip>{fmtDayLabel(row.m.sentAt, new Date(nowIso))}</DateChip>}
+              <Bubble m={row.m} nowIso={nowIso} pending={row.pending} />
+            </div>
+          );
+        })}
         <div ref={endRef} aria-hidden />
       </div>
 

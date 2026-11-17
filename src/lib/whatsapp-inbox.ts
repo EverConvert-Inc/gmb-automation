@@ -303,6 +303,17 @@ export async function sendReply(conversationId: string, body: string, sentByEmai
   return message;
 }
 
+// Deletes a conversation and (by cascade) its messages from our database.
+// Nothing changes on WhatsApp: the customer still has the chat, and their
+// next message simply starts a new conversation here.
+export async function deleteConversation(conversationId: string): Promise<boolean> {
+  const deleted = await db
+    .delete(whatsappConversations)
+    .where(eq(whatsappConversations.id, conversationId))
+    .returning({ id: whatsappConversations.id });
+  return deleted.length > 0;
+}
+
 export async function markConversationRead(conversationId: string): Promise<void> {
   await db
     .update(whatsappConversations)
@@ -382,9 +393,13 @@ export async function getThread(conversationId: string, now: Date = new Date()):
   }
   const closes = serviceWindowClosesAt(convo.lastInboundAt);
 
+  const firstLoaded = rows.at(-1)?.sentAt; // rows are newest-first here
+  const startedAt = firstLoaded && firstLoaded < convo.createdAt ? firstLoaded : convo.createdAt;
+
   return {
     id: convo.id,
     name: contactName(convo),
+    startedAt: startedAt.toISOString(),
     subtitle: [convo.waId ? `+${convo.waId}` : null, convo.username ? `@${convo.username}` : null, numberName(number)]
       .filter(Boolean)
       .join(" · "),
