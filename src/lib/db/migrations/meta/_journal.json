@@ -442,6 +442,13 @@
       "when": 1794844038890,
       "tag": "0062_ppc_account_health_junk_actions_day_spend",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1794924060697,
+      "tag": "0063_whatsapp_inbox",
+      "breakpoints": true
     }
   ]
 }

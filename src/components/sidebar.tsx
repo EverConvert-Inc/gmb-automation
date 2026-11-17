@@ -8,6 +8,7 @@ import {
   Gauge,
   Map,
   Megaphone,
+  MessageCircle,
   MessagesSquare,
   PhoneCall,
   Settings,
@@ -29,6 +30,7 @@ const items = [
   { href: "/ads", label: "Ads Dashboard", icon: Target },
   { href: "/lsa", label: "LSA", icon: PhoneCall },
   { href: "/reddit", label: "Reddit", icon: MessagesSquare },
+  { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
   { href: "/call-quality", label: "Call Quality", icon: Gauge },
   { href: "/takedowns", label: "Takedowns", icon: AlertTriangle },
 ] as const;

@@ -2118,3 +2118,140 @@ export const redditReportRecipients = pgTable("reddit_report_recipients", {
 export type RedditClient = typeof redditClients.$inferSelect;
 export type RedditAdAccount = typeof redditAdAccounts.$inferSelect;
 export type RedditReportRecipient = typeof redditReportRecipients.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// WhatsApp inbox (Cloud API). Standalone like Reddit: own tables, no FK into
+// any other client table. Every number lives in EverConvert's own Meta
+// business portfolio and is reached with ONE system-user token
+// (WHATSAPP_ACCESS_TOKEN), so there is no per-number credential to store.
+//
+// RLS on with no policies (deny-all), like the lead tracker: these rows are
+// people's private messages and the Supabase anon key ships in every
+// browser bundle. The app reads them through Drizzle as the owning role.
+// ---------------------------------------------------------------------------
+
+// One row per business phone number. Created by discovery (/whatsapp/numbers)
+// or, failing that, by the first webhook that names an unknown
+// phone_number_id — the signature already proved the delivery is for our
+// app, so a message is never dropped just because discovery hasn't run.
+export const whatsappNumbers = pgTable(
+  "whatsapp_numbers",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Meta's phone number id: what the webhook's metadata names and what
+    // POST /{phone_number_id}/messages sends from. Not the phone number.
+    phoneNumberId: text("phone_number_id").notNull().unique(),
+    // Null only for a row the webhook created before discovery ever ran.
+    wabaId: text("waba_id"),
+    displayPhoneNumber: text("display_phone_number"),
+    verifiedName: text("verified_name"),
+    // Our own name for it, usually the client. Shown in the inbox.
+    label: text("label"),
+    // Meta-side state, refreshed by discovery. Reference only.
+    qualityRating: text("quality_rating"),
+    platformType: text("platform_type"),
+    codeVerificationStatus: text("code_verification_status"),
+    isActive: boolean("is_active").notNull().default(true),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+).enableRLS();
+
+// One row per (our number, customer). A customer is identified by Meta's
+// business-scoped user id (contacts[].user_id, "BSUID") and/or their phone
+// (wa_id). Both are nullable on purpose: since Meta's 2026 usernames rollout
+// the phone is omitted for a user who adopted a username, and older payloads
+// may carry no BSUID. Lookup tries the BSUID first, then the phone, and fills
+// in whichever was missing (see upsertConversation in whatsapp-inbox.ts).
+export const whatsappConversations = pgTable(
+  "whatsapp_conversations",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    numberId: uuid("number_id")
+      .notNull()
+      .references(() => whatsappNumbers.id, { onDelete: "cascade" }),
+    userId: text("user_id"),
+    waId: text("wa_id"),
+    profileName: text("profile_name"),
+    username: text("username"),
+    // Drives the 24-hour customer-service window: free-form replies are
+    // only allowed within 24h of the customer's last inbound message.
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    lastMessagePreview: text("last_message_preview"),
+    unreadCount: integer("unread_count").notNull().default(0),
+    // The most recent click-to-WhatsApp ad referral seen in this
+    // conversation (source_id = ad id, ctwa_clid, headline, ...). The full
+    // history stays on each message's own referral column.
+    lastReferral: jsonb("last_referral"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userUniq: uniqueIndex("whatsapp_conversations_user_uniq")
+      .on(t.numberId, t.userId)
+      .where(sql`${t.userId} is not null`),
+    waUniq: uniqueIndex("whatsapp_conversations_wa_uniq")
+      .on(t.numberId, t.waId)
+      .where(sql`${t.waId} is not null`),
+    lastMessageIdx: index("whatsapp_conversations_last_message_idx").on(t.lastMessageAt),
+    identityCheck: check(
+      "whatsapp_conversations_identity_check",
+      sql`${t.userId} IS NOT NULL OR ${t.waId} IS NOT NULL`,
+    ),
+  }),
+).enableRLS();
+
+// Inbound and outbound messages. wamid is unique: Meta retries a failed
+// delivery for up to 7 days, so every insert is ON CONFLICT DO NOTHING.
+export const whatsappMessages = pgTable(
+  "whatsapp_messages",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => whatsappConversations.id, { onDelete: "cascade" }),
+    wamid: text("wamid").notNull().unique(),
+    direction: text("direction").notNull(), // 'in' | 'out'
+    // Meta's message type: text, image, audio, video, document, sticker,
+    // location, contacts, button, interactive, reaction, unsupported, ...
+    type: text("type").notNull(),
+    // Text body, media caption, button/interactive title, or a short
+    // description for types with no text of their own.
+    body: text("body"),
+    // Media is not stored: it is fetched from Meta on view, by id, through
+    // /api/whatsapp/media/[mediaId].
+    mediaId: text("media_id"),
+    mediaMimeType: text("media_mime_type"),
+    mediaFilename: text("media_filename"),
+    // Click-to-WhatsApp ad referral, verbatim (source_id, ctwa_clid, ...).
+    referral: jsonb("referral"),
+    // 'received' for inbound; outbound moves sent → delivered → read, or
+    // failed. Only ever moves forward (see statusRank in whatsapp-webhook.ts).
+    status: text("status").notNull(),
+    errorMessage: text("error_message"),
+    // Staff email for replies sent from the inbox.
+    sentByEmail: text("sent_by_email"),
+    // Meta's timestamp for inbound; send time for outbound.
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+    statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),
+    raw: jsonb("raw"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    conversationSentIdx: index("whatsapp_messages_conversation_sent_idx").on(
+      t.conversationId,
+      t.sentAt,
+    ),
+    // The media proxy looks a message up by its media id.
+    mediaIdx: index("whatsapp_messages_media_idx")
+      .on(t.mediaId)
+      .where(sql`${t.mediaId} is not null`),
+    directionCheck: check("whatsapp_messages_direction_check", sql`${t.direction} IN ('in','out')`),
+  }),
+).enableRLS();
+
+export type WhatsappNumber = typeof whatsappNumbers.$inferSelect;
+export type WhatsappConversation = typeof whatsappConversations.$inferSelect;
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
