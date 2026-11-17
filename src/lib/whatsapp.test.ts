@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GRAPH_API_VERSION, listWabas, sendText, WhatsappApiError } from "./whatsapp";
+import { GRAPH_API_VERSION, listWabas, registerPhoneNumber, sendText, WhatsappApiError } from "./whatsapp";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -59,5 +59,27 @@ describe("listWabas", () => {
     });
     const res = await listWabas("BIZ", { token: "t", fetchImpl: fetchImpl as unknown as typeof fetch });
     expect(res.wabas.map((w) => w.id)).toEqual(["W1", "W2"]);
+  });
+});
+
+describe("registerPhoneNumber", () => {
+  it("POSTs messaging_product + pin to /{id}/register and returns Meta's body verbatim", async () => {
+    const fetchImpl = vi.fn(async () => new Response('{"success":true}', { status: 200 }));
+    const res = await registerPhoneNumber("1300563326480454", "000000", {
+      token: "t",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(res).toEqual({ httpStatus: 200, body: '{"success":true}' });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`https://graph.facebook.com/${GRAPH_API_VERSION}/1300563326480454/register`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ messaging_product: "whatsapp", pin: "000000" });
+  });
+
+  it("returns an error response as-is instead of throwing, so the page can show it", async () => {
+    const raw = '{"error":{"message":"(#133005) Two step verification PIN Mismatch","code":133005}}';
+    const fetchImpl = vi.fn(async () => new Response(raw, { status: 400 }));
+    const res = await registerPhoneNumber("PN", "111111", { token: "t", fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(res).toEqual({ httpStatus: 400, body: raw });
   });
 });

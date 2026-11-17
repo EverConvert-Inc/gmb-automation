@@ -16,7 +16,15 @@ import {
   type InboundMessage,
   type StatusUpdate,
 } from "./whatsapp-webhook";
-import { listPhoneNumbers, listWabas, sendText, subscribeAppToWaba } from "./whatsapp";
+import {
+  listPhoneNumbers,
+  listWabas,
+  registerPhoneNumber,
+  sendText,
+  subscribeAppToWaba,
+  type GraphPhoneNumber,
+  type RawGraphResponse,
+} from "./whatsapp";
 
 // Same reason as the sync modules' copies: a bare (err as Error).message is
 // undefined for a non-Error rejection.
@@ -175,6 +183,29 @@ export async function applyStatus(s: StatusUpdate): Promise<boolean> {
   return updated.length > 0;
 }
 
+// Upserts one number as Meta lists it. Returns true when the row is new.
+// Labels and the active flag are ours and never overwritten.
+async function upsertDiscoveredNumber(wabaId: string, n: GraphPhoneNumber): Promise<boolean> {
+  const values = {
+    wabaId,
+    displayPhoneNumber: n.display_phone_number ?? null,
+    verifiedName: n.verified_name ?? null,
+    qualityRating: n.quality_rating ?? null,
+    platformType: n.platform_type ?? null,
+    codeVerificationStatus: n.code_verification_status ?? null,
+    lastSeenAt: new Date(),
+  };
+  const [row] = await db
+    .insert(whatsappNumbers)
+    .values({ phoneNumberId: n.id, ...values })
+    .onConflictDoUpdate({
+      target: whatsappNumbers.phoneNumberId,
+      set: { ...values, updatedAt: new Date() },
+    })
+    .returning({ created: sql<boolean>`(xmax = 0)` });
+  return row?.created === true;
+}
+
 // --- Discovery -------------------------------------------------------------
 
 export type DiscoveryResult = {
@@ -212,24 +243,7 @@ export async function runWhatsappDiscovery(): Promise<DiscoveryResult> {
     }
     for (const n of numbers) {
       found++;
-      const values = {
-        wabaId: waba.id,
-        displayPhoneNumber: n.display_phone_number ?? null,
-        verifiedName: n.verified_name ?? null,
-        qualityRating: n.quality_rating ?? null,
-        platformType: n.platform_type ?? null,
-        codeVerificationStatus: n.code_verification_status ?? null,
-        lastSeenAt: new Date(),
-      };
-      const [row] = await db
-        .insert(whatsappNumbers)
-        .values({ phoneNumberId: n.id, ...values })
-        .onConflictDoUpdate({
-          target: whatsappNumbers.phoneNumberId,
-          set: { ...values, updatedAt: new Date() },
-        })
-        .returning({ created: sql<boolean>`(xmax = 0)` });
-      if (row?.created) added++;
+      if (await upsertDiscoveredNumber(waba.id, n)) added++;
     }
   }
   return { wabas: wabas.length, found, added, subscribed, errors };
@@ -292,4 +306,46 @@ export async function markConversationRead(conversationId: string): Promise<void
     .update(whatsappConversations)
     .set({ unreadCount: 0 })
     .where(and(eq(whatsappConversations.id, conversationId), sql`${whatsappConversations.unreadCount} > 0`));
+}
+
+// --- Cloud API registration --------------------------------------------------
+
+export type RegisterOutcome = {
+  meta: RawGraphResponse;
+  // The number as Meta lists it right after the call, or why that failed.
+  refreshed: { platformType: string | null; codeVerificationStatus: string | null } | null;
+  refreshError: string | null;
+};
+
+// Re-reads one number from its WABA's phone_numbers list (the same call
+// discovery makes) and stores it.
+export async function refreshNumber(numberRowId: string) {
+  const row = await db.query.whatsappNumbers.findFirst({ where: eq(whatsappNumbers.id, numberRowId) });
+  if (!row) throw new Error("Number not found");
+  if (!row.wabaId) throw new Error("This number has no WhatsApp account id yet; run Refresh from Meta");
+  const n = (await listPhoneNumbers(row.wabaId)).find((x) => x.id === row.phoneNumberId);
+  if (!n) throw new Error("Meta no longer lists this number under its WhatsApp account");
+  await upsertDiscoveredNumber(row.wabaId, n);
+  return { platformType: n.platform_type ?? null, codeVerificationStatus: n.code_verification_status ?? null };
+}
+
+export class RegisterRefused extends Error {}
+
+// Only offered for numbers Meta reports as NOT_APPLICABLE (not registered on
+// any platform). Re-registering a number that is already live on the Cloud
+// API is refused here rather than risked.
+export async function registerNumberForCloudApi(numberRowId: string, pin: string): Promise<RegisterOutcome> {
+  const row = await db.query.whatsappNumbers.findFirst({ where: eq(whatsappNumbers.id, numberRowId) });
+  if (!row) throw new RegisterRefused("Number not found");
+  if (row.platformType !== "NOT_APPLICABLE") {
+    throw new RegisterRefused(
+      `Only numbers with platform type NOT_APPLICABLE can be registered here (this one is ${row.platformType ?? "unknown"}). Run Refresh from Meta if that looks stale.`,
+    );
+  }
+  const meta = await registerPhoneNumber(row.phoneNumberId, pin);
+  try {
+    return { meta, refreshed: await refreshNumber(row.id), refreshError: null };
+  } catch (err) {
+    return { meta, refreshed: null, refreshError: stringifyError(err) };
+  }
 }

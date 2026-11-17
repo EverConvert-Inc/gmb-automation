@@ -181,3 +181,30 @@ export async function downloadMedia(
     size: meta.file_size ?? null,
   };
 }
+
+export type RawGraphResponse = { httpStatus: number; body: string };
+
+// Registers a number for the Cloud API (POST /{phone_number_id}/register).
+// The pin becomes, or must match, the number's two-step verification PIN.
+//
+// Returns Meta's response verbatim (status + raw body text) instead of
+// throwing, because the caller shows it to the operator exactly as sent.
+// The pin is only ever placed in this request body: never logged, never
+// stored, never echoed back.
+export async function registerPhoneNumber(
+  phoneNumberId: string,
+  pin: string,
+  opts: { token?: string; fetchImpl?: FetchLike } = {},
+): Promise<RawGraphResponse> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  const res = await doFetch(`${GRAPH_BASE}/${encodeURIComponent(phoneNumberId)}/register`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${opts.token ?? getAccessToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+    cache: "no-store",
+  });
+  return { httpStatus: res.status, body: await res.text() };
+}
