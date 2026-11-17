@@ -1,23 +1,18 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { ArrowLeft, Check, CheckCheck, Clock, Megaphone, Settings2, XCircle } from "lucide-react";
+import { ArrowLeft, Settings2 } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
-import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import {
   WhatsappAutoRefresh,
-  WhatsappComposer,
   WhatsappMarkRead,
-  WhatsappScrollToEnd,
+  WhatsappNumberSelect,
+  WhatsappThread,
+  type ThreadMessage,
 } from "@/components/whatsapp-inbox";
 import { db } from "@/lib/db/client";
-import {
-  whatsappConversations,
-  whatsappMessages,
-  whatsappNumbers,
-  type WhatsappMessage,
-} from "@/lib/db/schema";
+import { whatsappConversations, whatsappMessages, whatsappNumbers } from "@/lib/db/schema";
 import { canReplyFreeform, serviceWindowClosesAt } from "@/lib/whatsapp-webhook";
 import { cn } from "@/lib/utils";
 
@@ -26,20 +21,20 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "WhatsApp inbox" };
 
 const UUID = /^[0-9a-f-]{36}$/i;
+const TZ = "America/New_York";
 
 function fmtWhen(d: Date | null, now: Date): string {
   if (!d) return "";
   const sameDay =
-    d.toLocaleDateString("en-US", { timeZone: "America/New_York" }) ===
-    now.toLocaleDateString("en-US", { timeZone: "America/New_York" });
+    d.toLocaleDateString("en-US", { timeZone: TZ }) === now.toLocaleDateString("en-US", { timeZone: TZ });
   return d.toLocaleString("en-US", {
-    timeZone: "America/New_York",
+    timeZone: TZ,
     ...(sameDay ? { timeStyle: "short" } : { month: "short", day: "numeric" }),
   });
 }
 
 function fmtFull(d: Date): string {
-  return d.toLocaleString("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" });
+  return d.toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function contactName(c: { profileName: string | null; username: string | null; waId: string | null }): string {
@@ -50,65 +45,8 @@ function numberName(n: { label: string | null; verifiedName: string | null; disp
   return n?.label ?? n?.verifiedName ?? n?.displayPhoneNumber ?? "Unknown number";
 }
 
-type Referral = { source_id?: string; source_url?: string; headline?: string; body?: string; source_type?: string };
-
-function ReferralNote({ referral }: { referral: Referral }) {
-  return (
-    <div className="mb-1 rounded border border-border/60 bg-background/60 px-2 py-1 text-[11px] text-muted-foreground">
-      <Megaphone className="mr-1 inline h-3 w-3" />
-      From {referral.source_type === "ad" ? "ad" : (referral.source_type ?? "referral")}
-      {referral.headline ? `: ${referral.headline}` : ""}
-      {referral.source_id && <span className="ml-1 font-mono">#{referral.source_id}</span>}
-    </div>
-  );
-}
-
-function StatusIcon({ m }: { m: WhatsappMessage }) {
-  if (m.direction !== "out") return null;
-  switch (m.status) {
-    case "read":
-      return <CheckCheck className="h-3.5 w-3.5 text-sky-500" aria-label="Read" />;
-    case "delivered":
-      return <CheckCheck className="h-3.5 w-3.5" aria-label="Delivered" />;
-    case "sent":
-      return <Check className="h-3.5 w-3.5" aria-label="Sent" />;
-    case "failed":
-      return <XCircle className="h-3.5 w-3.5 text-red-700 dark:text-red-400" aria-label="Failed" />;
-    default:
-      return <Clock className="h-3.5 w-3.5" aria-label="Sending" />;
-  }
-}
-
-function MessageBody({ m }: { m: WhatsappMessage }) {
-  const src = m.mediaId ? `/api/whatsapp/media/${encodeURIComponent(m.mediaId)}` : null;
-  return (
-    <>
-      {src && m.type === "image" && (
-        // eslint-disable-next-line @next/next/no-img-element -- authenticated proxy, not optimisable
-        <img src={src} alt={m.body ?? "Photo"} className="mb-1 max-h-72 rounded" loading="lazy" />
-      )}
-      {src && m.type === "sticker" && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="Sticker" className="h-28 w-28" loading="lazy" />
-      )}
-      {src && m.type === "audio" && <audio controls preload="none" src={src} className="max-w-full" />}
-      {src && m.type === "video" && <video controls preload="none" src={src} className="mb-1 max-h-72 rounded" />}
-      {src && m.type === "document" && (
-        <a href={src} target="_blank" rel="noreferrer" className="mb-1 block underline">
-          {m.mediaFilename ?? "Document"}
-        </a>
-      )}
-      {m.body ? (
-        <p className="whitespace-pre-wrap break-words">{m.body}</p>
-      ) : (
-        !src && <p className="italic text-muted-foreground">[{m.type}]</p>
-      )}
-    </>
-  );
-}
-
-// Two panes: conversations on the left, the open thread on the right. On a
-// phone only one shows at a time (?c= decides which).
+// Conversation list on the left, open thread on the right. On a phone only
+// one shows at a time (?c= decides which).
 export default async function WhatsappInboxPage({
   searchParams,
 }: {
@@ -121,6 +59,21 @@ export default async function WhatsappInboxPage({
 
   const numbers = await db.query.whatsappNumbers.findMany({ orderBy: asc(whatsappNumbers.label) });
   const numberById = new Map(numbers.map((x) => [x.id, x]));
+
+  // Several numbers can share a label (one client, two numbers), so the
+  // dropdown adds the phone number when a name repeats.
+  const activeNumbers = numbers.filter((x) => x.isActive);
+  const nameCounts = new Map<string, number>();
+  for (const x of activeNumbers) nameCounts.set(numberName(x), (nameCounts.get(numberName(x)) ?? 0) + 1);
+  const numberOptions = activeNumbers
+    .map((x) => ({
+      id: x.id,
+      label:
+        (nameCounts.get(numberName(x)) ?? 0) > 1 && x.displayPhoneNumber
+          ? `${numberName(x)} · ${x.displayPhoneNumber}`
+          : numberName(x),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   const conversations = await db
     .select()
@@ -148,11 +101,10 @@ export default async function WhatsappInboxPage({
       ).reverse()
     : [];
 
-  const qs = (params: { c?: string | null; n?: string | null }) => {
+  const href = (convId: string | null) => {
     const p = new URLSearchParams();
-    const nn = params.n === undefined ? numberFilter : params.n;
-    if (nn) p.set("n", nn);
-    if (params.c) p.set("c", params.c);
+    if (numberFilter) p.set("n", numberFilter);
+    if (convId) p.set("c", convId);
     const s = p.toString();
     return s ? `/whatsapp?${s}` : "/whatsapp";
   };
@@ -164,47 +116,34 @@ export default async function WhatsappInboxPage({
         ? `Reply window closed ${fmtFull(serviceWindowClosesAt(selected.lastInboundAt)!)}. WhatsApp only allows an approved template until the customer writes again.`
         : "The customer hasn't messaged this number, so WhatsApp only allows an approved template.";
     } else if (!selected.waId) {
-      disabledReason = "This contact uses a WhatsApp username and has no phone number on file, so it can't be replied to from here yet.";
+      disabledReason =
+        "This contact uses a WhatsApp username and has no phone number on file, so it can't be replied to from here yet.";
     }
   }
   const windowCloses = selected ? serviceWindowClosesAt(selected.lastInboundAt) : null;
 
+  const threadMessages: ThreadMessage[] = messages.map((m) => ({
+    id: m.id,
+    direction: m.direction === "out" ? "out" : "in",
+    type: m.type,
+    body: m.body,
+    mediaId: m.mediaId,
+    mediaFilename: m.mediaFilename,
+    referral: (m.referral as ThreadMessage["referral"]) ?? null,
+    status: m.status,
+    errorMessage: m.errorMessage,
+    sentByEmail: m.sentByEmail,
+    sentAt: m.sentAt.toISOString(),
+  }));
+
   return (
     <div className="space-y-4">
       <WhatsappAutoRefresh />
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">WhatsApp</h1>
-          <p className="text-sm text-muted-foreground">
-            Messages to every client number. Updates every 10 seconds.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {numbers.length > 1 && (
-            <div className="flex flex-wrap gap-1">
-              <Link
-                href={qs({ n: null, c: null })}
-                className={buttonClasses(numberFilter ? "ghost" : "outline", "sm")}
-              >
-                All numbers
-              </Link>
-              {numbers
-                .filter((x) => x.isActive)
-                .map((x) => (
-                  <Link
-                    key={x.id}
-                    href={qs({ n: x.id, c: null })}
-                    className={buttonClasses(numberFilter === x.id ? "outline" : "ghost", "sm")}
-                  >
-                    {numberName(x)}
-                  </Link>
-                ))}
-            </div>
-          )}
-          <Link href="/whatsapp/numbers" className={buttonClasses("outline", "sm")}>
-            <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Numbers
-          </Link>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">WhatsApp</h1>
+        <Link href="/whatsapp/numbers" className={buttonClasses("outline", "sm")}>
+          <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Numbers
+        </Link>
       </div>
 
       {numbers.length === 0 && (
@@ -217,48 +156,68 @@ export default async function WhatsappInboxPage({
         </Banner>
       )}
 
-      <div className="grid h-[calc(100dvh-14rem)] min-h-[28rem] overflow-hidden rounded-lg border bg-card md:grid-cols-[20rem_1fr]">
+      <div className="grid h-[calc(100dvh-9.5rem)] min-h-[28rem] overflow-hidden rounded-xl border bg-background shadow-sm dark:bg-card dark:shadow-none md:grid-cols-[20rem_1fr]">
         {/* Conversation list */}
-        <ul className={cn("overflow-y-auto border-r", selected && "hidden md:block")}>
-          {conversations.length === 0 && (
-            <li className="p-4 text-sm text-muted-foreground">No conversations yet.</li>
+        <aside className={cn("flex min-h-0 flex-col border-r", selected && "hidden md:flex")}>
+          {numberOptions.length > 1 && (
+            <div className="border-b p-3">
+              <WhatsappNumberSelect options={numberOptions} value={numberFilter} />
+            </div>
           )}
-          {conversations.map(({ whatsapp_conversations: conv, whatsapp_numbers: num }) => {
-            const active = conv.id === selected?.id;
-            return (
-              <li key={conv.id}>
-                <Link
-                  href={qs({ c: conv.id })}
-                  className={cn(
-                    "block border-b px-4 py-3 text-sm hover:bg-muted/50",
-                    active && "bg-muted",
-                  )}
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className={cn("truncate", conv.unreadCount > 0 ? "font-semibold" : "font-medium")}>
-                      {contactName(conv)}
-                    </span>
-                    <span className="flex-shrink-0 text-[11px] text-muted-foreground">
-                      {fmtWhen(conv.lastMessageAt, now)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-xs text-muted-foreground">{conv.lastMessagePreview}</span>
-                    {conv.unreadCount > 0 && (
-                      <span className="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-brand-foreground">
-                        {conv.unreadCount}
-                      </span>
+          <ul className="flex-1 overflow-y-auto">
+            {conversations.length === 0 && (
+              <li className="p-4 text-sm text-muted-foreground">No conversations yet.</li>
+            )}
+            {conversations.map(({ whatsapp_conversations: conv, whatsapp_numbers: num }) => {
+              const active = conv.id === selected?.id;
+              const unread = conv.unreadCount > 0;
+              return (
+                <li key={conv.id}>
+                  <Link
+                    href={href(conv.id)}
+                    className={cn(
+                      "relative block border-b border-border/60 px-4 py-3 text-sm transition-colors",
+                      active ? "bg-brand-muted dark:bg-muted" : "hover:bg-card dark:hover:bg-muted/50",
                     )}
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {!numberFilter && <Badge size="sm" variant="secondary">{numberName(num)}</Badge>}
-                    {conv.lastReferral ? <Badge size="sm" variant="violet">Ad</Badge> : null}
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+                  >
+                    {active && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-brand" />}
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className={cn("truncate", unread ? "font-semibold" : "font-medium")}>
+                        {contactName(conv)}
+                      </span>
+                      <span
+                        className={cn(
+                          "flex-shrink-0 text-[11px]",
+                          unread ? "font-medium text-foreground" : "text-muted-foreground",
+                        )}
+                      >
+                        {fmtWhen(conv.lastMessageAt, now)}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center justify-between gap-2">
+                      <span className={cn("truncate text-xs", unread ? "text-foreground" : "text-muted-foreground")}>
+                        {conv.lastMessagePreview}
+                      </span>
+                      {unread && (
+                        <span className="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-brand-foreground">
+                          {conv.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      {!numberFilter && <span className="truncate">{numberName(num)}</span>}
+                      {conv.lastReferral ? (
+                        <span className="flex-shrink-0 rounded bg-brand-muted px-1 font-medium text-foreground dark:bg-violet-500/[0.15] dark:text-violet-400">
+                          Ad
+                        </span>
+                      ) : null}
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </aside>
 
         {/* Thread */}
         <section className={cn("flex min-h-0 flex-col", !selected && "hidden md:flex")}>
@@ -270,53 +229,35 @@ export default async function WhatsappInboxPage({
               <header className="flex items-center justify-between gap-3 border-b px-4 py-3">
                 <div className="min-w-0">
                   <Link
-                    href={qs({ c: null })}
+                    href={href(null)}
                     className="mb-1 inline-flex items-center text-xs text-muted-foreground hover:text-foreground md:hidden"
                   >
                     <ArrowLeft className="mr-1 h-3 w-3" /> Conversations
                   </Link>
-                  <div className="truncate font-medium">{contactName(selected)}</div>
+                  <div className="truncate font-semibold">{contactName(selected)}</div>
                   <div className="truncate text-xs text-muted-foreground">
                     {[
                       selected.waId ? `+${selected.waId}` : null,
                       selected.username ? `@${selected.username}` : null,
-                      `to ${numberName(numberById.get(selected.numberId) ?? null)}`,
+                      numberName(numberById.get(selected.numberId) ?? null),
                     ]
                       .filter(Boolean)
                       .join(" · ")}
                   </div>
                 </div>
                 {windowCloses && windowCloses > now && (
-                  <Badge variant="success" className="flex-shrink-0">
-                    Can reply until {fmtWhen(windowCloses, now)}
-                  </Badge>
+                  <span className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-brand-muted px-2.5 py-1 text-xs font-medium text-foreground dark:rounded-md dark:bg-green-500/[0.15] dark:px-2 dark:py-0.5 dark:text-green-400">
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-brand dark:hidden" />
+                    Can reply until {fmtFull(windowCloses)}
+                  </span>
                 )}
               </header>
-              <div className="flex-1 space-y-2 overflow-y-auto bg-muted/20 px-4 py-4">
-                {messages.map((m) => (
-                  <div key={m.id} className={cn("flex", m.direction === "out" ? "justify-end" : "justify-start")}>
-                    <div
-                      className={cn(
-                        "max-w-[80%] rounded-lg px-3 py-2 text-sm shadow-sm",
-                        m.direction === "out" ? "bg-brand/15" : "bg-card",
-                      )}
-                    >
-                      {m.referral ? <ReferralNote referral={m.referral as Referral} /> : null}
-                      <MessageBody m={m} />
-                      <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
-                        {m.sentByEmail && <span className="mr-1">{m.sentByEmail.split("@")[0]}</span>}
-                        <span title={fmtFull(m.sentAt)}>{fmtWhen(m.sentAt, now)}</span>
-                        <StatusIcon m={m} />
-                      </div>
-                      {m.status === "failed" && m.errorMessage && (
-                        <p className="mt-1 text-[11px] text-red-700 dark:text-red-400">{m.errorMessage}</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                <WhatsappScrollToEnd marker={messages.at(-1)?.id ?? ""} />
-              </div>
-              <WhatsappComposer conversationId={selected.id} disabledReason={disabledReason} />
+              <WhatsappThread
+                conversationId={selected.id}
+                messages={threadMessages}
+                nowIso={now.toISOString()}
+                disabledReason={disabledReason}
+              />
             </>
           )}
         </section>

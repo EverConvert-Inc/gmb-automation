@@ -55,7 +55,13 @@ export default async function WhatsappNumbersPage() {
       )}
 
       <SectionCard icon={<KeyRound className="h-4 w-4" />} title="Connection">
-        <ol className="list-decimal space-y-2 pl-5 text-sm">
+        {/* Once everything is configured the checklist is reference only, so
+            it starts collapsed instead of taking half the page. */}
+        <details open={missingEnv.length > 0} className="group">
+          <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+            {missingEnv.length === 0 ? "Connected. Setup steps and webhook URL" : "Setup steps"}
+          </summary>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">
           <li>
             In Meta Business Settings, create a <strong>system user</strong> (admin), assign it the
             WhatsApp accounts and the app, and generate a token with{" "}
@@ -79,6 +85,7 @@ export default async function WhatsappNumbersPage() {
           </li>
         </ol>
         <p className="mt-3 text-xs text-muted-foreground">Graph API {GRAPH_API_VERSION}.</p>
+        </details>
       </SectionCard>
 
       <SectionCard

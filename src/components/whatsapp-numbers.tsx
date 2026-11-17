@@ -200,10 +200,12 @@ function RegisterResultView({ result }: { result: RegisterResult }) {
   );
 }
 
-const QUALITY_VARIANT: Record<string, "success" | "warning" | "destructive"> = {
-  GREEN: "success",
-  YELLOW: "warning",
-  RED: "destructive",
+// Only a quality problem is worth a badge. GREEN is the normal state and
+// UNKNOWN just means Meta hasn't rated the number yet (no volume), so
+// neither shows anything.
+const QUALITY_PROBLEM: Record<string, { variant: "warning" | "destructive"; text: string }> = {
+  YELLOW: { variant: "warning", text: "Quality: medium" },
+  RED: { variant: "destructive", text: "Quality: low" },
 };
 
 export function WhatsappNumbersTable({ numbers }: { numbers: WhatsappNumberRow[] }) {
@@ -255,9 +257,9 @@ export function WhatsappNumbersTable({ numbers }: { numbers: WhatsappNumberRow[]
                       {n.displayPhoneNumber ?? n.phoneNumberId}
                     </span>
                     {n.verifiedName && <span className="font-normal text-muted-foreground">{n.verifiedName}</span>}
-                    {n.qualityRating && (
-                      <Badge size="sm" variant={QUALITY_VARIANT[n.qualityRating] ?? "secondary"}>
-                        Quality {n.qualityRating.toLowerCase()}
+                    {n.qualityRating && QUALITY_PROBLEM[n.qualityRating] && (
+                      <Badge size="sm" variant={QUALITY_PROBLEM[n.qualityRating].variant}>
+                        {QUALITY_PROBLEM[n.qualityRating].text}
                       </Badge>
                     )}
                     {notOnApi && (
