@@ -1,7 +1,7 @@
 // WhatsApp inbox: everything that touches the database. The Graph API client
 // is whatsapp.ts (pure), the webhook parsing is whatsapp-webhook.ts (pure).
 
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   whatsappConversations,
@@ -9,8 +9,10 @@ import {
   whatsappNumbers,
   type WhatsappConversation,
 } from "@/lib/db/schema";
+import { contactName, fmtDateTime, numberName, type ThreadData, type ThreadMessage } from "./whatsapp-display";
 import {
   canReplyFreeform,
+  serviceWindowClosesAt,
   previewText,
   statusRank,
   type InboundMessage,
@@ -348,4 +350,61 @@ export async function registerNumberForCloudApi(numberRowId: string, pin: string
   } catch (err) {
     return { meta, refreshed: null, refreshError: stringifyError(err) };
   }
+}
+
+// --- Thread read -------------------------------------------------------------
+
+// One conversation's pane: header, reply-window state and its latest 300
+// messages, oldest first. Used by the inbox page for a direct link and by the
+// thread API when switching chats.
+export async function getThread(conversationId: string, now: Date = new Date()): Promise<ThreadData | null> {
+  const convo = await db.query.whatsappConversations.findFirst({
+    where: eq(whatsappConversations.id, conversationId),
+  });
+  if (!convo) return null;
+  const [number, rows] = await Promise.all([
+    db.query.whatsappNumbers.findFirst({ where: eq(whatsappNumbers.id, convo.numberId) }),
+    db.query.whatsappMessages.findMany({
+      where: eq(whatsappMessages.conversationId, convo.id),
+      orderBy: desc(whatsappMessages.sentAt),
+      limit: 300,
+    }),
+  ]);
+
+  let disabledReason: string | null = null;
+  if (!canReplyFreeform(convo.lastInboundAt, now)) {
+    disabledReason = convo.lastInboundAt
+      ? `Reply window closed ${fmtDateTime(serviceWindowClosesAt(convo.lastInboundAt)!)}. WhatsApp only allows an approved template until the customer writes again.`
+      : "The customer hasn't messaged this number, so WhatsApp only allows an approved template.";
+  } else if (!convo.waId) {
+    disabledReason =
+      "This contact uses a WhatsApp username and has no phone number on file, so it can't be replied to from here yet.";
+  }
+  const closes = serviceWindowClosesAt(convo.lastInboundAt);
+
+  return {
+    id: convo.id,
+    name: contactName(convo),
+    subtitle: [convo.waId ? `+${convo.waId}` : null, convo.username ? `@${convo.username}` : null, numberName(number)]
+      .filter(Boolean)
+      .join(" · "),
+    unreadCount: convo.unreadCount,
+    windowClosesAt: closes && closes > now ? closes.toISOString() : null,
+    disabledReason,
+    messages: rows.reverse().map(
+      (m): ThreadMessage => ({
+        id: m.id,
+        direction: m.direction === "out" ? "out" : "in",
+        type: m.type,
+        body: m.body,
+        mediaId: m.mediaId,
+        mediaFilename: m.mediaFilename,
+        referral: (m.referral as ThreadMessage["referral"]) ?? null,
+        status: m.status,
+        errorMessage: m.errorMessage,
+        sentByEmail: m.sentByEmail,
+        sentAt: m.sentAt.toISOString(),
+      }),
+    ),
+  };
 }
