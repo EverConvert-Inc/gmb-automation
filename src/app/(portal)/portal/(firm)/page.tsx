@@ -96,7 +96,7 @@ export default async function PortalLeadsPage({
       {leads.length === 0 ? (
         <EmptyState label={label} showLastMonth={preset === "current"} />
       ) : (
-        <LeadsView leads={leads} monthLabel={label} noteMaxLength={NOTE_MAX_LENGTH} />
+        <LeadsView leads={leads} monthLabel={label} noteMaxLength={NOTE_MAX_LENGTH} range={{ from: range.from, to: range.to }} />
       )}
     </div>
   );

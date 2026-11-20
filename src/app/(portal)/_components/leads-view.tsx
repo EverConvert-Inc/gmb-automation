@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Phone, Search, SearchX, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Phone, Search, SearchX, X } from "lucide-react";
 import type { PortalLead } from "@/lib/portal/db";
 import { CLIENT_LABEL_TEXT, type ClientLabel } from "@/lib/portal/visibility";
 import { cn } from "@/lib/utils";
@@ -31,10 +31,13 @@ export function LeadsView({
   leads,
   monthLabel,
   noteMaxLength,
+  range,
 }: {
   leads: PortalLead[];
   monthLabel: string;
   noteMaxLength: number;
+  /** The page's applied range, for the PDF download. */
+  range: { from: string; to: string };
 }) {
   const [statuses, setStatuses] = useState<Set<ClientLabel>>(() => new Set());
   const [query, setQuery] = useState("");
@@ -46,6 +49,7 @@ export function LeadsView({
   const counts = useMemo(() => statusFacets(leads, query), [leads, query]);
   const filtered = isFiltered(filter);
   const current = paginate(shown, page);
+  const pdfHref = leadsPdfHref(range, statuses);
 
   function goTo(next: number) {
     setPage(next);
@@ -101,9 +105,20 @@ export function LeadsView({
             </button>
           )}
         </div>
-        <p className="text-xs text-muted-foreground sm:ml-auto" aria-live="polite">
-          {filtered ? `Showing ${shown.length} of ${leads.length}` : null}
-        </p>
+        <div className="flex items-center gap-3 sm:ml-auto">
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            {filtered ? `Showing ${shown.length} of ${leads.length}` : null}
+          </p>
+          <a
+            href={pdfHref}
+            download
+            title={statuses.size ? "Download the leads with the ticked statuses as a PDF" : "Download these leads as a PDF"}
+            className={portalButton("secondary", "sm", "h-9")}
+          >
+            <Download aria-hidden className="h-4 w-4" />
+            Download PDF
+          </a>
+        </div>
       </div>
 
       {shown.length === 0 ? (
@@ -181,6 +196,13 @@ export function LeadsView({
       )}
     </div>
   );
+}
+
+/** The PDF route for the applied range and the ticked statuses (none = all). */
+function leadsPdfHref(range: { from: string; to: string }, statuses: ReadonlySet<ClientLabel>): string {
+  const q = new URLSearchParams({ from: range.from, to: range.to });
+  if (statuses.size) q.set("status", [...statuses].join(","));
+  return `/api/portal/leads/pdf?${q.toString()}`;
 }
 
 /** Plain text, deliberately not a tel: link. */

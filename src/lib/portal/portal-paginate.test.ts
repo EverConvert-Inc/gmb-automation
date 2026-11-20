@@ -59,7 +59,7 @@ const lead = (i: number): PortalLead =>
 
 function render(count: number) {
   return renderToStaticMarkup(
-    createElement(LeadsView, { leads: nums(count).map(lead), monthLabel: "October 2026", noteMaxLength: 2000 }),
+    createElement(LeadsView, { leads: nums(count).map(lead), monthLabel: "October 2026", noteMaxLength: 2000, range: { from: "2026-10-01", to: "2026-10-31" } }),
   );
 }
 

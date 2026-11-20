@@ -108,7 +108,7 @@ const portalLead = (id: string, name: string, status: ClientLabel, extra: Record
 
 function render(leads: PortalLead[]) {
   return renderToStaticMarkup(
-    createElement(LeadsView, { leads, monthLabel: "October 2026", noteMaxLength: 2000 }),
+    createElement(LeadsView, { leads, monthLabel: "October 2026", noteMaxLength: 2000, range: { from: "2026-10-01", to: "2026-10-31" } }),
   );
 }
 

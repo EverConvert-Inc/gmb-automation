@@ -11,7 +11,7 @@ const h = vi.hoisted(() => {
       super(`redirect ${to}`);
     }
   }
-  return { RedirectSignal, getUser: vi.fn() };
+  return { RedirectSignal, getUser: vi.fn(), renderPdf: vi.fn() };
 });
 
 vi.mock("server-only", () => ({}));
@@ -23,6 +23,12 @@ vi.mock("next/navigation", () => ({
     throw new h.RedirectSignal(to);
   },
   useRouter: () => ({ refresh: () => {} }),
+}));
+// The PDF route's renderer: captured, so a test can see exactly what it was
+// handed. The real renderer is exercised in leads-pdf.test.tsx.
+vi.mock("@/app/(portal)/_lib/leads-pdf", async (orig) => ({
+  ...(await orig<typeof import("@/app/(portal)/_lib/leads-pdf")>()),
+  renderLeadsPdf: h.renderPdf,
 }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: unknown }) =>
@@ -38,6 +44,7 @@ import LeadsPage from "@/app/(portal)/portal/(firm)/page";
 import LoginPage from "@/app/(portal)/portal/login/page";
 import NoAccessPage from "@/app/(portal)/portal/no-access/page";
 import { POST as postNote } from "@/app/api/portal/leads/[leadId]/notes/route";
+import { GET as getPdf } from "@/app/api/portal/leads/pdf/route";
 
 // ---------------------------------------------------------------------------
 // Two firms, each with one client user, in one fake database.
@@ -1037,5 +1044,82 @@ describe("the leads page and unusable names", () => {
     const cards = [...html.matchAll(/<dd class="mt-1 font-display[^"]*">\s*(\d+)/g)].map((m) => Number(m[1]));
     expect(cards).toEqual([0, 2]); // signed, pending — the signed No Name lead is not counted
     expect(html).not.toContain("Unknown caller");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The PDF download
+// ---------------------------------------------------------------------------
+describe("GET /api/portal/leads/pdf", () => {
+  const pdf = (qs = "") => getPdf(new Request(`http://x/api/portal/leads/pdf${qs}`));
+  const handed = () => h.renderPdf.mock.calls.at(-1)?.[0];
+  beforeEach(() => {
+    h.renderPdf.mockReset();
+    h.renderPdf.mockResolvedValue(Buffer.from("%PDF-fake"));
+  });
+
+  it.each(REFUSED.map(([who, setup, to]) => [who, setup, to === "/portal/login" ? 401 : 403] as const))(
+    "%s → %i, no lead read, nothing rendered",
+    async (_, setup, status) => {
+      setup();
+      const res = await pdf();
+      expect(res.status).toBe(status);
+      expect(calls.some((c) => c.text.includes("from leads l"))).toBe(false);
+      expect(h.renderPdf).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an active client gets a PDF attachment of their own firm's leads only", async () => {
+    asClientA();
+    const res = await pdf("?from=2026-10-02&to=2026-10-12");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(res.headers.get("content-disposition")).toBe(
+      'attachment; filename="alpha-law-leads-2026-10-02-to-2026-10-12.pdf"',
+    );
+    expect(Buffer.from(await res.arrayBuffer()).toString()).toBe("%PDF-fake");
+    const input = handed();
+    expect(input.firmName).toBe("Alpha Law");
+    expect(input.rangeLabel).toBe("Oct 2 – Oct 12, 2026");
+    expect(input.leads.map((l: { name: string }) => l.name)).toEqual(["Alice Alpha"]);
+    // Only PortalLead fields reach the renderer — none of the hidden columns.
+    expect(JSON.stringify(input)).not.toContain("SECRET");
+    expect(calls.find((c) => c.text.includes("from leads l"))!.params).toContain(FIRM_A);
+    expect(calls.find((c) => c.text.includes("from leads l"))!.params).not.toContain(FIRM_B);
+  });
+
+  it("a range outside the window falls back to the current month, as the page does", async () => {
+    asClientA();
+    await pdf("?from=2025-01-01&to=2025-01-31");
+    expect(handed().rangeLabel).toBe("October 2026");
+  });
+
+  it("the status filter keeps only the ticked labels; unknown values are ignored", async () => {
+    asClientA();
+    leadsByFirm[FIRM_A] = [
+      leadRow(FIRM_A, LEAD_A, "Alice Alpha"),
+      leadRow(FIRM_A, "a4a4a4a4-a4a4-4a4a-8a4a-000000000009", "Sam Signed", {
+        effective_status: "signed",
+        status_tag_matched: "Signed",
+        signed_at: new Date("2026-10-11T15:00:00Z"),
+      }),
+    ];
+    await pdf("?status=signed,bogus");
+    expect(handed().statuses).toEqual(["signed"]);
+    expect(handed().leads.map((l: { name: string }) => l.name)).toEqual(["Sam Signed"]);
+
+    await pdf("?status=signed,pending");
+    expect(handed().statuses).toEqual([]);
+    expect(handed().leads).toHaveLength(2);
+  });
+
+  it("a renderer failure is a calm 500 with no lead data", async () => {
+    asClientA();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.renderPdf.mockRejectedValue(new Error("Alice Alpha broke it"));
+    const res = await pdf();
+    expect(res.status).toBe(500);
+    expect(await res.text()).not.toContain("Alice");
   });
 });
