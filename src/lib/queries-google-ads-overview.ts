@@ -22,6 +22,7 @@ export type OverviewKpis = {
   ctr: number | null; // 0..1
   conversions: number;
   costPerConv: number | null;
+  roas: number | null; // conversion value / cost
 };
 
 export type DailyPoint = {
@@ -36,6 +37,7 @@ export type CampaignRow = {
   name: string;
   accountName: string;
   status: string | null;
+  type: string | null; // advertising_channel_type enum name
   impressions: number;
   clicks: number;
   ctr: number | null;
@@ -82,6 +84,7 @@ export async function getGoogleAdsOverview(opts: {
         impressions: sql<string>`sum(${ppcAdsDaily.impressions})`,
         clicks: sql<string>`sum(${ppcAdsDaily.clicks})`,
         conversions: sql<string>`sum(${ppcAdsDaily.conversions})`,
+        conversionsValue: sql<string>`sum(${ppcAdsDaily.conversionsValue})`,
         costMicros: sql<string>`sum(${ppcAdsDaily.costMicros})`,
       })
       .from(ppcAdsDaily)
@@ -94,6 +97,7 @@ export async function getGoogleAdsOverview(opts: {
         googleAdsCampaignId: ppcCampaigns.googleAdsCampaignId,
         name: ppcCampaigns.name,
         status: ppcCampaigns.status,
+        type: ppcCampaigns.advertisingChannelType,
         accountName: ppcClients.name,
         impressions: sql<string>`sum(${ppcAdsDaily.impressions})`,
         clicks: sql<string>`sum(${ppcAdsDaily.clicks})`,
@@ -109,6 +113,7 @@ export async function getGoogleAdsOverview(opts: {
         ppcCampaigns.googleAdsCampaignId,
         ppcCampaigns.name,
         ppcCampaigns.status,
+        ppcCampaigns.advertisingChannelType,
         ppcClients.name,
       ),
   ]);
@@ -124,8 +129,9 @@ export async function getGoogleAdsOverview(opts: {
       impressions: a.impressions + n(r.impressions),
       clicks: a.clicks + n(r.clicks),
       conversions: a.conversions + n(r.conversions),
+      conversionsValue: a.conversionsValue + n(r.conversionsValue),
     }),
-    { spend: 0, impressions: 0, clicks: 0, conversions: 0 },
+    { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionsValue: 0 },
   );
 
   const kpis: OverviewKpis = {
@@ -135,6 +141,7 @@ export async function getGoogleAdsOverview(opts: {
     ctr: ratio(totals.clicks, totals.impressions),
     conversions: totals.conversions,
     costPerConv: ratio(totals.spend, totals.conversions),
+    roas: ratio(totals.conversionsValue, totals.spend),
   };
 
   const allCampaigns: CampaignRow[] = campaignRows
@@ -149,6 +156,7 @@ export async function getGoogleAdsOverview(opts: {
         name: r.name,
         accountName: r.accountName,
         status: r.status,
+        type: r.type,
         impressions,
         clicks,
         ctr: ratio(clicks, impressions),

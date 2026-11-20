@@ -25,6 +25,21 @@ function shortDay(iso: string): string {
   return `${MONTHS[Number(m) - 1]} ${Number(d)}`;
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  SEARCH: "Search",
+  PERFORMANCE_MAX: "PMax",
+  DISPLAY: "Display",
+  VIDEO: "Video",
+  SHOPPING: "Shopping",
+  LOCAL_SERVICES: "LSA",
+  DEMAND_GEN: "Demand Gen",
+  MULTI_CHANNEL: "Multi-channel",
+};
+function typeLabel(t: string | null): string {
+  if (!t) return "—";
+  return TYPE_LABELS[t] ?? t.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const TH = "px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground";
 const THR = "px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground";
 const TD = "px-3 py-2";
@@ -96,13 +111,14 @@ export default async function GoogleAdsOverviewPage({
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-7">
         <Kpi label="Total spend" value={money0(kpis.spend)} />
         <Kpi label="Impressions" value={int(kpis.impressions)} />
         <Kpi label="Clicks" value={int(kpis.clicks)} />
         <Kpi label="CTR" value={pct2(kpis.ctr)} />
         <Kpi label="Conversions" value={conv1(kpis.conversions)} />
         <Kpi label="Cost / conv." value={kpis.costPerConv === null ? "—" : money2(kpis.costPerConv)} />
+        <Kpi label="ROAS" value={kpis.roas === null ? "—" : `${kpis.roas.toFixed(2)}x`} />
       </div>
 
       <Card>
@@ -137,6 +153,7 @@ export default async function GoogleAdsOverviewPage({
                   <th className={cn(TH, "pl-4")}>Account</th>
                   <th className={TH}>Campaign</th>
                   <th className={TH}>Status</th>
+                  <th className={TH}>Type</th>
                   <th className={THR}>Impr.</th>
                   <th className={THR}>Clicks</th>
                   <th className={THR}>CTR</th>
@@ -163,6 +180,7 @@ export default async function GoogleAdsOverviewPage({
                         {c.status ?? "—"}
                       </span>
                     </td>
+                    <td className={cn(TD, "text-muted-foreground")}>{typeLabel(c.type)}</td>
                     <td className={TDR}>{int(c.impressions)}</td>
                     <td className={TDR}>{int(c.clicks)}</td>
                     <td className={TDR}>{pct2(c.ctr)}</td>
@@ -174,7 +192,7 @@ export default async function GoogleAdsOverviewPage({
                 ))}
                 {data.campaigns.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={11} className="px-4 py-8 text-center text-sm text-muted-foreground">
                       No campaigns match this filter in the selected range.
                     </td>
                   </tr>
@@ -186,8 +204,9 @@ export default async function GoogleAdsOverviewPage({
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Covers every campaign type, Performance Max included. ROAS, campaign type, and expandable ad
-        groups &amp; ads are coming as the data layer lands.{" "}
+        Covers every campaign type, Performance Max included. ROAS and campaign type populate from the
+        next sync onward; rows synced earlier read zero until a backfill re-pulls them. Expandable ad
+        groups &amp; ads are next.{" "}
         <Link href="/ads" className="underline hover:text-foreground">
           Account health →
         </Link>

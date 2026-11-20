@@ -496,6 +496,9 @@ export const ppcCampaigns = pgTable(
     googleAdsCampaignId: text("google_ads_campaign_id").notNull(),
     name: text("name").notNull(),
     status: text("status"),
+    // Google advertising_channel_type (SEARCH, PERFORMANCE_MAX, DISPLAY, …),
+    // decoded to its enum name. Null until a sync populates it.
+    advertisingChannelType: text("advertising_channel_type"),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -520,6 +523,11 @@ export const ppcAdsDaily = pgTable(
     impressions: integer("impressions").notNull().default(0),
     // Google Ads supports fractional conversions (counting rules, etc).
     conversions: numeric("conversions", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    // Total conversion value for the day (for ROAS = value / cost). Zero on
+    // rows synced before this column existed, until a backfill re-pulls them.
+    conversionsValue: numeric("conversions_value", { precision: 14, scale: 2 })
       .notNull()
       .default("0"),
     // Google Ads stores cost in micros (1/1,000,000 of currency unit). Bigint

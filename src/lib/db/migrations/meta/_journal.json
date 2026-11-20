@@ -449,6 +449,13 @@
       "when": 1794924060697,
       "tag": "0063_whatsapp_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1795193681121,
+      "tag": "0064_ppc_ads_conversions_value_channel_type",
+      "breakpoints": true
     }
   ]
 }

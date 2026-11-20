@@ -242,10 +242,12 @@ export type AdsDailyMetricsRow = {
   campaignId: string;
   campaignName: string;
   campaignStatus: string;
+  advertisingChannelType: string;
   date: string; // YYYY-MM-DD
   clicks: number;
   impressions: number;
   conversions: number;
+  conversionsValue: number;
   costMicros: bigint;
   phoneCalls: number;
 };
@@ -272,10 +274,12 @@ export async function pullDailyMetrics(
       campaign.id,
       campaign.name,
       campaign.status,
+      campaign.advertising_channel_type,
       segments.date,
       metrics.clicks,
       metrics.impressions,
       metrics.conversions,
+      metrics.conversions_value,
       metrics.cost_micros,
       metrics.phone_calls
     FROM campaign
@@ -291,14 +295,20 @@ export async function pullDailyMetrics(
       typeof campaign.status === "number"
         ? enums.CampaignStatus[campaign.status]
         : String(campaign.status ?? "");
+    const channelType =
+      typeof campaign.advertising_channel_type === "number"
+        ? enums.AdvertisingChannelType[campaign.advertising_channel_type]
+        : String(campaign.advertising_channel_type ?? "");
     return {
       campaignId: String(campaign.id ?? ""),
       campaignName: String(campaign.name ?? ""),
       campaignStatus: status,
+      advertisingChannelType: channelType,
       date: String(segments.date ?? ""),
       clicks: Number(metrics.clicks ?? 0),
       impressions: Number(metrics.impressions ?? 0),
       conversions: Number(metrics.conversions ?? 0),
+      conversionsValue: Number(metrics.conversions_value ?? 0),
       costMicros: BigInt(metrics.cost_micros ?? 0),
       phoneCalls: Number(metrics.phone_calls ?? 0),
     };

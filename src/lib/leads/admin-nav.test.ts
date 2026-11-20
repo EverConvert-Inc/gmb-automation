@@ -26,7 +26,10 @@ describe("sidebar", () => {
   });
 
   it("is highlighted on every admin page (the existing prefix rule)", () => {
-    expect(src).toContain('pathname === item.href || pathname.startsWith(item.href + "/")');
+    // The prefix rule is now expressed via sectionBase, which for an item with
+    // no `base` (Admin) is exactly item.href — same behaviour as before.
+    expect(src).toContain("item.base ?? item.href");
+    expect(src).toContain('pathname === sectionBase || pathname.startsWith(sectionBase + "/")');
     for (const p of ["/admin/firms", "/admin/firms/abc", "/admin/leads", "/admin/leads/queue"]) {
       expect(p === "/admin" || p.startsWith("/admin/")).toBe(true);
     }

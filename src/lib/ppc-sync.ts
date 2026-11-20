@@ -120,7 +120,12 @@ export async function syncGoogleAdsForClient(
     const campaignIdMap = new Map<string, string>();
     const uniqueCampaigns = new Map<
       string,
-      { campaignId: string; campaignName: string; campaignStatus: string }
+      {
+        campaignId: string;
+        campaignName: string;
+        campaignStatus: string;
+        advertisingChannelType: string;
+      }
     >();
     for (const r of rows) {
       if (!uniqueCampaigns.has(r.campaignId)) {
@@ -128,6 +133,7 @@ export async function syncGoogleAdsForClient(
           campaignId: r.campaignId,
           campaignName: r.campaignName,
           campaignStatus: r.campaignStatus,
+          advertisingChannelType: r.advertisingChannelType,
         });
       }
     }
@@ -144,6 +150,7 @@ export async function syncGoogleAdsForClient(
           .set({
             name: c.campaignName,
             status: c.campaignStatus,
+            advertisingChannelType: c.advertisingChannelType || null,
             lastSeenAt: new Date(),
           })
           .where(eq(ppcCampaigns.id, existing.id));
@@ -156,6 +163,7 @@ export async function syncGoogleAdsForClient(
             googleAdsCampaignId: c.campaignId,
             name: c.campaignName,
             status: c.campaignStatus,
+            advertisingChannelType: c.advertisingChannelType || null,
           })
           .returning();
         campaignIdMap.set(c.campaignId, inserted.id);
@@ -175,6 +183,7 @@ export async function syncGoogleAdsForClient(
           clicks: r.clicks,
           impressions: r.impressions,
           conversions: String(r.conversions),
+          conversionsValue: String(r.conversionsValue),
           costMicros: r.costMicros,
           phoneCalls: r.phoneCalls,
         })
@@ -184,6 +193,7 @@ export async function syncGoogleAdsForClient(
             clicks: r.clicks,
             impressions: r.impressions,
             conversions: String(r.conversions),
+            conversionsValue: String(r.conversionsValue),
             costMicros: r.costMicros,
             phoneCalls: r.phoneCalls,
             ingestedAt: new Date(),
