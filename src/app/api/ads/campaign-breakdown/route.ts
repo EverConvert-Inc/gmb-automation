@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCampaignBreakdown, getPmaxCampaignBreakdown } from "@/lib/queries-ads-dashboard";
+import { stringifyError } from "@/lib/leads/sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -33,6 +34,6 @@ export async function GET(req: Request) {
     const adGroups = await getCampaignBreakdown(clientId, campaignId, { from, to });
     return NextResponse.json({ kind: "search", adGroups });
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    return NextResponse.json({ error: stringifyError(err) }, { status: 500 });
   }
 }

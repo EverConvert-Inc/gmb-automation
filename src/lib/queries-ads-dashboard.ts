@@ -797,58 +797,64 @@ export async function getPmaxCampaignBreakdown(
   if (!Number.isInteger(campaignIdNum)) throw new Error("invalid campaign id");
   const where = `campaign.id = ${campaignIdNum} AND segments.date BETWEEN '${range.from}' AND '${range.to}'`;
 
-  const [agRows, linkRows] = await Promise.all([
-    customer.query(`
+  // Asset groups (with metrics) are the core result. The asset-level detail is
+  // a best-effort join — if any asset field is rejected by the API, the groups
+  // still return (with empty asset lists) instead of failing the whole row.
+  const agRows = (await customer.query(`
       SELECT asset_group.id, asset_group.name, asset_group.status,
              metrics.impressions, metrics.clicks, metrics.conversions, metrics.cost_micros
       FROM asset_group
-      WHERE ${where}`) as Promise<GaqlRow[]>,
-    customer.query(`
+      WHERE ${where}`)) as GaqlRow[];
+
+  const idOf = (resourceName: string) => resourceName.split("/").pop() ?? "";
+  const assetsByGroup = new Map<string, PmaxAssetRow[]>();
+  try {
+    const linkRows = (await customer.query(`
       SELECT asset_group.id, asset_group_asset.field_type, asset_group_asset.performance_label,
              asset_group_asset.asset
       FROM asset_group_asset
-      WHERE campaign.id = ${campaignIdNum} AND asset_group_asset.status = 'ENABLED'`) as Promise<GaqlRow[]>,
-  ]);
+      WHERE campaign.id = ${campaignIdNum} AND asset_group_asset.status = 'ENABLED'`)) as GaqlRow[];
 
-  const idOf = (resourceName: string) => resourceName.split("/").pop() ?? "";
-  const assetIds = [
-    ...new Set(
-      linkRows.map((r) => idOf(String((r.asset_group_asset ?? {}).asset ?? ""))).filter(Boolean),
-    ),
-  ];
+    const assetIds = [
+      ...new Set(
+        linkRows.map((r) => idOf(String((r.asset_group_asset ?? {}).asset ?? ""))).filter(Boolean),
+      ),
+    ];
 
-  const content = new Map<string, { type: string; text: string; name: string }>();
-  if (assetIds.length > 0) {
-    const assetRows = (await customer.query(`
-      SELECT asset.id, asset.type, asset.name, asset.text_asset.text
-      FROM asset
-      WHERE asset.id IN (${assetIds.join(", ")})`)) as GaqlRow[];
-    for (const r of assetRows) {
-      const a = r.asset ?? {};
-      const textAsset = (a.text_asset ?? {}) as Record<string, unknown>;
-      content.set(String(a.id ?? ""), {
-        type: enumName("AssetType", a.type),
-        text: String(textAsset.text ?? ""),
-        name: String(a.name ?? ""),
-      });
+    const content = new Map<string, { type: string; text: string; name: string }>();
+    if (assetIds.length > 0) {
+      const assetRows = (await customer.query(`
+        SELECT asset.id, asset.type, asset.name, asset.text_asset.text
+        FROM asset
+        WHERE asset.id IN (${assetIds.join(", ")})`)) as GaqlRow[];
+      for (const r of assetRows) {
+        const a = r.asset ?? {};
+        const textAsset = (a.text_asset ?? {}) as Record<string, unknown>;
+        content.set(String(a.id ?? ""), {
+          type: enumName("AssetType", a.type),
+          text: String(textAsset.text ?? ""),
+          name: String(a.name ?? ""),
+        });
+      }
     }
-  }
 
-  const assetsByGroup = new Map<string, PmaxAssetRow[]>();
-  for (const r of linkRows) {
-    const ag = r.asset_group ?? {};
-    const aga = r.asset_group_asset ?? {};
-    const groupId = String(ag.id ?? "");
-    const c = content.get(idOf(String(aga.asset ?? ""))) ?? { type: "", text: "", name: "" };
-    const row: PmaxAssetRow = {
-      fieldType: enumName("AssetFieldType", aga.field_type),
-      assetType: c.type,
-      performanceLabel: enumName("AssetPerformanceLabel", aga.performance_label),
-      content: c.text || c.name || "",
-    };
-    const list = assetsByGroup.get(groupId) ?? [];
-    list.push(row);
-    assetsByGroup.set(groupId, list);
+    for (const r of linkRows) {
+      const ag = r.asset_group ?? {};
+      const aga = r.asset_group_asset ?? {};
+      const groupId = String(ag.id ?? "");
+      const c = content.get(idOf(String(aga.asset ?? ""))) ?? { type: "", text: "", name: "" };
+      const row: PmaxAssetRow = {
+        fieldType: enumName("AssetFieldType", aga.field_type),
+        assetType: c.type,
+        performanceLabel: enumName("AssetPerformanceLabel", aga.performance_label),
+        content: c.text || c.name || "",
+      };
+      const list = assetsByGroup.get(groupId) ?? [];
+      list.push(row);
+      assetsByGroup.set(groupId, list);
+    }
+  } catch {
+    // Asset detail unavailable — groups still render without their assets.
   }
 
   const num = (v: unknown) => Number(v ?? 0);
