@@ -791,7 +791,7 @@ export async function getPmaxCampaignBreakdown(
   clientId: string,
   googleAdsCampaignId: string,
   range: Range,
-): Promise<AssetGroupRow[]> {
+): Promise<{ groups: AssetGroupRow[]; assetsError: string | null }> {
   const customer = await liveCustomer(clientId);
   const campaignIdNum = Number(googleAdsCampaignId);
   if (!Number.isInteger(campaignIdNum)) throw new Error("invalid campaign id");
@@ -808,6 +808,7 @@ export async function getPmaxCampaignBreakdown(
 
   const idOf = (resourceName: string) => resourceName.split("/").pop() ?? "";
   const assetsByGroup = new Map<string, PmaxAssetRow[]>();
+  let assetsError: string | null = null;
   try {
     const linkRows = (await customer.query(`
       SELECT asset_group.id, asset_group_asset.field_type, asset_group_asset.performance_label,
@@ -853,8 +854,10 @@ export async function getPmaxCampaignBreakdown(
       list.push(row);
       assetsByGroup.set(groupId, list);
     }
-  } catch {
-    // Asset detail unavailable — groups still render without their assets.
+  } catch (err) {
+    // Asset detail unavailable — groups still render, and the reason is
+    // surfaced to the UI instead of a bare "No assets".
+    assetsError = stringifyError(err);
   }
 
   const num = (v: unknown) => Number(v ?? 0);
@@ -889,5 +892,5 @@ export async function getPmaxCampaignBreakdown(
     };
   });
 
-  return groups.sort((a, b) => b.cost - a.cost);
+  return { groups: groups.sort((a, b) => b.cost - a.cost), assetsError };
 }

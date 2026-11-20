@@ -88,7 +88,7 @@ type Breakdown =
   | { state: "loading" }
   | { state: "error"; error: string }
   | { state: "done"; kind: "search"; adGroups: AdGroupBreakdownRow[] }
-  | { state: "done"; kind: "pmax"; assetGroups: AssetGroupRow[] };
+  | { state: "done"; kind: "pmax"; assetGroups: AssetGroupRow[]; assetsError: string | null };
 
 export function GoogleAdsCampaignTable({
   campaigns,
@@ -127,12 +127,13 @@ export function GoogleAdsCampaignTable({
         kind?: "search" | "pmax";
         adGroups?: AdGroupBreakdownRow[];
         assetGroups?: AssetGroupRow[];
+        assetsError?: string | null;
         error?: string;
       };
       if (!res.ok) throw new Error(json.error ?? "Failed to load breakdown");
       const done: Breakdown =
         json.kind === "pmax"
-          ? { state: "done", kind: "pmax", assetGroups: json.assetGroups ?? [] }
+          ? { state: "done", kind: "pmax", assetGroups: json.assetGroups ?? [], assetsError: json.assetsError ?? null }
           : { state: "done", kind: "search", adGroups: json.adGroups ?? [] };
       setBreakdowns((p) => ({ ...p, [c.campaignId]: done }));
     } catch (e) {
@@ -171,6 +172,8 @@ export function GoogleAdsCampaignTable({
           {campaigns.map((c) => {
             const open = openCampaigns.has(c.campaignId);
             const d = breakdowns[c.campaignId];
+            const search = d?.state === "done" && d.kind === "search" ? d : null;
+            const pmax = d?.state === "done" && d.kind === "pmax" ? d : null;
             return (
               <Fragment key={c.campaignId}>
                 <tr className="cursor-pointer hover:bg-muted/40" onClick={() => toggleCampaign(c)}>
@@ -197,13 +200,12 @@ export function GoogleAdsCampaignTable({
                   </Note>
                 )}
 
-                {open && d?.state === "done" && d.kind === "search" && d.adGroups.length === 0 && (
+                {open && search && search.adGroups.length === 0 && (
                   <Note pad="pl-10">No ad groups with activity in this range.</Note>
                 )}
                 {open &&
-                  d?.state === "done" &&
-                  d.kind === "search" &&
-                  d.adGroups.map((g) => {
+                  search &&
+                  search.adGroups.map((g) => {
                     const gopen = openGroups.has(g.id);
                     return (
                       <Fragment key={g.id}>
@@ -245,13 +247,12 @@ export function GoogleAdsCampaignTable({
                     );
                   })}
 
-                {open && d?.state === "done" && d.kind === "pmax" && d.assetGroups.length === 0 && (
+                {open && pmax && pmax.assetGroups.length === 0 && (
                   <Note pad="pl-10">No asset groups with activity in this range.</Note>
                 )}
                 {open &&
-                  d?.state === "done" &&
-                  d.kind === "pmax" &&
-                  d.assetGroups.map((g) => {
+                  pmax &&
+                  pmax.assetGroups.map((g) => {
                     const gopen = openGroups.has(g.id);
                     return (
                       <Fragment key={g.id}>
@@ -271,7 +272,11 @@ export function GoogleAdsCampaignTable({
                           <td className={cn(TD, "text-muted-foreground")}>Asset group</td>
                           <MetricCells m={g} />
                         </tr>
-                        {gopen && g.assets.length === 0 && <Note pad="pl-16">No assets.</Note>}
+                        {gopen && g.assets.length === 0 && (
+                          <Note pad="pl-16" tone={pmax.assetsError ? "error" : undefined}>
+                            {pmax.assetsError ? `Couldn't load assets: ${pmax.assetsError}` : "No assets."}
+                          </Note>
+                        )}
                         {gopen &&
                           g.assets.map((a, i) => (
                             <tr key={`${g.id}-asset-${i}`} className="bg-muted/5">

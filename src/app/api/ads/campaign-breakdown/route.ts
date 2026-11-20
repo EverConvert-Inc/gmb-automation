@@ -28,8 +28,8 @@ export async function GET(req: Request) {
 
   try {
     if (type === "PERFORMANCE_MAX") {
-      const assetGroups = await getPmaxCampaignBreakdown(clientId, campaignId, { from, to });
-      return NextResponse.json({ kind: "pmax", assetGroups });
+      const { groups, assetsError } = await getPmaxCampaignBreakdown(clientId, campaignId, { from, to });
+      return NextResponse.json({ kind: "pmax", assetGroups: groups, assetsError });
     }
     const adGroups = await getCampaignBreakdown(clientId, campaignId, { from, to });
     return NextResponse.json({ kind: "search", adGroups });
