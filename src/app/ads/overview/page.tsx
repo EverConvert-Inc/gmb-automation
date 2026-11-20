@@ -102,7 +102,7 @@ export default async function GoogleAdsOverviewPage({
           <ComboBarLine
             points={points}
             formatCost={money0}
-            formatCpc={(v) => money0(v)}
+            formatCpc={money2}
             ariaLabel="Daily cost as bars with cost per conversion as a line"
           />
         </CardContent>

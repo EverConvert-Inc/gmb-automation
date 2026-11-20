@@ -230,7 +230,8 @@ export function GoogleAdsCampaignTable({
           : { state: "done", kind: "search", adGroups: json.adGroups ?? [] };
       setBreakdowns((p) => ({ ...p, [c.campaignId]: done }));
     } catch (e) {
-      setBreakdowns((p) => ({ ...p, [c.campaignId]: { state: "error", error: (e as Error).message } }));
+      const msg = e instanceof Error ? e.message : String(e);
+      setBreakdowns((p) => ({ ...p, [c.campaignId]: { state: "error", error: msg } }));
     }
   }
 

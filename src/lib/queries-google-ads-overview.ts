@@ -1,6 +1,7 @@
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { ppcAdsDaily, ppcCampaigns, ppcClients } from "./db/schema";
+import { eachIsoDate } from "./ads-dashboard-compare";
 
 // Read side of the Google Ads Overview (/ads/overview): account-wide KPIs,
 // a daily cost + cost-per-conversion series, and a per-campaign table — all
@@ -121,10 +122,17 @@ export async function getGoogleAdsOverview(opts: {
       ),
   ]);
 
-  const daily: DailyPoint[] = dailyRows.map((r) => {
+  // Google returns no row for a zero-activity day, so fill the gaps across the
+  // whole range: the chart's x-axis stays calendar-accurate and its cost/conv
+  // line breaks over gaps (null) instead of being drawn straight across them.
+  const byDate = new Map<string, DailyPoint>();
+  for (const r of dailyRows) {
     const cost = micros(r.costMicros);
-    return { date: r.date, cost, costPerConv: ratio(cost, n(r.conversions)) };
-  });
+    byDate.set(r.date, { date: r.date, cost, costPerConv: ratio(cost, n(r.conversions)) });
+  }
+  const daily: DailyPoint[] = eachIsoDate(from, to).map(
+    (date) => byDate.get(date) ?? { date, cost: 0, costPerConv: null },
+  );
 
   const totals = dailyRows.reduce(
     (a, r) => ({
@@ -144,7 +152,10 @@ export async function getGoogleAdsOverview(opts: {
     ctr: ratio(totals.clicks, totals.impressions),
     conversions: totals.conversions,
     costPerConv: ratio(totals.spend, totals.conversions),
-    roas: ratio(totals.conversionsValue, totals.spend),
+    // No conversion value in the window means either it isn't tracked (common
+    // for lead-gen) or the rows predate the column — either way a 0.00x ROAS
+    // would mislead, so show nothing until there's real value to divide.
+    roas: totals.conversionsValue > 0 ? ratio(totals.conversionsValue, totals.spend) : null,
   };
 
   const allCampaigns: CampaignRow[] = campaignRows
@@ -176,9 +187,7 @@ export async function getGoogleAdsOverview(opts: {
     status === "all"
       ? allCampaigns
       : allCampaigns.filter((c) =>
-          status === "enabled"
-            ? c.status === "ENABLED"
-            : c.status !== "ENABLED",
+          status === "enabled" ? c.status === "ENABLED" : c.status === "PAUSED",
         );
 
   return { accounts, kpis, daily, campaigns, campaignTotal: allCampaigns.length };

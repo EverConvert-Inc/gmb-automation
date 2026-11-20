@@ -803,26 +803,35 @@ export async function getPmaxCampaignBreakdown(
   if (!Number.isInteger(campaignIdNum)) throw new Error("invalid campaign id");
   const where = `campaign.id = ${campaignIdNum} AND segments.date BETWEEN '${range.from}' AND '${range.to}'`;
 
-  // Asset groups (with metrics) are the core result. The asset-level detail is
-  // a best-effort join — if any asset field is rejected by the API, the groups
-  // still return (with empty asset lists) instead of failing the whole row.
-  const agRows = (await customer.query(`
+  // Asset groups (with metrics) are the core result; the asset-level detail is
+  // best-effort. The two queries are independent, so fire them together; the
+  // asset join stays non-fatal, so a rejected asset field still returns groups
+  // (with the reason surfaced) instead of failing the whole row.
+  const idOf = (resourceName: string) => resourceName.split("/").pop() ?? "";
+  const [agResult, linkResult] = await Promise.allSettled([
+    customer.query(`
       SELECT asset_group.id, asset_group.name, asset_group.status,
              metrics.impressions, metrics.clicks, metrics.conversions, metrics.cost_micros
       FROM asset_group
-      WHERE ${where}`)) as GaqlRow[];
-
-  const idOf = (resourceName: string) => resourceName.split("/").pop() ?? "";
-  const assetsByGroup = new Map<string, PmaxAssetRow[]>();
-  let assetsError: string | null = null;
-  try {
-    const linkRows = (await customer.query(`
+      WHERE ${where}`) as Promise<GaqlRow[]>,
+    customer.query(`
       SELECT asset_group.id, asset_group_asset.field_type, asset_group_asset.primary_status,
              asset_group_asset.asset
       FROM asset_group_asset
-      WHERE campaign.id = ${campaignIdNum} AND asset_group_asset.status = 'ENABLED'`)) as GaqlRow[];
+      WHERE campaign.id = ${campaignIdNum} AND asset_group_asset.status = 'ENABLED'`) as Promise<GaqlRow[]>,
+  ]);
+  if (agResult.status === "rejected") throw agResult.reason;
+  const agRows = agResult.value;
 
-    const assetIds = [
+  const assetsByGroup = new Map<string, PmaxAssetRow[]>();
+  let assetsError: string | null = null;
+  if (linkResult.status === "rejected") {
+    assetsError = stringifyError(linkResult.reason);
+  } else {
+    try {
+      const linkRows = linkResult.value;
+
+      const assetIds = [
       ...new Set(
         linkRows.map((r) => idOf(String((r.asset_group_asset ?? {}).asset ?? ""))).filter(Boolean),
       ),
@@ -876,10 +885,11 @@ export async function getPmaxCampaignBreakdown(
       list.push(row);
       assetsByGroup.set(groupId, list);
     }
-  } catch (err) {
-    // Asset detail unavailable — groups still render, and the reason is
-    // surfaced to the UI instead of a bare "No assets".
-    assetsError = stringifyError(err);
+    } catch (err) {
+      // Asset detail unavailable — groups still render, and the reason is
+      // surfaced to the UI instead of a bare "No assets".
+      assetsError = stringifyError(err);
+    }
   }
 
   const num = (v: unknown) => Number(v ?? 0);
