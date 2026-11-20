@@ -992,3 +992,67 @@ export async function getCampaignPacing(clientId: string, monthStart: string): P
   }
   return rows.sort((a, b) => b.spend - a.spend);
 }
+
+// ---- Audit: live campaign settings for one account -----------------------
+// The /ads/audit account rows expand to this. Settings are current config (not
+// historical), so REMOVED campaigns are excluded here — unlike the metrics
+// pulls, there is no historical-date concern.
+
+export type CampaignSettings = {
+  campaignId: string;
+  name: string;
+  status: string;
+  type: string;
+  biddingStrategy: string;
+  adServing: string; // ad_serving_optimization_status (campaign-level rotation)
+  dailyBudget: number | null; // null when the budget isn't a daily one
+  budgetDelivery: string;
+  budgetShared: boolean;
+  startDate: string;
+  endDate: string | null; // null = no end date (Google's 2037 sentinel)
+  trackingTemplate: string; // "" when not set
+  networks: { googleSearch: boolean; searchPartners: boolean; display: boolean; youtube: boolean };
+};
+
+export async function getAccountCampaignSettings(clientId: string): Promise<CampaignSettings[]> {
+  const customer = await liveCustomer(clientId);
+  const rows = (await customer.query(`
+    SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+           campaign.bidding_strategy_type, campaign.ad_serving_optimization_status,
+           campaign.start_date, campaign.end_date, campaign.tracking_url_template,
+           campaign.network_settings.target_google_search, campaign.network_settings.target_search_network,
+           campaign.network_settings.target_content_network, campaign.network_settings.target_youtube,
+           campaign_budget.amount_micros, campaign_budget.period, campaign_budget.delivery_method,
+           campaign_budget.explicitly_shared
+    FROM campaign
+    WHERE campaign.status != 'REMOVED'
+    ORDER BY campaign.name`)) as GaqlRow[];
+
+  return rows.map((r): CampaignSettings => {
+    const c = r.campaign ?? {};
+    const ns = (c.network_settings ?? {}) as Record<string, unknown>;
+    const b = (r.campaign_budget ?? {}) as Record<string, unknown>;
+    const period = enumName("BudgetPeriod", b.period);
+    const endDate = String(c.end_date ?? "");
+    return {
+      campaignId: String(c.id ?? ""),
+      name: String(c.name ?? ""),
+      status: enumName("CampaignStatus", c.status),
+      type: enumName("AdvertisingChannelType", c.advertising_channel_type),
+      biddingStrategy: enumName("BiddingStrategyType", c.bidding_strategy_type),
+      adServing: enumName("AdServingOptimizationStatus", c.ad_serving_optimization_status),
+      dailyBudget: period === "DAILY" ? Number(b.amount_micros ?? 0) / 1_000_000 : null,
+      budgetDelivery: enumName("BudgetDeliveryMethod", b.delivery_method),
+      budgetShared: Boolean(b.explicitly_shared ?? false),
+      startDate: String(c.start_date ?? ""),
+      endDate: endDate && endDate < "2037-01-01" ? endDate : null,
+      trackingTemplate: String(c.tracking_url_template ?? ""),
+      networks: {
+        googleSearch: Boolean(ns.target_google_search ?? false),
+        searchPartners: Boolean(ns.target_search_network ?? false),
+        display: Boolean(ns.target_content_network ?? false),
+        youtube: Boolean(ns.target_youtube ?? false),
+      },
+    };
+  });
+}
