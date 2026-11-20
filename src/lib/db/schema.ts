@@ -827,6 +827,22 @@ export const ppcAccountHealthDaily = pgTable(
   }),
 ).enableRLS();
 
+// Audit standards: a named rule set that says which campaigns it applies to
+// (`match`) and the campaign/ad-group settings it enforces (`*_expected`).
+// The audit (/ads/audit) compares live campaign settings against these.
+export const ppcAdStandards = pgTable("ppc_ad_standards", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  // { channelType?: string, nameContains?: string } — all present conditions must hold.
+  match: jsonb("match").notNull().default(sql`'{}'::jsonb`),
+  // { field: expectedValue } — only the fields present are enforced.
+  campaignExpected: jsonb("campaign_expected").notNull().default(sql`'{}'::jsonb`),
+  adGroupExpected: jsonb("ad_group_expected").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
+
 export type Client = typeof clients.$inferSelect;
 export type Location = typeof locations.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;
