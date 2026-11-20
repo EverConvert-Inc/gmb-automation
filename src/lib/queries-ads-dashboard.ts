@@ -757,7 +757,10 @@ export async function getCampaignBreakdown(
 export type PmaxAssetRow = {
   fieldType: string; // HEADLINE, DESCRIPTION, MARKETING_IMAGE, YOUTUBE_VIDEO, …
   assetType: string; // TEXT, IMAGE, YOUTUBE_VIDEO, …
-  performanceLabel: string; // BEST, GOOD, LOW, PENDING, …
+  // asset_group_asset.primary_status: ELIGIBLE, LIMITED, NOT_ELIGIBLE, …
+  // (v25 has no per-asset PMax performance_label — that's Search-only, on
+  // ad_group_ad_asset_view — so eligibility is the signal we can show.)
+  primaryStatus: string;
   content: string; // text for text assets; empty for image/video (shown by type)
 };
 
@@ -811,7 +814,7 @@ export async function getPmaxCampaignBreakdown(
   let assetsError: string | null = null;
   try {
     const linkRows = (await customer.query(`
-      SELECT asset_group.id, asset_group_asset.field_type, asset_group_asset.performance_label,
+      SELECT asset_group.id, asset_group_asset.field_type, asset_group_asset.primary_status,
              asset_group_asset.asset
       FROM asset_group_asset
       WHERE campaign.id = ${campaignIdNum} AND asset_group_asset.status = 'ENABLED'`)) as GaqlRow[];
@@ -847,7 +850,7 @@ export async function getPmaxCampaignBreakdown(
       const row: PmaxAssetRow = {
         fieldType: enumName("AssetFieldType", aga.field_type),
         assetType: c.type,
-        performanceLabel: enumName("AssetPerformanceLabel", aga.performance_label),
+        primaryStatus: enumName("AssetLinkPrimaryStatus", aga.primary_status),
         content: c.text || c.name || "",
       };
       const list = assetsByGroup.get(groupId) ?? [];

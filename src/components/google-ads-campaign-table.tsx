@@ -53,19 +53,19 @@ function StatusBadge({ status }: { status: string | null }) {
   );
 }
 
-function PerfBadge({ label }: { label: string }) {
-  if (["", "UNSPECIFIED", "UNKNOWN", "PENDING", "LEARNING", "NOT_APPLICABLE"].includes(label)) return null;
+// Only flag assets that need attention (Limited / Not eligible); Eligible and
+// the transient states are left unbadged to keep the list quiet.
+function AssetStatusBadge({ status }: { status: string }) {
   const tone =
-    label === "BEST"
-      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-      : label === "GOOD"
-        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
-        : label === "LOW"
-          ? "bg-red-500/10 text-red-700 dark:text-red-400"
-          : "bg-muted text-muted-foreground";
+    status === "LIMITED"
+      ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+      : status === "NOT_ELIGIBLE" || status === "REMOVED"
+        ? "bg-red-500/10 text-red-700 dark:text-red-400"
+        : null;
+  if (!tone) return null;
   return (
     <span className={cn("ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide", tone)}>
-      {enumLabel(label)}
+      {enumLabel(status)}
     </span>
   );
 }
@@ -286,7 +286,7 @@ export function GoogleAdsCampaignTable({
                                   {enumLabel(a.fieldType)}
                                 </span>
                                 <span>{a.content || `[${enumLabel(a.assetType)}]`}</span>
-                                <PerfBadge label={a.performanceLabel} />
+                                <AssetStatusBadge status={a.primaryStatus} />
                               </td>
                             </tr>
                           ))}
