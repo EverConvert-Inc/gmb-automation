@@ -4,20 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ComboBarLine } from "@/components/charts";
 import { PpcDateRangeFilter } from "@/components/ppc-date-range-filter";
 import { GoogleAdsOverviewFilters } from "@/components/google-ads-overview-filters";
+import { GoogleAdsCampaignTable } from "@/components/google-ads-campaign-table";
 import { getGoogleAdsOverview } from "@/lib/queries-google-ads-overview";
 import { firstOfMonthIsoEastern, yesterdayIsoEastern } from "@/lib/date-utils";
-import { cn } from "@/lib/utils";
+import { conv1, int, money0, money2, pct2 } from "@/lib/google-ads-format";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Google Ads — Overview" };
-
-const money0 = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-const money2 = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const int = (n: number) => Math.round(n).toLocaleString("en-US");
-const conv1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString("en-US");
-const pct2 = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(2)}%`);
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function shortDay(iso: string): string {
@@ -25,33 +18,12 @@ function shortDay(iso: string): string {
   return `${MONTHS[Number(m) - 1]} ${Number(d)}`;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  SEARCH: "Search",
-  PERFORMANCE_MAX: "PMax",
-  DISPLAY: "Display",
-  VIDEO: "Video",
-  SHOPPING: "Shopping",
-  LOCAL_SERVICES: "LSA",
-  DEMAND_GEN: "Demand Gen",
-  MULTI_CHANNEL: "Multi-channel",
-};
-function typeLabel(t: string | null): string {
-  if (!t) return "—";
-  return TYPE_LABELS[t] ?? t.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-const TH = "px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground";
-const THR = "px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground";
-const TD = "px-3 py-2";
-const TDR = "px-3 py-2 text-right tabular-nums";
-
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({ label, value }: { label: string; value: string }) {
   return (
     <Card>
       <CardContent className="p-4">
         <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
         <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
-        {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -137,76 +109,17 @@ export default async function GoogleAdsOverviewPage({
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <div>
-            <CardTitle className="text-base">Campaigns</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {data.campaigns.length} of {data.campaignTotal} campaigns
-            </p>
-          </div>
+        <CardHeader>
+          <CardTitle className="text-base">Campaigns</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b">
-                <tr>
-                  <th className={cn(TH, "pl-4")}>Account</th>
-                  <th className={TH}>Campaign</th>
-                  <th className={TH}>Status</th>
-                  <th className={TH}>Type</th>
-                  <th className={THR}>Impr.</th>
-                  <th className={THR}>Clicks</th>
-                  <th className={THR}>CTR</th>
-                  <th className={THR}>CPC</th>
-                  <th className={THR}>Cost</th>
-                  <th className={THR}>Conv.</th>
-                  <th className={cn(THR, "pr-4")}>Cost / conv.</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {data.campaigns.map((c) => (
-                  <tr key={c.campaignId} className="hover:bg-muted/40">
-                    <td className={cn(TD, "pl-4 text-muted-foreground")}>{c.accountName}</td>
-                    <td className={TD}>{c.name}</td>
-                    <td className={TD}>
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                          c.status === "ENABLED"
-                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                            : "bg-muted text-muted-foreground",
-                        )}
-                      >
-                        {c.status ?? "—"}
-                      </span>
-                    </td>
-                    <td className={cn(TD, "text-muted-foreground")}>{typeLabel(c.type)}</td>
-                    <td className={TDR}>{int(c.impressions)}</td>
-                    <td className={TDR}>{int(c.clicks)}</td>
-                    <td className={TDR}>{pct2(c.ctr)}</td>
-                    <td className={TDR}>{c.cpc === null ? "—" : money2(c.cpc)}</td>
-                    <td className={TDR}>{money0(c.cost)}</td>
-                    <td className={TDR}>{conv1(c.conversions)}</td>
-                    <td className={cn(TDR, "pr-4")}>{c.costPerConv === null ? "—" : money2(c.costPerConv)}</td>
-                  </tr>
-                ))}
-                {data.campaigns.length === 0 && (
-                  <tr>
-                    <td colSpan={11} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      No campaigns match this filter in the selected range.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <GoogleAdsCampaignTable campaigns={data.campaigns} total={data.campaignTotal} range={{ from, to }} />
         </CardContent>
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Covers every campaign type, Performance Max included. ROAS and campaign type populate from the
-        next sync onward; rows synced earlier read zero until a backfill re-pulls them. Expandable ad
-        groups &amp; ads are next.{" "}
+        Covers every campaign type, Performance Max included. ROAS and campaign type fill in from the
+        next sync onward. Ad groups &amp; ads load live when you expand a campaign.{" "}
         <Link href="/ads" className="underline hover:text-foreground">
           Account health →
         </Link>

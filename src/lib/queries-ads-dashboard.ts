@@ -620,3 +620,128 @@ export async function getConversionAudit(
     return { ok: false, error: stringifyError(err) };
   }
 }
+
+// ---- Overview: live campaign → ad group → ad breakdown -------------------
+// Fetched on demand when a campaign row on /ads/overview is expanded. Ad
+// groups and ads are aggregated over the selected range (segments.date is in
+// the WHERE, not the SELECT, so Google sums each resource over the window).
+// Status is NOT filtered — same current-vs-historical-status trap as the
+// daily pulls. Performance Max campaigns use asset groups, not ad groups, so
+// they return nothing here.
+
+export type AdBreakdownRow = {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  strength: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+  ctr: number | null;
+  cpc: number | null;
+  costPerConv: number | null;
+};
+
+export type AdGroupBreakdownRow = {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+  ctr: number | null;
+  cpc: number | null;
+  costPerConv: number | null;
+  ads: AdBreakdownRow[];
+};
+
+export async function getCampaignBreakdown(
+  clientId: string,
+  googleAdsCampaignId: string,
+  range: Range,
+): Promise<AdGroupBreakdownRow[]> {
+  const customer = await liveCustomer(clientId);
+  const campaignIdNum = Number(googleAdsCampaignId);
+  if (!Number.isInteger(campaignIdNum)) throw new Error("invalid campaign id");
+  const where = `campaign.id = ${campaignIdNum} AND segments.date BETWEEN '${range.from}' AND '${range.to}'`;
+
+  const [agRows, adRows] = await Promise.all([
+    customer.query(`
+      SELECT ad_group.id, ad_group.name, ad_group.status, ad_group.type,
+             metrics.impressions, metrics.clicks, metrics.conversions, metrics.cost_micros
+      FROM ad_group
+      WHERE ${where}`) as Promise<GaqlRow[]>,
+    customer.query(`
+      SELECT ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type,
+             ad_group_ad.status, ad_group_ad.ad_strength,
+             metrics.impressions, metrics.clicks, metrics.conversions, metrics.cost_micros
+      FROM ad_group_ad
+      WHERE ${where}`) as Promise<GaqlRow[]>,
+  ]);
+
+  const num = (v: unknown) => Number(v ?? 0);
+  const micros = (v: unknown) => num(v) / 1_000_000;
+  const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
+
+  const adsByGroup = new Map<string, AdBreakdownRow[]>();
+  for (const r of adRows) {
+    const ag = r.ad_group ?? {};
+    const aga = r.ad_group_ad ?? {};
+    const ad = (aga.ad ?? {}) as Record<string, unknown>;
+    const m = r.metrics ?? {};
+    const groupId = String(ag.id ?? "");
+    const cost = micros(m.cost_micros);
+    const clicks = num(m.clicks);
+    const impressions = num(m.impressions);
+    const conversions = num(m.conversions);
+    const type = enumName("AdType", ad.type);
+    const row: AdBreakdownRow = {
+      id: String(ad.id ?? ""),
+      name: String(ad.name ?? "") || type || String(ad.id ?? ""),
+      type,
+      status: enumName("AdGroupAdStatus", aga.status),
+      strength: enumName("AdStrength", aga.ad_strength),
+      impressions,
+      clicks,
+      cost,
+      conversions,
+      ctr: ratio(clicks, impressions),
+      cpc: ratio(cost, clicks),
+      costPerConv: ratio(cost, conversions),
+    };
+    const list = adsByGroup.get(groupId) ?? [];
+    list.push(row);
+    adsByGroup.set(groupId, list);
+  }
+
+  const groups: AdGroupBreakdownRow[] = agRows.map((r) => {
+    const ag = r.ad_group ?? {};
+    const m = r.metrics ?? {};
+    const id = String(ag.id ?? "");
+    const cost = micros(m.cost_micros);
+    const clicks = num(m.clicks);
+    const impressions = num(m.impressions);
+    const conversions = num(m.conversions);
+    const ads = (adsByGroup.get(id) ?? []).sort((a, b) => b.cost - a.cost);
+    return {
+      id,
+      name: String(ag.name ?? ""),
+      type: enumName("AdGroupType", ag.type),
+      status: enumName("AdGroupStatus", ag.status),
+      impressions,
+      clicks,
+      cost,
+      conversions,
+      ctr: ratio(clicks, impressions),
+      cpc: ratio(cost, clicks),
+      costPerConv: ratio(cost, conversions),
+      ads,
+    };
+  });
+
+  return groups.sort((a, b) => b.cost - a.cost);
+}

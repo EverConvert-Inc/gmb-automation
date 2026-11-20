@@ -34,6 +34,7 @@ export type DailyPoint = {
 export type CampaignRow = {
   campaignId: string; // our uuid
   googleAdsCampaignId: string;
+  clientId: string; // ppc_clients.id, for the live ad-group/ad breakdown
   name: string;
   accountName: string;
   status: string | null;
@@ -95,6 +96,7 @@ export async function getGoogleAdsOverview(opts: {
       .select({
         campaignId: ppcCampaigns.id,
         googleAdsCampaignId: ppcCampaigns.googleAdsCampaignId,
+        clientId: ppcClients.id,
         name: ppcCampaigns.name,
         status: ppcCampaigns.status,
         type: ppcCampaigns.advertisingChannelType,
@@ -111,6 +113,7 @@ export async function getGoogleAdsOverview(opts: {
       .groupBy(
         ppcCampaigns.id,
         ppcCampaigns.googleAdsCampaignId,
+        ppcClients.id,
         ppcCampaigns.name,
         ppcCampaigns.status,
         ppcCampaigns.advertisingChannelType,
@@ -153,6 +156,7 @@ export async function getGoogleAdsOverview(opts: {
       return {
         campaignId: r.campaignId,
         googleAdsCampaignId: r.googleAdsCampaignId,
+        clientId: r.clientId,
         name: r.name,
         accountName: r.accountName,
         status: r.status,
