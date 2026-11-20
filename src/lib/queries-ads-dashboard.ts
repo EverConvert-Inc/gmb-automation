@@ -761,7 +761,10 @@ export type PmaxAssetRow = {
   // (v25 has no per-asset PMax performance_label — that's Search-only, on
   // ad_group_ad_asset_view — so eligibility is the signal we can show.)
   primaryStatus: string;
-  content: string; // text for text assets; empty for image/video (shown by type)
+  content: string; // text for text assets; empty for image/video
+  imageUrl: string | null; // full-size image URL for image assets
+  videoId: string | null; // YouTube id for video assets
+  videoTitle: string | null;
 };
 
 export type AssetGroupRow = {
@@ -825,19 +828,30 @@ export async function getPmaxCampaignBreakdown(
       ),
     ];
 
-    const content = new Map<string, { type: string; text: string; name: string }>();
+    const content = new Map<
+      string,
+      { type: string; text: string; name: string; imageUrl: string; videoId: string; videoTitle: string }
+    >();
     if (assetIds.length > 0) {
       const assetRows = (await customer.query(`
-        SELECT asset.id, asset.type, asset.name, asset.text_asset.text
+        SELECT asset.id, asset.type, asset.name, asset.text_asset.text,
+               asset.image_asset.full_size.url,
+               asset.youtube_video_asset.youtube_video_id, asset.youtube_video_asset.youtube_video_title
         FROM asset
         WHERE asset.id IN (${assetIds.join(", ")})`)) as GaqlRow[];
       for (const r of assetRows) {
         const a = r.asset ?? {};
         const textAsset = (a.text_asset ?? {}) as Record<string, unknown>;
+        const imageAsset = (a.image_asset ?? {}) as Record<string, unknown>;
+        const fullSize = (imageAsset.full_size ?? {}) as Record<string, unknown>;
+        const video = (a.youtube_video_asset ?? {}) as Record<string, unknown>;
         content.set(String(a.id ?? ""), {
           type: enumName("AssetType", a.type),
           text: String(textAsset.text ?? ""),
           name: String(a.name ?? ""),
+          imageUrl: String(fullSize.url ?? ""),
+          videoId: String(video.youtube_video_id ?? ""),
+          videoTitle: String(video.youtube_video_title ?? ""),
         });
       }
     }
@@ -846,12 +860,17 @@ export async function getPmaxCampaignBreakdown(
       const ag = r.asset_group ?? {};
       const aga = r.asset_group_asset ?? {};
       const groupId = String(ag.id ?? "");
-      const c = content.get(idOf(String(aga.asset ?? ""))) ?? { type: "", text: "", name: "" };
+      const c =
+        content.get(idOf(String(aga.asset ?? ""))) ??
+        { type: "", text: "", name: "", imageUrl: "", videoId: "", videoTitle: "" };
       const row: PmaxAssetRow = {
         fieldType: enumName("AssetFieldType", aga.field_type),
         assetType: c.type,
         primaryStatus: enumName("AssetLinkPrimaryStatus", aga.primary_status),
-        content: c.text || c.name || "",
+        content: c.text || (c.imageUrl || c.videoId ? "" : c.name),
+        imageUrl: c.imageUrl || null,
+        videoId: c.videoId || null,
+        videoTitle: c.videoTitle || null,
       };
       const list = assetsByGroup.get(groupId) ?? [];
       list.push(row);

@@ -53,20 +53,113 @@ function StatusBadge({ status }: { status: string | null }) {
   );
 }
 
-// Only flag assets that need attention (Limited / Not eligible); Eligible and
-// the transient states are left unbadged to keep the list quiet.
-function AssetStatusBadge({ status }: { status: string }) {
-  const tone =
-    status === "LIMITED"
-      ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
-      : status === "NOT_ELIGIBLE" || status === "REMOVED"
-        ? "bg-red-500/10 text-red-700 dark:text-red-400"
-        : null;
-  if (!tone) return null;
+const isLimited = (s: string) => s === "LIMITED" || s === "NOT_ELIGIBLE" || s === "REMOVED";
+
+function LimitedTag({ status, className }: { status: string; className?: string }) {
+  if (!isLimited(status)) return null;
+  const red = status === "NOT_ELIGIBLE" || status === "REMOVED";
   return (
-    <span className={cn("ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide", tone)}>
-      {enumLabel(status)}
+    <span
+      className={cn(
+        "text-[9px] font-medium uppercase tracking-wide",
+        red ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400",
+        className,
+      )}
+    >
+      {red ? "not eligible" : "limited"}
     </span>
+  );
+}
+
+const SECTION_LABEL = "mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground";
+
+// A richer panel for an asset group's assets: text as chips (grouped by field
+// type), images and videos as actual thumbnails — instead of one flat row per
+// asset.
+function AssetGroupAssets({ assets }: { assets: AssetGroupRow["assets"] }) {
+  const videos = assets.filter((a) => a.videoId);
+  const images = assets.filter((a) => a.imageUrl && !a.videoId);
+  const texts = assets.filter((a) => !a.imageUrl && !a.videoId);
+
+  const textGroups: { field: string; items: typeof texts }[] = [];
+  for (const a of texts) {
+    let g = textGroups.find((x) => x.field === a.fieldType);
+    if (!g) {
+      g = { field: a.fieldType, items: [] };
+      textGroups.push(g);
+    }
+    g.items.push(a);
+  }
+
+  return (
+    <div className="space-y-3">
+      {textGroups.map((g) => (
+        <div key={g.field}>
+          <div className={SECTION_LABEL}>
+            {enumLabel(g.field)} ({g.items.length})
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {g.items.map((a, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs"
+              >
+                <span>{a.content || "—"}</span>
+                <LimitedTag status={a.primaryStatus} />
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {images.length > 0 && (
+        <div>
+          <div className={SECTION_LABEL}>Images ({images.length})</div>
+          <div className="flex flex-wrap gap-2">
+            {images.map((a, i) => (
+              <div key={i} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={a.imageUrl ?? ""} alt="" loading="lazy" className="h-16 w-28 rounded border object-cover" />
+                {isLimited(a.primaryStatus) && (
+                  <LimitedTag
+                    status={a.primaryStatus}
+                    className="absolute left-1 top-1 rounded bg-background/90 px-1"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {videos.length > 0 && (
+        <div>
+          <div className={SECTION_LABEL}>Videos ({videos.length})</div>
+          <div className="flex flex-wrap gap-3">
+            {videos.map((a, i) => (
+              <a
+                key={i}
+                href={`https://www.youtube.com/watch?v=${a.videoId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="group w-36"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`https://i.ytimg.com/vi/${a.videoId}/mqdefault.jpg`}
+                  alt=""
+                  loading="lazy"
+                  className="h-20 w-36 rounded border object-cover"
+                />
+                <div className="mt-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground">
+                  {a.videoTitle || "YouTube video"}
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -277,19 +370,14 @@ export function GoogleAdsCampaignTable({
                             {pmax.assetsError ? `Couldn't load assets: ${pmax.assetsError}` : "No assets."}
                           </Note>
                         )}
-                        {gopen &&
-                          g.assets.map((a, i) => (
-                            <tr key={`${g.id}-asset-${i}`} className="bg-muted/5">
-                              <td className={TD} />
-                              <td colSpan={SPAN} className={cn(TD, "pl-16")}>
-                                <span className="mr-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                  {enumLabel(a.fieldType)}
-                                </span>
-                                <span>{a.content || `[${enumLabel(a.assetType)}]`}</span>
-                                <AssetStatusBadge status={a.primaryStatus} />
-                              </td>
-                            </tr>
-                          ))}
+                        {gopen && g.assets.length > 0 && (
+                          <tr className="bg-muted/5">
+                            <td className={TD} />
+                            <td colSpan={SPAN} className="px-3 py-3 pl-16">
+                              <AssetGroupAssets assets={g.assets} />
+                            </td>
+                          </tr>
+                        )}
                       </Fragment>
                     );
                   })}
