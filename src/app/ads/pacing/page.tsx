@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { Card, CardContent } from "@/components/ui/card";
-import { getPacingOverview, type PacingRow } from "@/lib/queries-google-ads-pacing";
+import { GoogleAdsPacingTable } from "@/components/google-ads-pacing-table";
+import { getPacingOverview } from "@/lib/queries-google-ads-pacing";
 import { firstOfMonthIsoEastern } from "@/lib/date-utils";
-import { money0 } from "@/lib/google-ads-format";
-import { cn } from "@/lib/utils";
+import { money0, pacePct, signedMoney } from "@/lib/google-ads-format";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Google Ads — Pacing" };
@@ -13,14 +13,6 @@ function monthLabel(monthStart: string): string {
   const [y, m] = monthStart.split("-").map(Number);
   return `${MONTHS[m - 1]} ${y}`;
 }
-
-const pacePct = (p: number | null) => (p === null ? "—" : `${Math.round(p * 100)}%`);
-const signed = (n: number) => `${n >= 0 ? "+" : "−"}${money0(Math.abs(n))}`;
-
-const TH = "px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground";
-const THR = "px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground";
-const TD = "px-3 py-2";
-const TDR = "px-3 py-2 text-right tabular-nums";
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -32,17 +24,6 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
       </CardContent>
     </Card>
   );
-}
-
-function StatusCell({ row }: { row: PacingRow }) {
-  if (row.status === "no_budget") return <span className="text-xs text-muted-foreground">No budget set</span>;
-  if (row.status === "hot")
-    return (
-      <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
-        Hot
-      </span>
-    );
-  return <span className="text-xs text-muted-foreground">{row.status === "cold" ? "Under" : "On track"}</span>;
 }
 
 export default async function GoogleAdsPacingPage() {
@@ -81,54 +62,21 @@ export default async function GoogleAdsPacingPage() {
             <Kpi
               label="Projected"
               value={money0(totals.projected)}
-              sub={totals.monthlyBudget > 0 ? `${signed(totals.projected - totals.monthlyBudget)} vs budget` : undefined}
+              sub={totals.monthlyBudget > 0 ? `${signedMoney(totals.projected - totals.monthlyBudget)} vs budget` : undefined}
             />
             <Kpi label="Needed / day" value={money0(totals.neededPerDay)} sub={`over ${Math.max(0, data.daysInMonth - data.daysElapsed)} days left`} />
           </div>
 
           <Card>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b">
-                    <tr>
-                      <th className={cn(TH, "pl-4")}>Account</th>
-                      <th className={THR}>Budget</th>
-                      <th className={THR}>Spent</th>
-                      <th className={THR}>Pace</th>
-                      <th className={THR}>Projected</th>
-                      <th className={THR}>vs budget</th>
-                      <th className={THR}>Needed / day</th>
-                      <th className={cn(TH, "pr-4")}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {data.rows.map((r) => (
-                      <tr key={r.clientId} className="hover:bg-muted/40">
-                        <td className={cn(TD, "pl-4 font-medium")}>{r.name}</td>
-                        <td className={TDR}>{r.monthlyBudget === null ? "—" : money0(r.monthlyBudget)}</td>
-                        <td className={TDR}>{money0(r.spend)}</td>
-                        <td className={cn(TDR, r.status === "hot" && "font-semibold text-amber-700 dark:text-amber-400")}>
-                          {pacePct(r.pace)}
-                        </td>
-                        <td className={TDR}>{r.projected === null ? "—" : money0(r.projected)}</td>
-                        <td className={cn(TDR, "text-muted-foreground")}>{r.vsBudget === null ? "—" : signed(r.vsBudget)}</td>
-                        <td className={TDR}>{r.neededPerDay === null ? "—" : money0(r.neededPerDay)}</td>
-                        <td className={cn(TD, "pr-4")}>
-                          <StatusCell row={r} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <GoogleAdsPacingTable rows={data.rows} monthStart={monthStart} />
             </CardContent>
           </Card>
 
           <p className="text-xs text-muted-foreground">
-            Account-level, from the daily account-health snapshots. Budget is the daily budget × days in the month; pace is
-            spend against the expected run-rate so far; projected extends the current run-rate to month end. Per-campaign
-            pacing needs per-campaign budgets (a later add).
+            Account-level from the daily account-health snapshots; expand an account for its campaigns (budgets pulled live).
+            Budget is the daily budget × days in the month; pace is spend against the expected run-rate so far; projected
+            extends the current run-rate to month end.
           </p>
         </>
       )}

@@ -4,22 +4,25 @@ import { ppcAccountHealthDaily, ppcClients } from "./db/schema";
 
 // Read side of Google Ads Pacing (/ads/pacing): per-account budget vs spend
 // for a calendar month, from the stored ppc_account_health_daily snapshots the
-// account-health sync already writes (daily budget + month-to-date spend per
-// account per day). No live calls. Account-level only — per-campaign budgets
-// aren't stored, so a per-campaign view would need a new pull.
+// account-health sync already writes. Per-campaign pacing (the expandable
+// drill-down) lives in queries-ads-dashboard.ts (it needs live campaign
+// budgets) but reuses computePacing below so both levels agree.
 
 export type PacingStatus = "hot" | "on_track" | "cold" | "no_budget" | "no_data";
 
-export type PacingRow = {
-  clientId: string;
-  name: string;
+export type Pacing = {
   monthlyBudget: number | null; // daily budget × days in month
-  spend: number; // month to date
   pace: number | null; // spend ÷ expected-by-now
   projected: number | null; // run-rate to month end
   vsBudget: number | null; // projected − monthly budget
   neededPerDay: number | null; // to land exactly on budget over the days left
   status: PacingStatus;
+};
+
+export type PacingRow = Pacing & {
+  clientId: string;
+  name: string;
+  spend: number; // month to date
   asOf: string | null; // date of the snapshot these numbers came from
 };
 
@@ -47,9 +50,38 @@ const COLD = 0.85;
 
 const micros = (v: bigint | string | number | null) => Number(v ?? 0) / 1_000_000;
 
-function daysInMonthOf(monthStart: string): number {
+export function daysInMonthOf(monthStart: string): number {
   const [y, m] = monthStart.split("-").map(Number);
   return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+// The one pacing calc, shared by the account and campaign levels.
+export function computePacing(
+  dailyBudget: number,
+  spend: number,
+  daysElapsed: number,
+  daysInMonth: number,
+): Pacing {
+  const elapsed = Math.min(Math.max(daysElapsed, 0), daysInMonth);
+  const remaining = Math.max(0, daysInMonth - elapsed);
+  const projected = elapsed > 0 ? (spend / elapsed) * daysInMonth : null;
+  if (dailyBudget <= 0) {
+    return { monthlyBudget: null, pace: null, projected, vsBudget: null, neededPerDay: null, status: "no_budget" };
+  }
+  const monthlyBudget = dailyBudget * daysInMonth;
+  const expectedByNow = dailyBudget * elapsed;
+  const pace = expectedByNow > 0 ? spend / expectedByNow : null;
+  const neededPerDay = remaining > 0 ? Math.max(0, monthlyBudget - spend) / remaining : 0;
+  const status: PacingStatus =
+    pace === null ? "on_track" : pace >= HOT ? "hot" : pace <= COLD ? "cold" : "on_track";
+  return {
+    monthlyBudget,
+    pace,
+    projected,
+    vsBudget: projected !== null ? projected - monthlyBudget : null,
+    neededPerDay,
+    status,
+  };
 }
 
 export async function getPacingOverview(monthStart: string): Promise<PacingOverview> {
@@ -77,47 +109,9 @@ export async function getPacingOverview(monthStart: string): Promise<PacingOverv
 
   const rows: PacingRow[] = [...latest.values()]
     .map((s): PacingRow => {
-      const dayOf = Number(s.date.split("-")[2]);
-      const elapsed = Math.min(dayOf, daysInMonth);
-      const remaining = Math.max(0, daysInMonth - elapsed);
-      const dailyBudget = micros(s.dailyBudgetMicros);
       const spend = micros(s.mtdSpendMicros);
-
-      if (dailyBudget <= 0) {
-        return {
-          clientId: s.clientId,
-          name: s.name,
-          monthlyBudget: null,
-          spend,
-          pace: null,
-          projected: elapsed > 0 ? (spend / elapsed) * daysInMonth : null,
-          vsBudget: null,
-          neededPerDay: null,
-          status: "no_budget",
-          asOf: s.date,
-        };
-      }
-
-      const monthlyBudget = dailyBudget * daysInMonth;
-      const expectedByNow = dailyBudget * elapsed;
-      const pace = expectedByNow > 0 ? spend / expectedByNow : null;
-      const projected = elapsed > 0 ? (spend / elapsed) * daysInMonth : 0;
-      const neededPerDay = remaining > 0 ? Math.max(0, monthlyBudget - spend) / remaining : 0;
-      const status: PacingStatus =
-        pace === null ? "on_track" : pace >= HOT ? "hot" : pace <= COLD ? "cold" : "on_track";
-
-      return {
-        clientId: s.clientId,
-        name: s.name,
-        monthlyBudget,
-        spend,
-        pace,
-        projected,
-        vsBudget: projected - monthlyBudget,
-        neededPerDay,
-        status,
-        asOf: s.date,
-      };
+      const p = computePacing(micros(s.dailyBudgetMicros), spend, Number(s.date.split("-")[2]), daysInMonth);
+      return { clientId: s.clientId, name: s.name, spend, asOf: s.date, ...p };
     })
     .sort((a, b) => b.spend - a.spend);
 

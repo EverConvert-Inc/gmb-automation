@@ -13,6 +13,10 @@ export const conv1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString("en
 
 export const pct2 = (r: number | null) => (r === null ? "—" : `${(r * 100).toFixed(2)}%`);
 
+export const pacePct = (p: number | null) => (p === null ? "—" : `${Math.round(p * 100)}%`);
+
+export const signedMoney = (n: number) => `${n >= 0 ? "+" : "−"}${money0(Math.abs(n))}`;
+
 const TYPE_LABELS: Record<string, string> = {
   SEARCH: "Search",
   PERFORMANCE_MAX: "PMax",

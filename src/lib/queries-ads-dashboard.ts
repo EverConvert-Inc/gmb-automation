@@ -13,6 +13,8 @@ import { getCustomer } from "./google-ads";
 import { auditConversionActions, type AuditActionInput } from "./ads-conversion-audit";
 import { eachIsoDate, type WindowCoverage } from "./ads-dashboard-compare";
 import { SYNC_COVERAGE_CAMPAIGN_ID } from "./ppc-search-terms-sync";
+import { computePacing, daysInMonthOf, type Pacing } from "./queries-google-ads-pacing";
+import { yesterdayIsoEastern } from "./date-utils";
 
 // Read side of the Ads Dashboard (/ads). Search terms, keywords and Search
 // campaign totals come from the three ppc_*_daily tables written by
@@ -925,4 +927,68 @@ export async function getPmaxCampaignBreakdown(
   });
 
   return { groups: groups.sort((a, b) => b.cost - a.cost), assetsError };
+}
+
+// ---- Pacing: live per-campaign budget vs spend for one account -----------
+// The /ads/pacing account rows expand to this. Campaign budgets aren't stored,
+// so they're pulled live (current budgets); month-to-date spend is pulled for
+// the same window. Shares computePacing with the account-level view so both
+// agree. Status is not filtered on the spend query (historical-status trap).
+
+export type CampaignPacingRow = Pacing & {
+  campaignId: string; // Google campaign id
+  name: string;
+  type: string | null;
+  shared: boolean;
+  spend: number;
+};
+
+export async function getCampaignPacing(clientId: string, monthStart: string): Promise<CampaignPacingRow[]> {
+  const customer = await liveCustomer(clientId);
+  const daysInMonth = daysInMonthOf(monthStart);
+  const lastDay = `${monthStart.slice(0, 8)}${String(daysInMonth).padStart(2, "0")}`;
+  let through = yesterdayIsoEastern();
+  if (through < monthStart) through = monthStart;
+  if (through > lastDay) through = lastDay;
+  const daysElapsed = Number(through.split("-")[2]);
+
+  const [budgetRows, spendRows] = await Promise.all([
+    customer.query(`
+      SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
+             campaign_budget.amount_micros, campaign_budget.period, campaign_budget.explicitly_shared
+      FROM campaign`) as Promise<GaqlRow[]>,
+    customer.query(`
+      SELECT campaign.id, metrics.cost_micros
+      FROM campaign
+      WHERE segments.date BETWEEN '${monthStart}' AND '${through}'`) as Promise<GaqlRow[]>,
+  ]);
+
+  const spendByCampaign = new Map<string, number>();
+  for (const r of spendRows) {
+    const id = String((r.campaign ?? {}).id ?? "");
+    const cost = Number((r.metrics ?? {}).cost_micros ?? 0) / 1_000_000;
+    spendByCampaign.set(id, (spendByCampaign.get(id) ?? 0) + cost);
+  }
+
+  const rows: CampaignPacingRow[] = [];
+  for (const r of budgetRows) {
+    const campaign = r.campaign ?? {};
+    const budget = (r.campaign_budget ?? {}) as Record<string, unknown>;
+    const id = String(campaign.id ?? "");
+    const status = enumName("CampaignStatus", campaign.status);
+    const spend = spendByCampaign.get(id) ?? 0;
+    // Only campaigns that matter this month: spending, or currently enabled.
+    if (spend <= 0 && status !== "ENABLED") continue;
+    const period = enumName("BudgetPeriod", budget.period);
+    const dailyBudget = period === "DAILY" ? Number(budget.amount_micros ?? 0) / 1_000_000 : 0;
+    rows.push({
+      campaignId: id,
+      name: String(campaign.name ?? ""),
+      type: enumName("AdvertisingChannelType", campaign.advertising_channel_type),
+      shared: Boolean(budget.explicitly_shared ?? false),
+      spend,
+      ...computePacing(dailyBudget, spend, daysElapsed, daysInMonth),
+    });
+  }
+  return rows.sort((a, b) => b.spend - a.spend);
 }
