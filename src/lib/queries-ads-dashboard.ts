@@ -745,3 +745,143 @@ export async function getCampaignBreakdown(
 
   return groups.sort((a, b) => b.cost - a.cost);
 }
+
+// ---- Overview: live Performance Max asset-group + asset breakdown ---------
+// PMax has no ad groups/ads — it has asset groups (which carry metrics) and
+// assets inside them (headlines, descriptions, images, videos). Asset groups
+// are aggregated over the range; the assets are the current inventory with
+// their performance label (not date-segmented — the label is a standing
+// attribute). asset_group_asset.asset is a resource name, so asset content is
+// fetched from the asset resource and joined by id.
+
+export type PmaxAssetRow = {
+  fieldType: string; // HEADLINE, DESCRIPTION, MARKETING_IMAGE, YOUTUBE_VIDEO, …
+  assetType: string; // TEXT, IMAGE, YOUTUBE_VIDEO, …
+  performanceLabel: string; // BEST, GOOD, LOW, PENDING, …
+  content: string; // text for text assets; empty for image/video (shown by type)
+};
+
+export type AssetGroupRow = {
+  id: string;
+  name: string;
+  status: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+  ctr: number | null;
+  cpc: number | null;
+  costPerConv: number | null;
+  assets: PmaxAssetRow[];
+};
+
+// Headlines first, then the rest in a sensible reading order.
+const FIELD_TYPE_ORDER: Record<string, number> = {
+  HEADLINE: 0,
+  LONG_HEADLINE: 1,
+  DESCRIPTION: 2,
+  MARKETING_IMAGE: 3,
+  SQUARE_MARKETING_IMAGE: 4,
+  PORTRAIT_MARKETING_IMAGE: 5,
+  LOGO: 6,
+  YOUTUBE_VIDEO: 7,
+};
+
+export async function getPmaxCampaignBreakdown(
+  clientId: string,
+  googleAdsCampaignId: string,
+  range: Range,
+): Promise<AssetGroupRow[]> {
+  const customer = await liveCustomer(clientId);
+  const campaignIdNum = Number(googleAdsCampaignId);
+  if (!Number.isInteger(campaignIdNum)) throw new Error("invalid campaign id");
+  const where = `campaign.id = ${campaignIdNum} AND segments.date BETWEEN '${range.from}' AND '${range.to}'`;
+
+  const [agRows, linkRows] = await Promise.all([
+    customer.query(`
+      SELECT asset_group.id, asset_group.name, asset_group.status,
+             metrics.impressions, metrics.clicks, metrics.conversions, metrics.cost_micros
+      FROM asset_group
+      WHERE ${where}`) as Promise<GaqlRow[]>,
+    customer.query(`
+      SELECT asset_group.id, asset_group_asset.field_type, asset_group_asset.performance_label,
+             asset_group_asset.asset
+      FROM asset_group_asset
+      WHERE campaign.id = ${campaignIdNum} AND asset_group_asset.status = 'ENABLED'`) as Promise<GaqlRow[]>,
+  ]);
+
+  const idOf = (resourceName: string) => resourceName.split("/").pop() ?? "";
+  const assetIds = [
+    ...new Set(
+      linkRows.map((r) => idOf(String((r.asset_group_asset ?? {}).asset ?? ""))).filter(Boolean),
+    ),
+  ];
+
+  const content = new Map<string, { type: string; text: string; name: string }>();
+  if (assetIds.length > 0) {
+    const assetRows = (await customer.query(`
+      SELECT asset.id, asset.type, asset.name, asset.text_asset.text
+      FROM asset
+      WHERE asset.id IN (${assetIds.join(", ")})`)) as GaqlRow[];
+    for (const r of assetRows) {
+      const a = r.asset ?? {};
+      const textAsset = (a.text_asset ?? {}) as Record<string, unknown>;
+      content.set(String(a.id ?? ""), {
+        type: enumName("AssetType", a.type),
+        text: String(textAsset.text ?? ""),
+        name: String(a.name ?? ""),
+      });
+    }
+  }
+
+  const assetsByGroup = new Map<string, PmaxAssetRow[]>();
+  for (const r of linkRows) {
+    const ag = r.asset_group ?? {};
+    const aga = r.asset_group_asset ?? {};
+    const groupId = String(ag.id ?? "");
+    const c = content.get(idOf(String(aga.asset ?? ""))) ?? { type: "", text: "", name: "" };
+    const row: PmaxAssetRow = {
+      fieldType: enumName("AssetFieldType", aga.field_type),
+      assetType: c.type,
+      performanceLabel: enumName("AssetPerformanceLabel", aga.performance_label),
+      content: c.text || c.name || "",
+    };
+    const list = assetsByGroup.get(groupId) ?? [];
+    list.push(row);
+    assetsByGroup.set(groupId, list);
+  }
+
+  const num = (v: unknown) => Number(v ?? 0);
+  const micros = (v: unknown) => num(v) / 1_000_000;
+  const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
+
+  const groups: AssetGroupRow[] = agRows.map((r) => {
+    const ag = r.asset_group ?? {};
+    const m = r.metrics ?? {};
+    const id = String(ag.id ?? "");
+    const cost = micros(m.cost_micros);
+    const clicks = num(m.clicks);
+    const impressions = num(m.impressions);
+    const conversions = num(m.conversions);
+    const assets = (assetsByGroup.get(id) ?? []).sort(
+      (a, b) =>
+        (FIELD_TYPE_ORDER[a.fieldType] ?? 99) - (FIELD_TYPE_ORDER[b.fieldType] ?? 99) ||
+        a.content.localeCompare(b.content),
+    );
+    return {
+      id,
+      name: String(ag.name ?? ""),
+      status: enumName("AssetGroupStatus", ag.status),
+      impressions,
+      clicks,
+      cost,
+      conversions,
+      ctr: ratio(clicks, impressions),
+      cpc: ratio(cost, clicks),
+      costPerConv: ratio(cost, conversions),
+      assets,
+    };
+  });
+
+  return groups.sort((a, b) => b.cost - a.cost);
+}

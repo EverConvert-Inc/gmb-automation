@@ -119,7 +119,8 @@ export default async function GoogleAdsOverviewPage({
 
       <p className="text-xs text-muted-foreground">
         Covers every campaign type, Performance Max included. ROAS and campaign type fill in from the
-        next sync onward. Ad groups &amp; ads load live when you expand a campaign.{" "}
+        next sync onward. Expanding a campaign loads its ad groups &amp; ads live — or, for Performance
+        Max, its asset groups &amp; assets.{" "}
         <Link href="/ads" className="underline hover:text-foreground">
           Account health →
         </Link>

@@ -4,7 +4,7 @@ import { Fragment, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CampaignRow } from "@/lib/queries-google-ads-overview";
-import type { AdGroupBreakdownRow } from "@/lib/queries-ads-dashboard";
+import type { AdGroupBreakdownRow, AssetGroupRow } from "@/lib/queries-ads-dashboard";
 import { conv1, enumLabel, int, money0, money2, pct2 } from "@/lib/google-ads-format";
 
 const TH = "px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground";
@@ -53,6 +53,23 @@ function StatusBadge({ status }: { status: string | null }) {
   );
 }
 
+function PerfBadge({ label }: { label: string }) {
+  if (["", "UNSPECIFIED", "UNKNOWN", "PENDING", "LEARNING", "NOT_APPLICABLE"].includes(label)) return null;
+  const tone =
+    label === "BEST"
+      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+      : label === "GOOD"
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : label === "LOW"
+          ? "bg-red-500/10 text-red-700 dark:text-red-400"
+          : "bg-muted text-muted-foreground";
+  return (
+    <span className={cn("ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide", tone)}>
+      {enumLabel(label)}
+    </span>
+  );
+}
+
 function Note({ children, pad, tone }: { children: React.ReactNode; pad: string; tone?: "error" }) {
   return (
     <tr className="bg-muted/20">
@@ -70,7 +87,8 @@ function Note({ children, pad, tone }: { children: React.ReactNode; pad: string;
 type Breakdown =
   | { state: "loading" }
   | { state: "error"; error: string }
-  | { state: "done"; adGroups: AdGroupBreakdownRow[] };
+  | { state: "done"; kind: "search"; adGroups: AdGroupBreakdownRow[] }
+  | { state: "done"; kind: "pmax"; assetGroups: AssetGroupRow[] };
 
 export function GoogleAdsCampaignTable({
   campaigns,
@@ -93,20 +111,30 @@ export function GoogleAdsCampaignTable({
       else next.delete(c.campaignId);
       return next;
     });
-    if (!willOpen || breakdowns[c.campaignId] || c.type === "PERFORMANCE_MAX") return;
+    if (!willOpen || breakdowns[c.campaignId]) return;
 
     setBreakdowns((p) => ({ ...p, [c.campaignId]: { state: "loading" } }));
     try {
       const q = new URLSearchParams({
         clientId: c.clientId,
         campaignId: c.googleAdsCampaignId,
+        type: c.type ?? "",
         from: range.from,
         to: range.to,
       });
       const res = await fetch(`/api/ads/campaign-breakdown?${q.toString()}`);
-      const json = (await res.json()) as { adGroups?: AdGroupBreakdownRow[]; error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Failed to load ad groups");
-      setBreakdowns((p) => ({ ...p, [c.campaignId]: { state: "done", adGroups: json.adGroups ?? [] } }));
+      const json = (await res.json()) as {
+        kind?: "search" | "pmax";
+        adGroups?: AdGroupBreakdownRow[];
+        assetGroups?: AssetGroupRow[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error ?? "Failed to load breakdown");
+      const done: Breakdown =
+        json.kind === "pmax"
+          ? { state: "done", kind: "pmax", assetGroups: json.assetGroups ?? [] }
+          : { state: "done", kind: "search", adGroups: json.adGroups ?? [] };
+      setBreakdowns((p) => ({ ...p, [c.campaignId]: done }));
     } catch (e) {
       setBreakdowns((p) => ({ ...p, [c.campaignId]: { state: "error", error: (e as Error).message } }));
     }
@@ -162,22 +190,19 @@ export function GoogleAdsCampaignTable({
                   <MetricCells m={c} />
                 </tr>
 
-                {open && c.type === "PERFORMANCE_MAX" && (
-                  <Note pad="pl-10">Performance Max uses asset groups, not ad groups — no ad group breakdown.</Note>
-                )}
-                {open && c.type !== "PERFORMANCE_MAX" && d?.state === "loading" && (
-                  <Note pad="pl-10">Loading ad groups…</Note>
-                )}
+                {open && d?.state === "loading" && <Note pad="pl-10">Loading…</Note>}
                 {open && d?.state === "error" && (
                   <Note pad="pl-10" tone="error">
                     {d.error}
                   </Note>
                 )}
-                {open && d?.state === "done" && d.adGroups.length === 0 && (
+
+                {open && d?.state === "done" && d.kind === "search" && d.adGroups.length === 0 && (
                   <Note pad="pl-10">No ad groups with activity in this range.</Note>
                 )}
                 {open &&
                   d?.state === "done" &&
+                  d.kind === "search" &&
                   d.adGroups.map((g) => {
                     const gopen = openGroups.has(g.id);
                     return (
@@ -219,6 +244,50 @@ export function GoogleAdsCampaignTable({
                       </Fragment>
                     );
                   })}
+
+                {open && d?.state === "done" && d.kind === "pmax" && d.assetGroups.length === 0 && (
+                  <Note pad="pl-10">No asset groups with activity in this range.</Note>
+                )}
+                {open &&
+                  d?.state === "done" &&
+                  d.kind === "pmax" &&
+                  d.assetGroups.map((g) => {
+                    const gopen = openGroups.has(g.id);
+                    return (
+                      <Fragment key={g.id}>
+                        <tr className="cursor-pointer bg-muted/10 hover:bg-muted/30" onClick={() => toggleGroup(g.id)}>
+                          <td className={TD} />
+                          <td className={TD}>
+                            <span className="inline-flex items-center gap-1.5 pl-6">
+                              <ChevronRight
+                                className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", gopen && "rotate-90")}
+                              />
+                              <span>{g.name}</span>
+                            </span>
+                          </td>
+                          <td className={TD}>
+                            <StatusBadge status={g.status} />
+                          </td>
+                          <td className={cn(TD, "text-muted-foreground")}>Asset group</td>
+                          <MetricCells m={g} />
+                        </tr>
+                        {gopen && g.assets.length === 0 && <Note pad="pl-16">No assets.</Note>}
+                        {gopen &&
+                          g.assets.map((a, i) => (
+                            <tr key={`${g.id}-asset-${i}`} className="bg-muted/5">
+                              <td className={TD} />
+                              <td colSpan={SPAN} className={cn(TD, "pl-16")}>
+                                <span className="mr-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  {enumLabel(a.fieldType)}
+                                </span>
+                                <span>{a.content || `[${enumLabel(a.assetType)}]`}</span>
+                                <PerfBadge label={a.performanceLabel} />
+                              </td>
+                            </tr>
+                          ))}
+                      </Fragment>
+                    );
+                  })}
               </Fragment>
             );
           })}
@@ -232,7 +301,7 @@ export function GoogleAdsCampaignTable({
         </tbody>
       </table>
       <p className="px-4 py-2 text-xs text-muted-foreground">
-        {campaigns.length} of {total} campaigns · click a row to expand ad groups and ads
+        {campaigns.length} of {total} campaigns · click a row to expand ad groups and ads (asset groups and assets for Performance Max)
       </p>
     </div>
   );
