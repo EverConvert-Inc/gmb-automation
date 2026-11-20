@@ -181,6 +181,148 @@ export function StackedBars({
   );
 }
 
+function niceTop(max: number): { top: number; ticks: number[] } {
+  if (max <= 0) return { top: 1, ticks: [0, 1] };
+  const step = niceStep(max / 4);
+  const top = Math.ceil(max / step) * step;
+  const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step);
+  return { top, ticks };
+}
+
+// Dual-axis daily chart: cost as columns (left axis), cost-per-conversion as
+// a line (right axis). Same no-dep approach as StackedBars — HTML boxes for
+// crisp bar geometry, with the line drawn in a stretched SVG overlay
+// (preserveAspectRatio="none" + non-scaling stroke) so it lands on each
+// column's centre at any width. A day with no conversions breaks the line.
+export function ComboBarLine({
+  points,
+  formatCost,
+  formatCpc,
+  height = 220,
+  ariaLabel,
+}: {
+  points: Array<{ label: string; tick?: string; cost: number; costPerConv: number | null }>;
+  formatCost: (v: number) => string;
+  formatCpc: (v: number) => string;
+  height?: number;
+  ariaLabel: string;
+}) {
+  if (points.length === 0) {
+    return <div className="text-sm text-muted-foreground">No spend in this range.</div>;
+  }
+  const cost = niceTop(Math.max(...points.map((p) => p.cost), 0));
+  const cpc = niceTop(Math.max(...points.map((p) => p.costPerConv ?? 0), 0));
+  const N = points.length;
+
+  let d = "";
+  let pen: "M" | "L" = "M";
+  points.forEach((p, i) => {
+    if (p.costPerConv === null) {
+      pen = "M";
+      return;
+    }
+    const x = i + 0.5;
+    const y = height - (p.costPerConv / cpc.top) * height;
+    d += `${pen}${x.toFixed(3)} ${y.toFixed(2)} `;
+    pen = "L";
+  });
+
+  return (
+    <div role="img" aria-label={ariaLabel} className="flex gap-2">
+      <div className="relative w-12 flex-shrink-0 text-right text-[10px] tabular-nums text-muted-foreground" style={{ height }}>
+        {cost.ticks.map((t) => (
+          <span key={t} className="absolute right-0 -translate-y-1/2" style={{ top: height - (t / cost.top) * height }}>
+            {formatCost(t)}
+          </span>
+        ))}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="relative" style={{ height }}>
+          {cost.ticks.map((t) => (
+            <div key={t} className="absolute inset-x-0 h-px bg-border" style={{ top: height - (t / cost.top) * height }} />
+          ))}
+          <div className="absolute inset-0 flex">
+            {points.map((p, i) => (
+              <div key={i} className="group relative flex h-full min-w-0 flex-1 items-end justify-center">
+                <div className="pointer-events-none absolute inset-y-0 inset-x-px rounded-sm bg-foreground/0 group-hover:bg-foreground/[0.04]" />
+                {p.cost > 0 && (
+                  <div
+                    className="w-[70%] max-w-[24px] rounded-t-[3px] bg-[#2a78d6] dark:bg-[#3987e5]"
+                    style={{ height: (p.cost / cost.top) * height }}
+                  />
+                )}
+                <div
+                  className={`pointer-events-none absolute top-0 z-10 hidden w-max min-w-[10rem] rounded-md border bg-background p-2 text-xs text-foreground shadow-md group-hover:block ${
+                    i < N / 2 ? "left-0" : "right-0"
+                  }`}
+                >
+                  <div className="mb-1 font-medium">{p.label}</div>
+                  <div className="flex items-center justify-between gap-3 text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-sm bg-[#2a78d6] dark:bg-[#3987e5]" />
+                      Cost
+                    </span>
+                    <span className="tabular-nums text-foreground">{formatCost(p.cost)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-sm bg-[#dc2626] dark:bg-[#f87171]" />
+                      Cost / conv.
+                    </span>
+                    <span className="tabular-nums text-foreground">
+                      {p.costPerConv === null ? "—" : formatCpc(p.costPerConv)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {d && (
+            <svg
+              className="pointer-events-none absolute inset-0 h-full w-full text-[#dc2626] dark:text-[#f87171]"
+              viewBox={`0 0 ${N} ${height}`}
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <path
+                d={d.trim()}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </div>
+        <div className="mt-1 flex h-4 text-[10px] text-muted-foreground">
+          {points.map((p, i) => (
+            <span key={i} className="relative min-w-0 flex-1">
+              {p.tick && (
+                <span
+                  className={`absolute top-0 whitespace-nowrap ${
+                    i === 0 ? "left-0" : i === N - 1 ? "right-0" : "left-1/2 -translate-x-1/2"
+                  }`}
+                >
+                  {p.tick}
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="relative w-12 flex-shrink-0 text-left text-[10px] tabular-nums text-muted-foreground" style={{ height }}>
+        {cpc.ticks.map((t) => (
+          <span key={t} className="absolute left-0 -translate-y-1/2" style={{ top: height - (t / cpc.top) * height }}>
+            {formatCpc(t)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SparkLine({
   values,
   width = 160,
