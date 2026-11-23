@@ -21,7 +21,8 @@ export default async function GoogleAdsAuditPage() {
         <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Google Ads</div>
         <h1 className="font-display text-3xl font-bold tracking-tight">Audit</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Current campaign settings pulled live from Google Ads. Expand an account to review its configuration.
+          Campaign settings pulled live and scored against your standards. Expand an account to see each campaign&apos;s
+          compliance and configuration.
         </p>
       </header>
 
