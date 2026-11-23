@@ -1008,8 +1008,6 @@ export type CampaignSettings = {
   dailyBudget: number | null; // null when the budget isn't a daily one
   budgetDelivery: string;
   budgetShared: boolean;
-  startDate: string;
-  endDate: string | null; // null = no end date (Google's 2037 sentinel)
   trackingTemplate: string; // "" when not set
   networks: { googleSearch: boolean; searchPartners: boolean; display: boolean; youtube: boolean };
 };
@@ -1019,7 +1017,7 @@ export async function getAccountCampaignSettings(clientId: string): Promise<Camp
   const rows = (await customer.query(`
     SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
            campaign.bidding_strategy_type, campaign.ad_serving_optimization_status,
-           campaign.start_date, campaign.end_date, campaign.tracking_url_template,
+           campaign.tracking_url_template,
            campaign.network_settings.target_google_search, campaign.network_settings.target_search_network,
            campaign.network_settings.target_content_network, campaign.network_settings.target_youtube,
            campaign_budget.amount_micros, campaign_budget.period, campaign_budget.delivery_method,
@@ -1033,7 +1031,6 @@ export async function getAccountCampaignSettings(clientId: string): Promise<Camp
     const ns = (c.network_settings ?? {}) as Record<string, unknown>;
     const b = (r.campaign_budget ?? {}) as Record<string, unknown>;
     const period = enumName("BudgetPeriod", b.period);
-    const endDate = String(c.end_date ?? "");
     return {
       campaignId: String(c.id ?? ""),
       name: String(c.name ?? ""),
@@ -1044,8 +1041,6 @@ export async function getAccountCampaignSettings(clientId: string): Promise<Camp
       dailyBudget: period === "DAILY" ? Number(b.amount_micros ?? 0) / 1_000_000 : null,
       budgetDelivery: enumName("BudgetDeliveryMethod", b.delivery_method),
       budgetShared: Boolean(b.explicitly_shared ?? false),
-      startDate: String(c.start_date ?? ""),
-      endDate: endDate && endDate < "2037-01-01" ? endDate : null,
       trackingTemplate: String(c.tracking_url_template ?? ""),
       networks: {
         googleSearch: Boolean(ns.target_google_search ?? false),

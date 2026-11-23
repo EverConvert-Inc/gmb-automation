@@ -10,7 +10,7 @@ import { enumLabel, money0 } from "@/lib/google-ads-format";
 
 const TH = "px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground";
 const TD = "px-3 py-2";
-const COLS = 11;
+const COLS = 10;
 
 function fmtValue(v: string | boolean): string {
   if (typeof v === "boolean") return v ? "Yes" : "No";
@@ -131,7 +131,6 @@ export function GoogleAdsAuditTable({ accounts }: { accounts: Array<{ id: string
             <th className={TH}>Delivery</th>
             <th className={TH}>Networks</th>
             <th className={TH}>Ad serving</th>
-            <th className={TH}>End date</th>
             <th className={cn(TH, "pr-4")}>Tracking</th>
           </tr>
         </thead>
@@ -197,7 +196,6 @@ export function GoogleAdsAuditTable({ accounts }: { accounts: Array<{ id: string
                           <td className={cn(TD, "text-muted-foreground")}>{enumLabel(c.budgetDelivery)}</td>
                           <td className={TD}><NetworkPills n={c.networks} /></td>
                           <td className={cn(TD, "text-muted-foreground")}>{enumLabel(c.adServing)}</td>
-                          <td className={cn(TD, "whitespace-nowrap text-muted-foreground")}>{c.endDate ?? "No end"}</td>
                           <td className={cn(TD, "pr-4 text-muted-foreground")}>{c.trackingTemplate ? "Set" : "Not set"}</td>
                         </tr>
                         {showFailures && v && (

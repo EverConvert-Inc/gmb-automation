@@ -13,8 +13,6 @@ function campaign(over: Partial<CampaignSettings> = {}): CampaignSettings {
     dailyBudget: 50,
     budgetDelivery: "STANDARD",
     budgetShared: false,
-    startDate: "2025-01-01",
-    endDate: null,
     trackingTemplate: "",
     networks: { googleSearch: true, searchPartners: false, display: false, youtube: false },
     ...over,
