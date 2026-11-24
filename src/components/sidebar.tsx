@@ -48,6 +48,7 @@ const items: readonly NavItem[] = [
       { href: "/ads", label: "Account health", exact: true },
       { href: "/ads/pacing", label: "Pacing" },
       { href: "/ads/audit", label: "Audit" },
+      { href: "/ads/reconciliation", label: "Reconciliation" },
       { href: "/ads/standards", label: "Standards" },
     ],
   },

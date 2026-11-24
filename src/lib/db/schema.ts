@@ -843,6 +843,38 @@ export const ppcAdStandards = pgTable("ppc_ad_standards", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }).enableRLS();
 
+// Per-PPC-client mapping for the Ads reconciliation report: which Google Ads
+// conversion action is compared against which CallRail-derived source metric
+// (e.g. the "First Time Phone Call" conversion action vs CallRail first-time
+// calls). Conversion-action names are account-specific, so the pairing is
+// stored per client rather than inferred. Many mappings per client.
+export const ppcReconciliationMappings = pgTable(
+  "ppc_reconciliation_mappings",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    ppcClientId: uuid("ppc_client_id")
+      .notNull()
+      .references(() => ppcClients.id, { onDelete: "cascade" }),
+    // Display name for the row (defaults to the conversion action's name).
+    label: text("label").notNull(),
+    // The Google Ads conversion action to sum, matched by stable id; the name
+    // is snapshotted for display and as a fallback if the id can't be found.
+    adsConversionActionId: text("ads_conversion_action_id").notNull(),
+    adsConversionActionName: text("ads_conversion_action_name").notNull().default(""),
+    // Which CallRail-derived metric to compare against. One of:
+    //   'callrail_first_time_calls'  — PPC+PMax first-time calls (GMB excluded)
+    //   'callrail_good_leads'        — PPC+PMax real/signed rollup (GMB excluded)
+    //   'callrail_form_submissions'  — company-wide form submissions, live
+    source: text("source").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    clientIdx: index("ppc_reconciliation_mappings_client_idx").on(t.ppcClientId),
+  }),
+).enableRLS();
+
 export type Client = typeof clients.$inferSelect;
 export type Location = typeof locations.$inferSelect;
 export type Keyword = typeof keywords.$inferSelect;

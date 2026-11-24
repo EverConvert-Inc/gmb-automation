@@ -922,6 +922,41 @@ export async function pullCallsForCompany(
   );
 }
 
+// Count of CallRail form submissions for a company in [fromDate, toDate],
+// for the Ads reconciliation report (Ads "Form submission" conversions vs
+// CallRail-tracked form fills). CallRail Form Tracking captures the site's
+// form submissions (Elementor etc.) — this app has no other form source.
+//
+// We read `total_records` off a single-record page (per_page=1), so the whole
+// count costs ONE request instead of paging — the same trick the leads
+// module's countRecords uses. Dates are account-local (Eastern); callers pass
+// Eastern dates from date-utils, never toISOString().slice(0, 10) (see
+// pullCallsForCompany). Returns the company-wide count: in the normal PPC
+// case a CallRail company maps 1:1 to a client, which is what the Ads
+// "Form submission" conversion is measured against.
+export async function pullFormSubmissionCount(
+  companyId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<number> {
+  const accountId = await resolveAccountId();
+  const url = new URL(`${BASE_URL}/v3/a/${accountId}/form_submissions.json`);
+  url.searchParams.set("company_id", companyId);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("per_page", "1");
+  url.searchParams.set("start_date", fromDate);
+  url.searchParams.set("end_date", toDate);
+  url.searchParams.set("fields", "id");
+  const res = await fetch(url.toString(), { headers: authHeaders() });
+  if (!res.ok) {
+    throw new Error(
+      `CallRail form_submissions fetch failed: ${res.status} ${await res.text()}`,
+    );
+  }
+  const body = (await res.json()) as { total_records?: number };
+  return typeof body.total_records === "number" ? body.total_records : 0;
+}
+
 type CallRailSmsThread = {
   tags?: Array<{ id: number; name: string } | string> | null;
 };
