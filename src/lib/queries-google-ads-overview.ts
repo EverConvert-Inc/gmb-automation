@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lte, min, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { ppcAdsDaily, ppcCampaigns, ppcClients } from "./db/schema";
 import { eachIsoDate } from "./ads-dashboard-compare";
@@ -61,6 +61,78 @@ const n = (v: string | number | null | undefined): number => Number(v ?? 0);
 const micros = (v: string | number | null | undefined): number => n(v) / 1_000_000;
 const ratio = (num: number, den: number): number | null => (den > 0 ? num / den : null);
 
+type TotalsRow = {
+  impressions: string;
+  clicks: string;
+  conversions: string;
+  conversionsValue: string;
+  costMicros: string;
+};
+
+function kpisFrom(rows: TotalsRow[]): OverviewKpis {
+  const totals = rows.reduce(
+    (a, r) => ({
+      spend: a.spend + micros(r.costMicros),
+      impressions: a.impressions + n(r.impressions),
+      clicks: a.clicks + n(r.clicks),
+      conversions: a.conversions + n(r.conversions),
+      conversionsValue: a.conversionsValue + n(r.conversionsValue),
+    }),
+    { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionsValue: 0 },
+  );
+  return {
+    spend: totals.spend,
+    impressions: totals.impressions,
+    clicks: totals.clicks,
+    ctr: ratio(totals.clicks, totals.impressions),
+    conversions: totals.conversions,
+    costPerConv: ratio(totals.spend, totals.conversions),
+    // No conversion value in the window means either it isn't tracked (common
+    // for lead-gen) or the rows predate the column — either way a 0.00x ROAS
+    // would mislead, so show nothing until there's real value to divide.
+    roas: totals.conversionsValue > 0 ? ratio(totals.conversionsValue, totals.spend) : null,
+  };
+}
+
+function scopeWhere(range: GoogleAdsOverviewRange, clientId: string | null) {
+  const dateWhere = and(gte(ppcAdsDaily.date, range.from), lte(ppcAdsDaily.date, range.to));
+  return clientId ? and(dateWhere, eq(ppcAdsDaily.ppcClientId, clientId)) : dateWhere;
+}
+
+// KPI totals for the comparison window, plus whether that window is covered
+// by stored data at all. ppc_ads_daily has no per-day coverage marker (Google
+// returns no row for a zero-spend day), but the PPC sync runs daily from the
+// first day it ever pulled, so a window starting before the earliest stored
+// date for this scope is the one case we know is incomplete.
+export async function getOverviewComparison(opts: {
+  range: GoogleAdsOverviewRange;
+  clientId?: string | null;
+}): Promise<{ kpis: OverviewKpis; covered: boolean; earliest: string | null }> {
+  const clientId = opts.clientId ?? null;
+  const [rows, [first]] = await Promise.all([
+    db
+      .select({
+        impressions: sql<string>`sum(${ppcAdsDaily.impressions})`,
+        clicks: sql<string>`sum(${ppcAdsDaily.clicks})`,
+        conversions: sql<string>`sum(${ppcAdsDaily.conversions})`,
+        conversionsValue: sql<string>`sum(${ppcAdsDaily.conversionsValue})`,
+        costMicros: sql<string>`sum(${ppcAdsDaily.costMicros})`,
+      })
+      .from(ppcAdsDaily)
+      .where(scopeWhere(opts.range, clientId)),
+    db
+      .select({ earliest: min(ppcAdsDaily.date) })
+      .from(ppcAdsDaily)
+      .where(clientId ? eq(ppcAdsDaily.ppcClientId, clientId) : undefined),
+  ]);
+  const earliest = first?.earliest ?? null;
+  return {
+    kpis: kpisFrom(rows),
+    covered: earliest !== null && earliest <= opts.range.from,
+    earliest,
+  };
+}
+
 export async function getGoogleAdsOverview(opts: {
   range: GoogleAdsOverviewRange;
   clientId?: string | null;
@@ -70,10 +142,7 @@ export async function getGoogleAdsOverview(opts: {
   const clientId = opts.clientId ?? null;
   const status = opts.status ?? "enabled";
 
-  const dateWhere = and(gte(ppcAdsDaily.date, from), lte(ppcAdsDaily.date, to));
-  const scope = clientId
-    ? and(dateWhere, eq(ppcAdsDaily.ppcClientId, clientId))
-    : dateWhere;
+  const scope = scopeWhere({ from, to }, clientId);
 
   const [accounts, dailyRows, campaignRows] = await Promise.all([
     db
@@ -134,29 +203,7 @@ export async function getGoogleAdsOverview(opts: {
     (date) => byDate.get(date) ?? { date, cost: 0, costPerConv: null },
   );
 
-  const totals = dailyRows.reduce(
-    (a, r) => ({
-      spend: a.spend + micros(r.costMicros),
-      impressions: a.impressions + n(r.impressions),
-      clicks: a.clicks + n(r.clicks),
-      conversions: a.conversions + n(r.conversions),
-      conversionsValue: a.conversionsValue + n(r.conversionsValue),
-    }),
-    { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionsValue: 0 },
-  );
-
-  const kpis: OverviewKpis = {
-    spend: totals.spend,
-    impressions: totals.impressions,
-    clicks: totals.clicks,
-    ctr: ratio(totals.clicks, totals.impressions),
-    conversions: totals.conversions,
-    costPerConv: ratio(totals.spend, totals.conversions),
-    // No conversion value in the window means either it isn't tracked (common
-    // for lead-gen) or the rows predate the column — either way a 0.00x ROAS
-    // would mislead, so show nothing until there's real value to divide.
-    roas: totals.conversionsValue > 0 ? ratio(totals.conversionsValue, totals.spend) : null,
-  };
+  const kpis = kpisFrom(dailyRows);
 
   const allCampaigns: CampaignRow[] = campaignRows
     .map((r) => {

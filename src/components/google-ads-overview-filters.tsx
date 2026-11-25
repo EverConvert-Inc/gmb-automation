@@ -2,6 +2,7 @@
 
 import { ChevronDown } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { COMPARE_MODES } from "@/lib/ads-dashboard-compare";
 
 // Account + campaign-status selects for the Google Ads Overview. Each writes
 // its value to the page URL so the server component refetches; a value of
@@ -48,10 +49,12 @@ export function GoogleAdsOverviewFilters({
   accounts,
   account,
   status,
+  compare,
 }: {
   accounts: Array<{ id: string; name: string }>;
   account: string;
   status: string;
+  compare: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -77,6 +80,13 @@ export function GoogleAdsOverviewFilters({
         <option value="enabled">Enabled</option>
         <option value="paused">Paused</option>
         <option value="all">All</option>
+      </Dropdown>
+      <Dropdown label="Compare" value={compare} onChange={(v) => set("compare", v)}>
+        {COMPARE_MODES.map((m) => (
+          <option key={m.key} value={m.key}>
+            {m.label} ({m.versus})
+          </option>
+        ))}
       </Dropdown>
     </div>
   );

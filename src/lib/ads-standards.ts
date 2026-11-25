@@ -27,7 +27,14 @@ export type EnforceableField = {
   type: "enum" | "bool";
   options?: { value: string; label: string }[];
   actual: (c: CampaignSettings) => string | boolean;
+  // Campaign types the setting means nothing for. Scoring it there would
+  // report a false error, so the campaign goes to "needs review" instead.
+  notApplicableTo?: string[];
 };
+
+// Performance Max picks its own inventory: it has no network toggles, so
+// whatever the API echoes back for them isn't a setting anyone chose.
+const NETWORK_NA = ["PERFORMANCE_MAX"];
 
 // Campaign-level enforceable settings, read straight off the live settings.
 export const CAMPAIGN_FIELDS: EnforceableField[] = [
@@ -70,10 +77,10 @@ export const CAMPAIGN_FIELDS: EnforceableField[] = [
   },
   { key: "budgetShared", label: "Shared budget", type: "bool", actual: (c) => c.budgetShared },
   { key: "trackingTemplateSet", label: "Tracking template set", type: "bool", actual: (c) => c.trackingTemplate !== "" },
-  { key: "networkGoogleSearch", label: "Google Search network", type: "bool", actual: (c) => c.networks.googleSearch },
-  { key: "networkSearchPartners", label: "Search partners network", type: "bool", actual: (c) => c.networks.searchPartners },
-  { key: "networkDisplay", label: "Display network", type: "bool", actual: (c) => c.networks.display },
-  { key: "networkYouTube", label: "YouTube network", type: "bool", actual: (c) => c.networks.youtube },
+  { key: "networkGoogleSearch", label: "Google Search network", type: "bool", actual: (c) => c.networks.googleSearch, notApplicableTo: NETWORK_NA },
+  { key: "networkSearchPartners", label: "Search partners network", type: "bool", actual: (c) => c.networks.searchPartners, notApplicableTo: NETWORK_NA },
+  { key: "networkDisplay", label: "Display network", type: "bool", actual: (c) => c.networks.display, notApplicableTo: NETWORK_NA },
+  { key: "networkYouTube", label: "YouTube network", type: "bool", actual: (c) => c.networks.youtube, notApplicableTo: NETWORK_NA },
 ];
 
 const FIELD_BY_KEY = new Map(CAMPAIGN_FIELDS.map((f) => [f.key, f]));
@@ -86,42 +93,77 @@ export function matchesStandard(c: CampaignSettings, m: MatchRule): boolean {
 
 export type FieldFailure = { key: string; label: string; expected: string | boolean; actual: string | boolean };
 
+// An enforced setting that couldn't be judged, and why.
+export type FieldUnverified = {
+  key: string;
+  label: string;
+  expected: string | boolean;
+  reason: "not_applicable" | "unknown";
+};
+
+export type Verdict = "passed" | "error" | "review" | "unmatched";
+
 export type CampaignVerdict = {
   campaignId: string;
-  verdict: "passed" | "error" | "unmatched";
+  verdict: Verdict;
   standardId: string | null;
   standardName: string | null;
   failures: FieldFailure[];
+  unverified: FieldUnverified[];
 };
 
-// First enabled standard whose match holds governs the campaign.
+// Enum values that say "Google didn't tell us", not a real setting.
+const UNKNOWN_ENUM = new Set(["", "UNKNOWN", "UNSPECIFIED", "UNAVAILABLE"]);
+
+// First enabled standard whose match holds governs the campaign. A definite
+// mismatch is an error. Otherwise, if any enforced setting couldn't be judged
+// (not applicable to this campaign type, or Google returned no real value),
+// the campaign needs review rather than passing on settings nobody checked.
 export function evaluateCampaign(c: CampaignSettings, standards: Standard[]): CampaignVerdict {
   const std = standards.find((s) => s.enabled && matchesStandard(c, s.match));
   if (!std) {
-    return { campaignId: c.campaignId, verdict: "unmatched", standardId: null, standardName: null, failures: [] };
+    return {
+      campaignId: c.campaignId,
+      verdict: "unmatched",
+      standardId: null,
+      standardName: null,
+      failures: [],
+      unverified: [],
+    };
   }
   const failures: FieldFailure[] = [];
+  const unverified: FieldUnverified[] = [];
   for (const [key, expected] of Object.entries(std.campaignExpected)) {
     const field = FIELD_BY_KEY.get(key);
     if (!field) continue;
+    if (field.notApplicableTo?.includes(c.type)) {
+      unverified.push({ key, label: field.label, expected, reason: "not_applicable" });
+      continue;
+    }
     const actual = field.actual(c);
+    if (field.type === "enum" && typeof actual === "string" && UNKNOWN_ENUM.has(actual)) {
+      unverified.push({ key, label: field.label, expected, reason: "unknown" });
+      continue;
+    }
     if (actual !== expected) failures.push({ key, label: field.label, expected, actual });
   }
   return {
     campaignId: c.campaignId,
-    verdict: failures.length > 0 ? "error" : "passed",
+    verdict: failures.length > 0 ? "error" : unverified.length > 0 ? "review" : "passed",
     standardId: std.id,
     standardName: std.name,
     failures,
+    unverified,
   };
 }
 
 export type ComplianceSummary = {
-  evaluated: number; // matched to a standard
+  evaluated: number; // matched to a standard and judged: passed + errors
   passed: number;
   errors: number;
+  review: number; // matched, but an enforced setting couldn't be judged
   unmatched: number;
-  compliancePct: number | null; // passed / evaluated
+  compliancePct: number | null; // passed / evaluated (review is left out)
 };
 
 export function evaluateCompliance(
@@ -131,6 +173,7 @@ export function evaluateCompliance(
   const verdicts = campaigns.map((c) => evaluateCampaign(c, standards));
   const passed = verdicts.filter((v) => v.verdict === "passed").length;
   const errors = verdicts.filter((v) => v.verdict === "error").length;
+  const review = verdicts.filter((v) => v.verdict === "review").length;
   const unmatched = verdicts.filter((v) => v.verdict === "unmatched").length;
   const evaluated = passed + errors;
   return {
@@ -139,6 +182,7 @@ export function evaluateCompliance(
       evaluated,
       passed,
       errors,
+      review,
       unmatched,
       compliancePct: evaluated > 0 ? passed / evaluated : null,
     },
